@@ -640,25 +640,34 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
     if not merged:
         await message.reply_text(
             "Нет тикеров: добавьте <code>/watchlist add SBER.ME AAPL</code> "
-            "или укажите: <code>/dashboard AAPL MSFT</code>",
+            "или укажите: <code>/dashboard AAPL MSFT</code>.\n"
+            "Также можно открыть «🧭 Подбор тикеров» и добавить бумаги кнопками.",
             parse_mode=ParseMode.HTML,
+            reply_markup=_analysis_menu_keyboard(),
         )
         return
+    await message.reply_text(
+        "🧾 Формирую свод по рынку, это может занять до ~1 минуты…",
+        reply_markup=_analysis_menu_keyboard(),
+    )
     await message.reply_chat_action(action=ChatAction.TYPING)
     loop = asyncio.get_running_loop()
 
-    def _sync():
-        b = build_dashboard(
-            merged,
-            volume_tape_ws=tape,
-            use_finnhub_ws=ws,
-            ws_seconds=8.0,
-        )
-        o = scan_strong_outside_watchlist(merged, prefs.strong_threshold)
-        return b, o
-
     try:
-        bundle, outside = await loop.run_in_executor(None, _sync)
+        bundle_task = loop.run_in_executor(
+            None,
+            lambda: build_dashboard(
+                merged,
+                volume_tape_ws=tape,
+                use_finnhub_ws=ws,
+                ws_seconds=8.0,
+            ),
+        )
+        outside_task = loop.run_in_executor(
+            None,
+            lambda: scan_strong_outside_watchlist(merged, prefs.strong_threshold),
+        )
+        bundle, outside = await asyncio.gather(bundle_task, outside_task)
     except Exception as e:
         log.exception("dashboard")
         await message.reply_text(_esc(f"Ошибка: {e}"), parse_mode=ParseMode.HTML)
@@ -1291,23 +1300,23 @@ def main() -> int:
     app.add_handler(
         MessageHandler(filters.Regex(r"^(?i:меню|menu)$"), cmd_start)
     )
-    app.add_handler(MessageHandler(filters.Regex(r"^📈\s*Аналитика$"), on_menu_section_analysis))
-    app.add_handler(MessageHandler(filters.Regex(r"^📚\s*Списки и подбор$"), on_menu_section_lists))
-    app.add_handler(MessageHandler(filters.Regex(r"^🗂️\s*Сбор и экспорт$"), on_menu_section_collect))
-    app.add_handler(MessageHandler(filters.Regex(r"^⚙️\s*Уведомления$"), on_menu_section_notify))
-    app.add_handler(MessageHandler(filters.Regex(r"^⬅️\s*Назад в разделы$"), on_menu_back_sections))
-    app.add_handler(MessageHandler(filters.Regex(r"^🏠\s*Главное меню$"), cmd_start))
-    app.add_handler(MessageHandler(filters.Regex(r"^❓\s*Помощь$"), cmd_help))
-    app.add_handler(MessageHandler(filters.Regex(r"^📊\s*Анализ тикера$"), on_menu_signal))
-    app.add_handler(MessageHandler(filters.Regex(r"^💲\s*Цена тикера$"), on_menu_price))
-    app.add_handler(MessageHandler(filters.Regex(r"^🧾\s*Свод по рынку$"), on_menu_dashboard))
-    app.add_handler(MessageHandler(filters.Regex(r"^⭐\s*Мой watchlist$"), on_menu_watchlist))
-    app.add_handler(MessageHandler(filters.Regex(r"^🧭\s*Подбор тикеров$"), on_menu_pick))
-    app.add_handler(MessageHandler(filters.Regex(r"^🗂️\s*Сбор сигналов$"), on_menu_collect))
-    app.add_handler(MessageHandler(filters.Regex(r"^📈\s*Статус сбора$"), on_menu_status))
-    app.add_handler(MessageHandler(filters.Regex(r"^📤\s*Выгрузить лог$"), on_menu_export))
-    app.add_handler(MessageHandler(filters.Regex(r"^🔔\s*Уведомления ВКЛ$"), on_menu_notify_on))
-    app.add_handler(MessageHandler(filters.Regex(r"^🔕\s*Уведомления ВЫКЛ$"), on_menu_notify_off))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Аналитика$"), on_menu_section_analysis))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Списки и подбор$"), on_menu_section_lists))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Сбор и экспорт$"), on_menu_section_collect))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления$"), on_menu_section_notify))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в разделы$"), on_menu_back_sections))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Главное меню$"), cmd_start))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Помощь$"), cmd_help))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Анализ тикера$"), on_menu_signal))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Цена тикера$"), on_menu_price))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Свод по рынку$"), on_menu_dashboard))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Мой watchlist$"), on_menu_watchlist))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Подбор тикеров$"), on_menu_pick))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Сбор сигналов$"), on_menu_collect))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Статус сбора$"), on_menu_status))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Выгрузить лог$"), on_menu_export))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления ВКЛ$"), on_menu_notify_on))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления ВЫКЛ$"), on_menu_notify_off))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, on_pending_text)
     )
