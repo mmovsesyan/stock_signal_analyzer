@@ -1,0 +1,10 @@
+# Официальный Python SDK «Т-Инвестиции» (Т-Банк).
+# Установка (из документации): https://developer.tbank.ru/invest/sdk/python_sdk/faq_python/
+#
+#   pip install -r requirements-tbank.txt
+#
+# Индекс пакетов T-Bank; при ошибках добавьте: --extra-index-url https://pypi.org/simple
+
+--index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple
+--extra-index-url https://pypi.org/simple
+t-tech-investments

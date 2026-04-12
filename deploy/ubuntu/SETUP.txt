@@ -1,0 +1,60 @@
+Stock Signal Analyzer — Ubuntu VPS (Telegram-бот)
+=================================================
+
+В коде основной сценарий systemd — сервис **ssa-bot** (см. `install.sh`, `deploy.sh` в корне репозитория).
+Этот файл описывает **альтернативу**: отдельный пользователь и unit **stock-signal-telegram-bot**
+из `deploy/ubuntu/stock-signal-telegram-bot.service`.
+
+Требование к Python: **3.9+** (как в `scripts/install_linux.sh`; pandas и зависимости не поддерживают 3.8).
+
+Рекомендуемые пути без ручной сборки unit-файла:
+  • `bash install.sh` — интерактивно, сервис `ssa-bot` (см. docs/VPS_UBUNTU.md)
+  • `bash deploy.sh` из каталога с клоном репозитория — по умолчанию каталог `/opt/stock-signal-analyzer`, сервис `ssa-bot`
+
+Ниже — ручная установка под пример с каталогом **/opt/stock_signal_analyzer** (подчёркивание).
+Если вы следуете `deploy.sh`, используйте его путь (**/opt/stock-signal-analyzer**) и **не** смешивайте с этим блоком без правок путей в unit.
+
+1) Пакеты
+   sudo apt update && sudo apt install -y python3 python3-venv python3-pip git
+
+2) Код
+   sudo mkdir -p /opt && sudo git clone <URL> /opt/stock_signal_analyzer
+   # или scp/rsync копией репозитория
+
+3) Пользователь сервиса (рекомендуется)
+   sudo adduser --system --group --home /opt/stock_signal_analyzer stockbot
+   sudo chown -R stockbot:stockbot /opt/stock_signal_analyzer
+
+4) Виртуальное окружение
+   cd /opt/stock_signal_analyzer
+   sudo -u stockbot python3 -m venv .venv
+   sudo -u stockbot .venv/bin/pip install --upgrade pip
+   sudo -u stockbot .venv/bin/pip install -r requirements.txt
+   # опционально Т-Инвестиции (котировки .ME + VWAP) — пакет t-tech-investments из индекса Т-Банка:
+   sudo -u stockbot .venv/bin/pip install -r requirements-tbank.txt
+   # если индекс Т-Банка недоступен (как в scripts/install_linux.sh):
+   sudo -u stockbot .venv/bin/pip install 'tinkoff-investments>=0.2.0b118'
+
+5) Секреты
+   Переменные подхватываются из **.env** в корне проекта: `stenv.load_project_env()` (модуль stenv.py) через python-dotenv.
+   Дополнительно unit-файл может задавать `EnvironmentFile=.../.env` для systemd.
+
+   sudo -u stockbot cp .env.example .env
+   sudo -u stockbot chmod 600 .env
+   sudo -u stockbot nano .env   # TELEGRAM_BOT_TOKEN=... ; при необходимости TINKOFF_INVEST_TOKEN, FINNHUB_API_KEY
+
+6) systemd (имя сервиса — stock-signal-telegram-bot, не ssa-bot)
+   sudo cp deploy/ubuntu/stock-signal-telegram-bot.service /etc/systemd/system/
+   sudo nano /etc/systemd/system/stock-signal-telegram-bot.service
+   # проверьте User, WorkingDirectory, ExecStart (по умолчанию пути /opt/stock_signal_analyzer)
+   sudo systemctl daemon-reload
+   sudo systemctl enable stock-signal-telegram-bot
+   sudo systemctl start stock-signal-telegram-bot
+
+7) Логи
+   sudo journalctl -u stock-signal-telegram-bot -f
+
+8) Файрвол (если ufw)
+   Бот исходит наружу по HTTPS — входящие порты для бота не нужны.
+
+Альтернатива без systemd: screen/tmux и ручной запуск .venv/bin/python telegram_bot.py

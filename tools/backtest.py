@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""
+Бэктестер: проверка торговых планов из SSA_SIGNAL_LOG на исторических данных.
+
+Метрики: win rate, PnL, profit factor, Sharpe, expectancy, avg win/loss,
+consecutive streaks, max drawdown, monthly breakdown.
+
+Пример:
+  python tools/backtest.py signals.jsonl
+  python tools/backtest.py signals.jsonl --min-tier A
+  python tools/backtest.py signals.jsonl --target 1
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any
+
+import yfinance as yf
+
+
+@dataclass
+class TradeResult:
+    symbol: str
+    direction: str
+    tier: str
+    entry: float
+    stop: float
+    target: float
+    exit_price: float
+    exit_reason: str
+    pnl_pct: float
+    hold_days: int
+    ts_utc: str
+
+
+@dataclass
+class Stats:
+    total: int = 0
+    wins: int = 0
+    losses: int = 0
+    longs: int = 0
+    shorts: int = 0
+    pnl_list: list[float] = field(default_factory=list)
+    results: list[TradeResult] = field(default_factory=list)
+    by_tier: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
+    by_month: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
+
+
+def _load_signals(path: str, min_tier: str | None) -> list[dict[str, Any]]:
+    valid_tiers = {"A", "B", "C"}
+    if min_tier:
+        tier_order = ["A", "B", "C"]
+        cut = tier_order.index(min_tier) if min_tier in tier_order else len(tier_order)
+        valid_tiers = set(tier_order[: cut + 1])
+
+    signals: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            d = row.get("tp_direction") or row.get("direction", "")
+            if d not in ("long", "short"):
+                continue
+            tier = str(row.get("signal_tier", "C"))
+            if tier not in valid_tiers:
+                continue
+            signals.append(row)
+    return signals
+
+
+def _simulate_trade(
+    row: dict[str, Any],
+    target_n: int = 1,
+) -> TradeResult | None:
+    symbol = row.get("symbol", "")
+    direction = row.get("tp_direction") or row.get("direction", "")
+    entry = float(row.get("tp_entry") or row.get("ref_price", 0))
+    initial_stop = float(row.get("tp_stop", 0))
+    if target_n == 2:
+        target = float(row.get("tp_target2") or row.get("tp_target1", 0))
+    else:
+        target = float(row.get("tp_target1", 0))
+    max_hold = int(row.get("tp_max_hold_days", 5))
+    tier = str(row.get("signal_tier", "C"))
+    ts_utc = str(row.get("ts_utc", ""))
+
+    trail_act_pct = float(row.get("tp_trailing_act_pct", 0))
+    trail_step_pct = float(row.get("tp_trailing_step_pct", 0))
+
+    if not symbol or entry <= 0 or initial_stop <= 0 or target <= 0:
+        return None
+
+    try:
+        dt_signal = datetime.fromisoformat(ts_utc.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+    start = (dt_signal + timedelta(days=1)).strftime("%Y-%m-%d")
+    end = (dt_signal + timedelta(days=max_hold + 5)).strftime("%Y-%m-%d")
+
+    try:
+        hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
+    except Exception:
+        return None
+
+    if hist is None or hist.empty:
+        return None
+
+    stop = initial_stop
+    trail_act_abs = entry * trail_act_pct / 100.0 if trail_act_pct > 0 else 0.0
+    trail_step_abs = entry * trail_step_pct / 100.0 if trail_step_pct > 0 else 0.0
+
+    for i in range(min(max_hold, len(hist))):
+        day = hist.iloc[i]
+        h = float(day.get("High", 0))
+        lo = float(day.get("Low", 0))
+
+        if direction == "long":
+            if trail_act_abs > 0:
+                excursion = h - entry
+                if excursion >= 2.0 * trail_act_abs:
+                    stop = max(stop, entry + trail_step_abs)
+                elif excursion >= trail_act_abs:
+                    stop = max(stop, entry)
+
+            if lo <= stop:
+                pnl = (stop / entry - 1.0) * 100.0
+                reason = "trail" if stop > initial_stop else "stop"
+                return TradeResult(symbol, direction, tier, entry, initial_stop, target, stop, reason, pnl, i + 1, ts_utc)
+            if h >= target:
+                pnl = (target / entry - 1.0) * 100.0
+                return TradeResult(symbol, direction, tier, entry, initial_stop, target, target, "target", pnl, i + 1, ts_utc)
+        else:
+            if trail_act_abs > 0:
+                excursion = entry - lo
+                if excursion >= 2.0 * trail_act_abs:
+                    stop = min(stop, entry - trail_step_abs)
+                elif excursion >= trail_act_abs:
+                    stop = min(stop, entry)
+
+            if h >= stop:
+                pnl = (1.0 - stop / entry) * 100.0
+                reason = "trail" if stop < initial_stop else "stop"
+                return TradeResult(symbol, direction, tier, entry, initial_stop, target, stop, reason, pnl, i + 1, ts_utc)
+            if lo <= target:
+                pnl = (1.0 - target / entry) * 100.0
+                return TradeResult(symbol, direction, tier, entry, initial_stop, target, target, "target", pnl, i + 1, ts_utc)
+
+    last_close = float(hist["Close"].iloc[min(max_hold - 1, len(hist) - 1)])
+    if direction == "long":
+        pnl = (last_close / entry - 1.0) * 100.0
+    else:
+        pnl = (1.0 - last_close / entry) * 100.0
+    days_held = min(max_hold, len(hist))
+    return TradeResult(symbol, direction, tier, entry, initial_stop, target, last_close, "time", pnl, days_held, ts_utc)
+
+
+def _consecutive_streaks(pnl_list: list[float]) -> tuple[int, int]:
+    """Макс. серия побед и макс. серия поражений."""
+    max_win_streak = max_loss_streak = 0
+    cur_win = cur_loss = 0
+    for p in pnl_list:
+        if p > 0:
+            cur_win += 1
+            cur_loss = 0
+        else:
+            cur_loss += 1
+            cur_win = 0
+        max_win_streak = max(max_win_streak, cur_win)
+        max_loss_streak = max(max_loss_streak, cur_loss)
+    return max_win_streak, max_loss_streak
+
+
+def _sharpe_ratio(pnl_list: list[float]) -> float:
+    """Annualized Sharpe (assume ~250 trades/year, risk-free=0)."""
+    if len(pnl_list) < 3:
+        return 0.0
+    mean = sum(pnl_list) / len(pnl_list)
+    std = (sum((p - mean) ** 2 for p in pnl_list) / (len(pnl_list) - 1)) ** 0.5
+    if std < 1e-9:
+        return 0.0
+    return mean / std * math.sqrt(min(len(pnl_list), 250))
+
+
+def _print_stats(stats: Stats) -> None:
+    n = stats.total
+    if n == 0:
+        print("Нет сделок для анализа.")
+        return
+
+    avg_pnl = sum(stats.pnl_list) / n
+    wins_pct = stats.wins / n * 100.0
+    gross_profit = sum(p for p in stats.pnl_list if p > 0)
+    gross_loss = abs(sum(p for p in stats.pnl_list if p <= 0))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+
+    win_pnls = [p for p in stats.pnl_list if p > 0]
+    loss_pnls = [p for p in stats.pnl_list if p <= 0]
+    avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else 0.0
+    avg_loss = sum(loss_pnls) / len(loss_pnls) if loss_pnls else 0.0
+    win_loss_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else float("inf")
+
+    # Expectancy = (win_rate × avg_win) + (loss_rate × avg_loss)
+    expectancy = (stats.wins / n) * avg_win + (stats.losses / n) * avg_loss if n > 0 else 0.0
+
+    cum = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for p in stats.pnl_list:
+        cum += p
+        if cum > peak:
+            peak = cum
+        dd = peak - cum
+        if dd > max_dd:
+            max_dd = dd
+
+    max_win_streak, max_loss_streak = _consecutive_streaks(stats.pnl_list)
+    sharpe = _sharpe_ratio(stats.pnl_list)
+
+    avg_hold = sum(r.hold_days for r in stats.results) / n if n > 0 else 0
+
+    print(f"\n{'='*56}")
+    print(f"  РЕЗУЛЬТАТЫ БЭКТЕСТА ({n} сделок)")
+    print(f"{'='*56}")
+    print(f"  Long: {stats.longs}  |  Short: {stats.shorts}")
+    print(f"  Win rate:       {wins_pct:.1f}%")
+    print(f"  Средний PnL:    {avg_pnl:+.2f}%")
+    print(f"  Средний выигрыш: {avg_win:+.2f}%  |  Средний убыток: {avg_loss:+.2f}%")
+    print(f"  Win/Loss ratio: {win_loss_ratio:.2f}" if not math.isinf(win_loss_ratio) else "  Win/Loss ratio: inf")
+    print(f"  Expectancy:     {expectancy:+.3f}% на сделку")
+    print(f"  Profit Factor:  {profit_factor:.2f}" if not math.isinf(profit_factor) else "  Profit Factor:  inf")
+    print(f"  Sharpe ratio:   {sharpe:.2f}")
+    print(f"  Max Drawdown:   -{max_dd:.2f}%")
+    print(f"  Суммарный PnL:  {cum:+.2f}%")
+    print(f"  Ср. удержание:  {avg_hold:.1f} дней")
+    print(f"  Макс. серия побед:   {max_win_streak}")
+    print(f"  Макс. серия убытков: {max_loss_streak}")
+    print()
+
+    exit_counts: dict[str, int] = defaultdict(int)
+    for r in stats.results:
+        exit_counts[r.exit_reason] += 1
+    print("Выходы:")
+    for reason in ("target", "stop", "trail", "time"):
+        c = exit_counts.get(reason, 0)
+        if c:
+            print(f"  {reason}: {c} ({c/n*100:.0f}%)")
+
+    print()
+    print("По классам:")
+    for tier in sorted(stats.by_tier.keys()):
+        pnls = stats.by_tier[tier]
+        cnt = len(pnls)
+        w = sum(1 for p in pnls if p > 0)
+        avg = sum(pnls) / cnt if cnt else 0
+        print(f"  {tier} ({cnt} сделок): win {w/cnt*100:.1f}%, avg PnL {avg:+.2f}%")
+
+    if stats.by_month:
+        print()
+        print("По месяцам:")
+        for month_key in sorted(stats.by_month.keys()):
+            pnls = stats.by_month[month_key]
+            cnt = len(pnls)
+            w = sum(1 for p in pnls if p > 0)
+            total_pnl = sum(pnls)
+            wr = w / cnt * 100 if cnt else 0
+            print(f"  {month_key}: {cnt} сделок, win {wr:.0f}%, PnL {total_pnl:+.2f}%")
+
+    print()
+    print("Последние 10 сделок:")
+    for r in stats.results[-10:]:
+        d = "L" if r.direction == "long" else "S"
+        print(
+            f"  {r.ts_utc[:10]} {r.symbol:>10} {d} entry={r.entry:.2f} "
+            f"exit={r.exit_price:.2f} ({r.exit_reason:6}) PnL={r.pnl_pct:+.2f}% {r.hold_days}д [{r.tier}]"
+        )
+    print()
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Бэктест сигналов из JSONL.")
+    p.add_argument("path", help="Файл .jsonl (SSA_SIGNAL_LOG)")
+    p.add_argument("--min-tier", default=None, choices=["A", "B", "C"], help="Минимальный класс (A = только A)")
+    p.add_argument("--target", type=int, default=1, choices=[1, 2], help="Какую цель проверять (1 или 2)")
+    args = p.parse_args()
+
+    signals = _load_signals(args.path, args.min_tier)
+    if not signals:
+        print(f"Нет подходящих записей в {args.path}.", file=sys.stderr)
+        return 1
+
+    print(f"Загружено {len(signals)} сигналов. Загрузка истории...")
+
+    stats = Stats()
+    for i, row in enumerate(signals, 1):
+        result = _simulate_trade(row, target_n=args.target)
+        if result is None:
+            continue
+        stats.total += 1
+        stats.pnl_list.append(result.pnl_pct)
+        stats.results.append(result)
+        stats.by_tier[result.tier].append(result.pnl_pct)
+        if result.direction == "long":
+            stats.longs += 1
+        else:
+            stats.shorts += 1
+        if result.pnl_pct > 0:
+            stats.wins += 1
+        else:
+            stats.losses += 1
+        month_key = result.ts_utc[:7]
+        if month_key:
+            stats.by_month[month_key].append(result.pnl_pct)
+        if i % 10 == 0:
+            print(f"  обработано {i}/{len(signals)}...")
+
+    _print_stats(stats)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
