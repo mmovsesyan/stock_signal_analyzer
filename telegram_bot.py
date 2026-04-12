@@ -637,6 +637,19 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
             continue
         seen.add(n)
         merged.append(n)
+    max_symbols_raw = os.environ.get("DASHBOARD_MAX_SYMBOLS", "12")
+    try:
+        max_symbols = max(1, int(max_symbols_raw))
+    except ValueError:
+        max_symbols = 12
+    if len(merged) > max_symbols:
+        omitted = len(merged) - max_symbols
+        merged = merged[:max_symbols]
+        await message.reply_text(
+            f"ℹ️ Для скорости показаны первые {max_symbols} тикеров "
+            f"(остальные {omitted} пропущены в этом запросе).",
+            reply_markup=_analysis_menu_keyboard(),
+        )
     if not merged:
         await message.reply_text(
             "Нет тикеров: добавьте <code>/watchlist add SBER.ME AAPL</code> "
@@ -654,7 +667,7 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
     loop = asyncio.get_running_loop()
 
     try:
-        bundle_task = loop.run_in_executor(
+        bundle = await loop.run_in_executor(
             None,
             lambda: build_dashboard(
                 merged,
@@ -663,20 +676,49 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
                 ws_seconds=8.0,
             ),
         )
-        outside_task = loop.run_in_executor(
-            None,
-            lambda: scan_strong_outside_watchlist(merged, prefs.strong_threshold),
-        )
-        bundle, outside = await asyncio.gather(bundle_task, outside_task)
     except Exception as e:
         log.exception("dashboard")
         await message.reply_text(_esc(f"Ошибка: {e}"), parse_mode=ParseMode.HTML)
         return
-    mset = {normalize_symbol(x) for x in merged}
-    outside = [(s, r) for s, r in outside if normalize_symbol(s) not in mset]
-    html_text = format_dashboard_bundle(bundle, outside)
+    html_text = format_dashboard_bundle(bundle, [])
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+    # Блок «вне списка» считаем отдельно и с жёстким таймаутом, чтобы не задерживать основной ответ.
+    outside_limit_raw = os.environ.get("DASHBOARD_OUTSIDE_MAX", "16")
+    outside_timeout_raw = os.environ.get("DASHBOARD_OUTSIDE_TIMEOUT_SEC", "8")
+    try:
+        outside_limit = max(1, int(outside_limit_raw))
+    except ValueError:
+        outside_limit = 16
+    try:
+        outside_timeout = max(1.0, float(outside_timeout_raw))
+    except ValueError:
+        outside_timeout = 8.0
+
+    try:
+        outside_task = loop.run_in_executor(
+            None,
+            lambda: scan_strong_outside_watchlist(
+                merged,
+                prefs.strong_threshold,
+                max_symbols=outside_limit,
+                max_workers=2,
+            ),
+        )
+        outside = await asyncio.wait_for(outside_task, timeout=outside_timeout)
+        mset = {normalize_symbol(x) for x in merged}
+        outside = [(s, r) for s, r in outside if normalize_symbol(s) not in mset]
+        if outside:
+            preview = ", ".join(f"{s} ({r.score:+.2f})" for s, r in outside[:3])
+            await message.reply_text(
+                f"⚡ Сильные сигналы вне списка: {preview}",
+                reply_markup=_analysis_menu_keyboard(),
+            )
+    except asyncio.TimeoutError:
+        log.info("dashboard outside scan timeout: %.1fs", outside_timeout)
+    except Exception:
+        log.exception("dashboard outside scan")
 
 
 async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
