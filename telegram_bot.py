@@ -119,22 +119,202 @@ _PICK_GROUPS: dict[str, tuple[str, list[str]]] = {
     "en": ("🛢️ Отрасль: Энергия", _SECTOR_MAP["energy"]),
 }
 _PICK_PAGE_SIZE = 10
+_PICK_GROUP_DESCRIPTIONS: dict[str, str] = {
+    "ru": "Крупные ликвидные акции Мосбиржи.",
+    "us": "Крупнейшие международные компании США.",
+    "div": "Компании с устойчивой дивидендной историей.",
+    "tech": "Лидеры IT и полупроводников.",
+    "fin": "Банки, биржи и платёжные системы.",
+    "en": "Нефть, газ и энергетика.",
+}
+_SYMBOL_TITLES: dict[str, str] = {
+    "AAPL": "Apple",
+    "MSFT": "Microsoft",
+    "GOOGL": "Alphabet",
+    "AMZN": "Amazon",
+    "META": "Meta",
+    "NVDA": "NVIDIA",
+    "JPM": "JPMorgan",
+    "BAC": "Bank of America",
+    "WFC": "Wells Fargo",
+    "GS": "Goldman Sachs",
+    "MS": "Morgan Stanley",
+    "V": "Visa",
+    "MA": "Mastercard",
+    "AXP": "American Express",
+    "XOM": "Exxon Mobil",
+    "CVX": "Chevron",
+    "COP": "ConocoPhillips",
+    "SLB": "Schlumberger",
+    "ORCL": "Oracle",
+    "CRM": "Salesforce",
+    "QCOM": "Qualcomm",
+    "INTC": "Intel",
+    "SBER.ME": "Сбер",
+    "GAZP.ME": "Газпром",
+    "LKOH.ME": "Лукойл",
+    "GMKN.ME": "Норникель",
+    "NVTK.ME": "Новатэк",
+    "ROSN.ME": "Роснефть",
+    "TATN.ME": "Татнефть",
+    "MOEX.ME": "Мосбиржа",
+    "MGNT.ME": "Магнит",
+    "MTSS.ME": "МТС",
+    "CHMF.ME": "Северсталь",
+    "NLMK.ME": "НЛМК",
+    "YNDX.ME": "Яндекс",
+    "PLZL.ME": "Полюс",
+    "VTBR.ME": "ВТБ",
+}
 
 
 def _main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("/signal"), KeyboardButton("/dashboard")],
-            [KeyboardButton("/price"), KeyboardButton("/watchlist")],
-            [KeyboardButton("/pick"), KeyboardButton("меню")],
-            [KeyboardButton("/collect"), KeyboardButton("/status")],
-            [KeyboardButton("/export"), KeyboardButton("/notify on"), KeyboardButton("/notify off")],
-            [KeyboardButton("/help")],
+            [KeyboardButton("📈 Аналитика"), KeyboardButton("📚 Списки и подбор")],
+            [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Уведомления")],
+            [KeyboardButton("🏠 Главное меню"), KeyboardButton("❓ Помощь")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
         selective=False,
     )
+
+
+def _analysis_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("📊 Анализ тикера"), KeyboardButton("💲 Цена тикера")],
+            [KeyboardButton("🧾 Свод по рынку")],
+            [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
+def _lists_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("⭐ Мой watchlist"), KeyboardButton("🧭 Подбор тикеров")],
+            [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
+def _collect_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("🗂️ Сбор сигналов"), KeyboardButton("📈 Статус сбора")],
+            [KeyboardButton("📤 Выгрузить лог")],
+            [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
+def _notify_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("🔔 Уведомления ВКЛ"), KeyboardButton("🔕 Уведомления ВЫКЛ")],
+            [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
+async def _show_root_sections_menu(message) -> None:
+    if not message:
+        return
+    await message.reply_text(
+        "Выберите раздел:",
+        reply_markup=_main_menu_keyboard(),
+    )
+
+
+async def _show_analysis_menu(message) -> None:
+    if not message:
+        return
+    await message.reply_text(
+        "📈 <b>Аналитика</b>\n"
+        "• Анализ тикера\n"
+        "• Быстрая цена\n"
+        "• Свод по рынку",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_analysis_menu_keyboard(),
+    )
+
+
+async def _show_lists_menu(message) -> None:
+    if not message:
+        return
+    await message.reply_text(
+        "📚 <b>Списки и подбор</b>\n"
+        "• Ваш watchlist\n"
+        "• Подбор тикеров по категориям и отраслям",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_lists_menu_keyboard(),
+    )
+
+
+async def _show_collect_menu(message) -> None:
+    if not message:
+        return
+    await message.reply_text(
+        "🗂️ <b>Сбор и экспорт</b>\n"
+        "• Запуск массового сбора\n"
+        "• Статус накопления\n"
+        "• Выгрузка JSONL",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_collect_menu_keyboard(),
+    )
+
+
+async def _show_notify_menu(message) -> None:
+    if not message:
+        return
+    await message.reply_text(
+        "⚙️ <b>Уведомления</b>\n"
+        "Включение/выключение уведомлений о сильных сигналах вне watchlist.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_notify_menu_keyboard(),
+    )
+
+
+def _keyboard_for_section(section: str) -> ReplyKeyboardMarkup:
+    if section == "analysis":
+        return _analysis_menu_keyboard()
+    if section == "lists":
+        return _lists_menu_keyboard()
+    if section == "collect":
+        return _collect_menu_keyboard()
+    if section == "notify":
+        return _notify_menu_keyboard()
+    return _main_menu_keyboard()
+
+
+def _section_for_action(action: str) -> str:
+    if action in ("signal", "price", "dashboard"):
+        return "analysis"
+    if action in ("pick", "watchlist"):
+        return "lists"
+    if action in ("collect", "status", "export"):
+        return "collect"
+    if action in ("notify_on", "notify_off"):
+        return "notify"
+    return "root"
+
+
+def _reply_markup_for_action(action: str) -> ReplyKeyboardMarkup:
+    return _keyboard_for_section(_section_for_action(action))
 
 
 def _set_pending_action(context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
@@ -160,29 +340,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
     text = (
-        "Привет. <b>Полный анализ</b>: техника, импульс, новости, объём, онлайн, макро.\n\n"
-        "<b>Котировки</b>\n"
-        "/price TICKER — быстрая цена\n\n"
-        "<b>Один тикер</b>\n"
-        "/signal TICKER [tape] [ws]\n\n"
-        "<b>Свод по одному или нескольким тикерам + секции рынка</b>\n"
-        "/dashboard [TICKER …] [tape] [ws]\n"
-        "— объединяет ваш <b>список</b> и указанные тикеры; секции: "
-        "🇷🇺 голубые РФ, 🌐 иностранные голубые, 💰 дивидендные, прочие.\n"
-        "Если есть <b>сильный сигнал</b> по бумаге <b>не из вашего списка</b> — показывается отдельным блоком.\n\n"
-        "<b>Список пользователя</b> (для свода и уведомлений «вне списка»)\n"
-        "/watchlist — показать\n"
-        "/watchlist add TICKER …\n"
-        "/watchlist remove TICKER\n"
-        "/watchlist clear\n\n"
-        "/notify on|off — уведомления о сильных сигналах вне списка\n\n"
-        "<b>Сбор сигналов для анализа</b>\n"
-        "/collect [TICKER …] — прогнать анализ и записать в лог\n"
-        "/status — сколько сигналов собрано\n"
-        "/export — выгрузить файл лога (JSONL)\n\n"
-        "/pick — выбрать тикер из готовых списков и отраслей\n"
-        "/help — это сообщение\n\n"
-        "⬇️ Используйте кнопки меню внизу для быстрого выбора команды."
+        "Привет. Это <b>Stock Signal Analyzer</b>.\n\n"
+        "Для удобства функции разложены по разделам:\n"
+        "• 📈 Аналитика\n"
+        "• 📚 Списки и подбор\n"
+        "• 🗂️ Сбор и экспорт\n"
+        "• ⚙️ Уведомления\n\n"
+        "Выберите раздел кнопками ниже."
     )
     await update.message.reply_text(
         text,
@@ -218,6 +382,17 @@ async def _send_price_for_symbol(message, sym: str) -> None:
     await message.reply_text(body, parse_mode=ParseMode.HTML)
 
 
+def _symbol_button_text(sym: str) -> str:
+    title = _SYMBOL_TITLES.get(sym, "")
+    if not title:
+        base = sym.replace(".ME", "")
+        title = _SYMBOL_TITLES.get(base, "")
+    if not title:
+        return sym
+    text = f"{sym} · {title}"
+    return text if len(text) <= 34 else f"{sym} · {title[:20]}…"
+
+
 async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
@@ -229,6 +404,7 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Укажите тикер: /price AAPL или /price SBER.ME\n"
             "Я жду ваш ответ следующим сообщением (или напишите: отмена).",
             parse_mode=ParseMode.HTML,
+            reply_markup=_reply_markup_for_action("price"),
         )
         return
     _clear_pending_action(context)
@@ -269,16 +445,16 @@ async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
 def _pick_categories_markup() -> InlineKeyboardMarkup:
     rows = [
         [
-            InlineKeyboardButton("🇷🇺 Голубые РФ", callback_data="pk|c|ru|0"),
-            InlineKeyboardButton("🌐 Голубые США", callback_data="pk|c|us|0"),
+            InlineKeyboardButton("🇷🇺 Голубые РФ (ликвидные)", callback_data="pk|c|ru|0"),
+            InlineKeyboardButton("🌐 Голубые США (крупные)", callback_data="pk|c|us|0"),
         ],
         [
-            InlineKeyboardButton("💰 Дивидендные", callback_data="pk|c|div|0"),
-            InlineKeyboardButton("🖥️ Технологии", callback_data="pk|c|tech|0"),
+            InlineKeyboardButton("💰 Дивидендные (стабильные)", callback_data="pk|c|div|0"),
+            InlineKeyboardButton("🖥️ Отрасль: Технологии", callback_data="pk|c|tech|0"),
         ],
         [
-            InlineKeyboardButton("🏦 Финансы", callback_data="pk|c|fin|0"),
-            InlineKeyboardButton("🛢️ Энергия", callback_data="pk|c|en|0"),
+            InlineKeyboardButton("🏦 Отрасль: Финансы", callback_data="pk|c|fin|0"),
+            InlineKeyboardButton("🛢️ Отрасль: Энергия", callback_data="pk|c|en|0"),
         ],
     ]
     return InlineKeyboardMarkup(rows)
@@ -295,7 +471,10 @@ def _pick_tickers_markup(group_id: str, page: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for i in range(0, len(batch), 2):
         pair = batch[i:i + 2]
-        row = [InlineKeyboardButton(s, callback_data=f"pk|t|{s}|{group_id}|{page}") for s in pair]
+        row = [
+            InlineKeyboardButton(_symbol_button_text(s), callback_data=f"pk|t|{s}|{group_id}|{page}")
+            for s in pair
+        ]
         rows.append(row)
 
     nav: list[InlineKeyboardButton] = []
@@ -313,12 +492,12 @@ def _pick_actions_markup(sym: str, group_id: str, page: int) -> InlineKeyboardMa
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("📊 Анализ", callback_data=f"pk|a|sig|{sym}|{group_id}|{page}"),
-                InlineKeyboardButton("💲 Цена", callback_data=f"pk|a|price|{sym}|{group_id}|{page}"),
+                InlineKeyboardButton("📊 Анализ (полный отчет)", callback_data=f"pk|a|sig|{sym}|{group_id}|{page}"),
+                InlineKeyboardButton("💲 Цена (быстро)", callback_data=f"pk|a|price|{sym}|{group_id}|{page}"),
             ],
             [
-                InlineKeyboardButton("⭐ В watchlist", callback_data=f"pk|a|watch|{sym}|{group_id}|{page}"),
-                InlineKeyboardButton("🧾 В dashboard", callback_data=f"pk|a|dash|{sym}|{group_id}|{page}"),
+                InlineKeyboardButton("⭐ Добавить в watchlist", callback_data=f"pk|a|watch|{sym}|{group_id}|{page}"),
+                InlineKeyboardButton("🧾 Добавить в dashboard", callback_data=f"pk|a|dash|{sym}|{group_id}|{page}"),
             ],
             [InlineKeyboardButton("🔙 К списку", callback_data=f"pk|c|{group_id}|{page}")],
         ]
@@ -329,7 +508,8 @@ async def cmd_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
     await update.message.reply_text(
-        "Выберите категорию тикеров:",
+        "Выберите категорию тикеров.\n"
+        "Дальше можно выбрать бумагу и действие: анализ, цена, добавление в watchlist/dashboard.",
         reply_markup=_pick_categories_markup(),
     )
 
@@ -348,7 +528,11 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if action == "noop":
         return
     if action == "home":
-        await query.edit_message_text("Выберите категорию тикеров:", reply_markup=_pick_categories_markup())
+        await query.edit_message_text(
+            "Выберите категорию тикеров.\n"
+            "Дальше можно выбрать бумагу и действие: анализ, цена, добавление в watchlist/dashboard.",
+            reply_markup=_pick_categories_markup(),
+        )
         return
     if action == "c" and len(parts) >= 4:
         group_id = parts[2]
@@ -357,8 +541,10 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if not symbols:
             await query.edit_message_text("Список пуст.")
             return
+        group_desc = _PICK_GROUP_DESCRIPTIONS.get(group_id, "")
+        desc_line = f"\n{group_desc}" if group_desc else ""
         await query.edit_message_text(
-            f"{title}\nВыберите тикер:",
+            f"{title}{desc_line}\nВыберите тикер:",
             reply_markup=_pick_tickers_markup(group_id, page),
         )
         return
@@ -366,8 +552,11 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         sym = parts[2]
         group_id = parts[3]
         page = int(parts[4]) if parts[4].isdigit() else 0
+        sym_title = _SYMBOL_TITLES.get(sym, _SYMBOL_TITLES.get(sym.replace(".ME", ""), ""))
+        label = f"{_esc(sym)} — {_esc(sym_title)}" if sym_title else _esc(sym)
         await query.edit_message_text(
-            f"Тикер: <b>{_esc(sym)}</b>\nЧто сделать?",
+            f"Тикер: <b>{label}</b>\n"
+            "Что сделать с этим тикером?",
             parse_mode=ParseMode.HTML,
             reply_markup=_pick_actions_markup(sym, group_id, page),
         )
@@ -415,6 +604,7 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 "<code>AAPL</code> или <code>SBER.ME tape ws</code>\n"
                 "Я жду ваш ответ следующим сообщением (или напишите: отмена).",
                 parse_mode=ParseMode.HTML,
+                reply_markup=_reply_markup_for_action("signal"),
             )
         return
     _clear_pending_action(context)
@@ -488,6 +678,138 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def cmd_dashboard_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _cmd_dashboard_message_with_args(update.message, _uid(update), _args_from_text_command(update))
+
+
+async def on_menu_section_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_analysis_menu(update.message)
+
+
+async def on_menu_section_lists(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_lists_menu(update.message)
+
+
+async def on_menu_section_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_collect_menu(update.message)
+
+
+async def on_menu_section_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_notify_menu(update.message)
+
+
+async def on_menu_back_sections(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_root_sections_menu(update.message)
+
+
+async def on_menu_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _set_pending_action(context, "signal")
+    if update.message:
+        await update.message.reply_text(
+            "📊 <b>Анализ тикера</b>\n"
+            "Введите тикер: <code>AAPL</code> или <code>SBER.ME</code>\n"
+            "Опционально добавьте: <code>tape ws</code>.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_analysis_menu_keyboard(),
+        )
+
+
+async def on_menu_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _set_pending_action(context, "price")
+    if update.message:
+        await update.message.reply_text(
+            "💲 <b>Быстрая котировка</b>\n"
+            "Введите тикер: <code>AAPL</code> или <code>SBER.ME</code>.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_analysis_menu_keyboard(),
+        )
+
+
+async def on_menu_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _cmd_dashboard_message_with_args(update.message, _uid(update), [])
+
+
+async def on_menu_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+    prefs = load_prefs(uid)
+    if not prefs.watchlist:
+        await update.message.reply_text(
+            "⭐ <b>Ваш watchlist пуст</b>\n"
+            "Добавьте тикеры через /pick (кнопка «Добавить в watchlist»)\n"
+            "или командой: <code>/watchlist add SBER.ME AAPL</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=_lists_menu_keyboard(),
+        )
+        return
+    body = "<b>⭐ Ваш watchlist</b>\n" + "\n".join(_esc(s) for s in prefs.watchlist)
+    await update.message.reply_text(
+        body,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_lists_menu_keyboard(),
+    )
+
+
+async def on_menu_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await cmd_pick(update, context)
+
+
+async def on_menu_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _cmd_collect_with_args(update, [])
+
+
+async def on_menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await cmd_collect_status(update, context)
+
+
+async def on_menu_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await cmd_export(update, context)
+
+
+async def on_menu_notify_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+    prefs = load_prefs(uid)
+    prefs.notify_strong_outside = True
+    save_prefs(uid, prefs)
+    await update.message.reply_text(
+        "🔔 Уведомления о сильных сигналах: <b>включены</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_notify_menu_keyboard(),
+    )
+
+
+async def on_menu_notify_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+    prefs = load_prefs(uid)
+    prefs.notify_strong_outside = False
+    save_prefs(uid, prefs)
+    await update.message.reply_text(
+        "🔕 Уведомления о сильных сигналах: <b>выключены</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_notify_menu_keyboard(),
+    )
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -969,6 +1291,23 @@ def main() -> int:
     app.add_handler(
         MessageHandler(filters.Regex(r"^(?i:меню|menu)$"), cmd_start)
     )
+    app.add_handler(MessageHandler(filters.Regex(r"^📈\s*Аналитика$"), on_menu_section_analysis))
+    app.add_handler(MessageHandler(filters.Regex(r"^📚\s*Списки и подбор$"), on_menu_section_lists))
+    app.add_handler(MessageHandler(filters.Regex(r"^🗂️\s*Сбор и экспорт$"), on_menu_section_collect))
+    app.add_handler(MessageHandler(filters.Regex(r"^⚙️\s*Уведомления$"), on_menu_section_notify))
+    app.add_handler(MessageHandler(filters.Regex(r"^⬅️\s*Назад в разделы$"), on_menu_back_sections))
+    app.add_handler(MessageHandler(filters.Regex(r"^🏠\s*Главное меню$"), cmd_start))
+    app.add_handler(MessageHandler(filters.Regex(r"^❓\s*Помощь$"), cmd_help))
+    app.add_handler(MessageHandler(filters.Regex(r"^📊\s*Анализ тикера$"), on_menu_signal))
+    app.add_handler(MessageHandler(filters.Regex(r"^💲\s*Цена тикера$"), on_menu_price))
+    app.add_handler(MessageHandler(filters.Regex(r"^🧾\s*Свод по рынку$"), on_menu_dashboard))
+    app.add_handler(MessageHandler(filters.Regex(r"^⭐\s*Мой watchlist$"), on_menu_watchlist))
+    app.add_handler(MessageHandler(filters.Regex(r"^🧭\s*Подбор тикеров$"), on_menu_pick))
+    app.add_handler(MessageHandler(filters.Regex(r"^🗂️\s*Сбор сигналов$"), on_menu_collect))
+    app.add_handler(MessageHandler(filters.Regex(r"^📈\s*Статус сбора$"), on_menu_status))
+    app.add_handler(MessageHandler(filters.Regex(r"^📤\s*Выгрузить лог$"), on_menu_export))
+    app.add_handler(MessageHandler(filters.Regex(r"^🔔\s*Уведомления ВКЛ$"), on_menu_notify_on))
+    app.add_handler(MessageHandler(filters.Regex(r"^🔕\s*Уведомления ВЫКЛ$"), on_menu_notify_off))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, on_pending_text)
     )
