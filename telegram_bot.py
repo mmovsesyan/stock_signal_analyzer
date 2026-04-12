@@ -31,7 +31,7 @@ stenv.load_project_env()
 
 from telegram import Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from stock_signal_analyzer.dashboard import build_dashboard
 from stock_signal_analyzer.engine import build_report
@@ -134,10 +134,9 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(body, parse_mode=ParseMode.HTML)
 
 
-async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _cmd_signal_with_args(update: Update, args: list[str]) -> None:
     if not update.message:
         return
-    args = context.args or []
     sym, tape, ws, bad = sanitize_command_args(args)
     if bad or not sym:
         await update.message.reply_text(
@@ -166,13 +165,28 @@ async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
 
-async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _cmd_signal_with_args(update, context.args or [])
+
+
+def _args_from_text_command(update: Update) -> list[str]:
+    if not update.message or not update.message.text:
+        return []
+    parts = update.message.text.strip().split()
+    return parts[1:] if len(parts) > 1 else []
+
+
+async def cmd_signal_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _cmd_signal_with_args(update, _args_from_text_command(update))
+
+
+async def _cmd_dashboard_with_args(update: Update, args: list[str]) -> None:
     if not update.message:
         return
     uid = _uid(update)
     if not uid:
         return
-    args_syms, tape, ws = parse_dash_args(context.args or [])
+    args_syms, tape, ws = parse_dash_args(args)
     prefs = load_prefs(uid)
     merged: list[str] = []
     seen: set[str] = set()
@@ -213,6 +227,14 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     html_text = format_dashboard_bundle(bundle, outside)
     for chunk in split_telegram_html(html_text):
         await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+
+async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _cmd_dashboard_with_args(update, context.args or [])
+
+
+async def cmd_dashboard_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _cmd_dashboard_with_args(update, _args_from_text_command(update))
 
 
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -340,7 +362,7 @@ def _collect_signals_sync(tickers: list[str]) -> tuple[int, int, list[str]]:
     return ok, len(errors), errors
 
 
-async def cmd_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _cmd_collect_with_args(update: Update, args: list[str]) -> None:
     """
     /collect [TICKER ...] — прогнать анализ по тикерам и записать в SSA_SIGNAL_LOG.
     Без аргументов: watchlist + 30 дефолтных тикеров.
@@ -358,8 +380,6 @@ async def cmd_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     uid = _uid(update)
-    args = context.args or []
-
     if args:
         tickers = [normalize_symbol(a) for a in args if normalize_symbol(a)]
     else:
@@ -401,6 +421,14 @@ async def cmd_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             lines.append(f"  …и ещё {len(err_list) - 10}")
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def cmd_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _cmd_collect_with_args(update, context.args or [])
+
+
+async def cmd_collect_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _cmd_collect_with_args(update, _args_from_text_command(update))
 
 
 async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -448,6 +476,10 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
 
 
+async def cmd_export_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_export(update, context)
+
+
 async def cmd_collect_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/status — сколько сигналов собрано."""
     if not update.message:
@@ -487,6 +519,10 @@ async def cmd_collect_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_collect_status_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_collect_status(update, context)
 
 
 async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -600,17 +636,27 @@ def main() -> int:
     app.add_handler(CommandHandler("price", cmd_price))
     app.add_handler(CommandHandler("quote", cmd_price))
     app.add_handler(CommandHandler("signal", cmd_signal))
-    app.add_handler(CommandHandler("анализ", cmd_signal))
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
-    app.add_handler(CommandHandler("свод", cmd_dashboard))
     app.add_handler(CommandHandler("watchlist", cmd_watchlist))
     app.add_handler(CommandHandler("notify", cmd_notify))
     app.add_handler(CommandHandler("collect", cmd_collect))
-    app.add_handler(CommandHandler("сбор", cmd_collect))
     app.add_handler(CommandHandler("export", cmd_export))
-    app.add_handler(CommandHandler("выгрузка", cmd_export))
     app.add_handler(CommandHandler("status", cmd_collect_status))
-    app.add_handler(CommandHandler("статус", cmd_collect_status))
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^/анализ(?:@\w+)?(?:\s+.*)?$"), cmd_signal_ru)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^/свод(?:@\w+)?(?:\s+.*)?$"), cmd_dashboard_ru)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^/сбор(?:@\w+)?(?:\s+.*)?$"), cmd_collect_ru)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^/выгрузка(?:@\w+)?(?:\s+.*)?$"), cmd_export_ru)
+    )
+    app.add_handler(
+        MessageHandler(filters.Regex(r"^/статус(?:@\w+)?(?:\s+.*)?$"), cmd_collect_status_ru)
+    )
 
     def _graceful(signum, _frame):
         name = _sig.Signals(signum).name if hasattr(_sig, "Signals") else str(signum)
