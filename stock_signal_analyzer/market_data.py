@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,21 +47,34 @@ def _tbank_available() -> bool:
         return False
 
 
+def _tbank_hint(sym: str) -> str:
+    if not sym.endswith(".ME"):
+        return ""
+    tok = (os.environ.get("TINKOFF_INVEST_TOKEN") or os.environ.get("TINKOFF_TOKEN") or "").strip()
+    if not tok:
+        return " T-Bank токен не найден: задайте TINKOFF_INVEST_TOKEN (или TINKOFF_TOKEN)."
+    if not _tbank_available():
+        return " T-Bank SDK не готов: установите requirements-tbank.txt и проверьте токен."
+    return " T-Bank API не вернул историю по тикеру (проверьте права токена/доступность инструмента)."
+
+
 def _try_tbank_history(sym: str) -> tuple[pd.DataFrame | None, str, str]:
     """Fallback: дневные свечи из T-Bank API для РФ-тикеров."""
     try:
         from .tbank_invest import fetch_daily_history, tbank_sdk_available
         if not tbank_sdk_available():
+            _log.warning("T-Bank недоступен для %s: токен/SDK не готовы", sym)
             return None, "", ""
         df = fetch_daily_history(sym, days=400)
         if df is None or df.empty:
+            _log.warning("T-Bank не вернул дневную историю для %s", sym)
             return None, "", ""
         name = df.attrs.get("company_name", sym)
         currency = df.attrs.get("currency", "RUB")
         _log.info("T-Bank API: загружено %d дневных свечей для %s", len(df), sym)
         return df, name, currency
     except Exception as e:
-        _log.debug("T-Bank fallback failed for %s: %s", sym, e)
+        _log.warning("T-Bank fallback failed for %s: %s", sym, e)
         return None, "", ""
 
 
@@ -113,9 +127,7 @@ def fetch_snapshot_with_meta(symbol: str) -> tuple[TickerSnapshot, dict[str, Any
             return snap, info, profile
 
     if hist is None or hist.empty:
-        hint = ""
-        if sym.endswith(".ME"):
-            hint = " Задайте TINKOFF_INVEST_TOKEN для доступа к РФ-акциям через T-Bank API."
+        hint = _tbank_hint(sym)
         raise ValueError(
             f"Нет данных по тикеру {sym}. Проверьте биржу/суффикс "
             f"(например SBER.ME для Мосбиржи, TLT для облигаций US).{hint}"

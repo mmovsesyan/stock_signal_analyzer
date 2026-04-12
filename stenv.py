@@ -13,4 +13,5 @@ def load_project_env() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    load_dotenv(env_path)
+    # override=True: если в окружении есть пустое значение, .env должен его перезаписать.
+    load_dotenv(env_path, override=True)
