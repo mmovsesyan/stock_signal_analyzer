@@ -77,6 +77,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 log = logging.getLogger("telegram_bot")
+_PENDING_ACTION_KEY = "pending_action"
 
 
 def _normalize_menu_symbols(items: list[str]) -> list[str]:
@@ -134,6 +135,19 @@ def _main_menu_keyboard() -> ReplyKeyboardMarkup:
         one_time_keyboard=False,
         selective=False,
     )
+
+
+def _set_pending_action(context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
+    context.user_data[_PENDING_ACTION_KEY] = action
+
+
+def _get_pending_action(context: ContextTypes.DEFAULT_TYPE) -> str:
+    val = context.user_data.get(_PENDING_ACTION_KEY, "")
+    return val if isinstance(val, str) else ""
+
+
+def _clear_pending_action(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop(_PENDING_ACTION_KEY, None)
 
 
 def _uid(update: Update) -> int:
@@ -210,11 +224,14 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args or []
     sym, _, _, bad = sanitize_command_args(args)
     if bad or not sym:
+        _set_pending_action(context, "price")
         await update.message.reply_text(
-            "Укажите тикер: /price AAPL или /price SBER.ME",
+            "Укажите тикер: /price AAPL или /price SBER.ME\n"
+            "Я жду ваш ответ следующим сообщением (или напишите: отмена).",
             parse_mode=ParseMode.HTML,
         )
         return
+    _clear_pending_action(context)
     await _send_price_for_symbol(update.message, sym)
 
 
@@ -390,6 +407,17 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not (context.args or []):
+        _set_pending_action(context, "signal")
+        if update.message:
+            await update.message.reply_text(
+                "Введите тикер для анализа (можно с опциями):\n"
+                "<code>AAPL</code> или <code>SBER.ME tape ws</code>\n"
+                "Я жду ваш ответ следующим сообщением (или напишите: отмена).",
+                parse_mode=ParseMode.HTML,
+            )
+        return
+    _clear_pending_action(context)
     await _cmd_signal_message_with_args(update.message, context.args or [])
 
 
@@ -453,11 +481,66 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
 
 
 async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # /dashboard без аргументов работает по watchlist, поэтому pending не включаем.
+    _clear_pending_action(context)
     await _cmd_dashboard_message_with_args(update.message, _uid(update), context.args or [])
 
 
 async def cmd_dashboard_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _cmd_dashboard_message_with_args(update.message, _uid(update), _args_from_text_command(update))
+
+
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    if update.message:
+        await update.message.reply_text(
+            "Ок, ожидание ввода отменено.",
+            reply_markup=_main_menu_keyboard(),
+        )
+
+
+async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.text:
+        return
+    pending = _get_pending_action(context)
+    if not pending:
+        return
+
+    text = update.message.text.strip()
+    if not text:
+        return
+    lower = text.lower()
+    if lower in ("отмена", "cancel"):
+        await cmd_cancel(update, context)
+        return
+    if lower in ("меню", "menu"):
+        _clear_pending_action(context)
+        await cmd_start(update, context)
+        return
+
+    args = text.split()
+    if pending == "price":
+        sym, _, _, bad = sanitize_command_args(args)
+        if bad or not sym:
+            await update.message.reply_text(
+                "Не понял тикер. Пример: <code>AAPL</code> или <code>SBER.ME</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        _clear_pending_action(context)
+        await _send_price_for_symbol(update.message, sym)
+        return
+
+    if pending == "signal":
+        sym, _, _, bad = sanitize_command_args(args)
+        if bad or not sym:
+            await update.message.reply_text(
+                "Не понял запрос. Пример: <code>AAPL</code> или <code>SBER.ME tape ws</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        _clear_pending_action(context)
+        await _cmd_signal_message_with_args(update.message, args)
 
 
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -857,6 +940,7 @@ def main() -> int:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("menu", cmd_start))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("price", cmd_price))
     app.add_handler(CommandHandler("quote", cmd_price))
     app.add_handler(CommandHandler("signal", cmd_signal))
@@ -884,6 +968,9 @@ def main() -> int:
     )
     app.add_handler(
         MessageHandler(filters.Regex(r"^(?i:меню|menu)$"), cmd_start)
+    )
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, on_pending_text)
     )
     app.add_handler(CallbackQueryHandler(on_pick_callback, pattern=r"^pk\|"))
 
