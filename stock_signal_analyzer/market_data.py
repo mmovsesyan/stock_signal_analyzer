@@ -23,6 +23,29 @@ class TickerSnapshot:
     history: pd.DataFrame
 
 
+def _symbol_for_yahoo(sym: str) -> str:
+    """
+    Нормализация тикера под формат Yahoo:
+    - BRK.B -> BRK-B
+    - другие US тикеры с точкой -> через дефис
+    - MOEX (.ME) не трогаем
+    """
+    if sym.endswith(".ME"):
+        return sym
+    if "." in sym:
+        return sym.replace(".", "-")
+    return sym
+
+
+def _tbank_available() -> bool:
+    try:
+        from .tbank_invest import tbank_sdk_available
+
+        return bool(tbank_sdk_available())
+    except Exception:
+        return False
+
+
 def _try_tbank_history(sym: str) -> tuple[pd.DataFrame | None, str, str]:
     """Fallback: дневные свечи из T-Bank API для РФ-тикеров."""
     try:
@@ -47,8 +70,25 @@ def fetch_snapshot_with_meta(symbol: str) -> tuple[TickerSnapshot, dict[str, Any
     Для .ME тикеров: если Yahoo не отдаёт данные, пробуем T-Bank API.
     """
     sym = symbol.strip().upper()
-    t = yf.Ticker(sym)
+    ysym = _symbol_for_yahoo(sym)
     info: dict[str, Any] = {}
+
+    # Для РФ-тикеров при доступном SDK сразу идём в T-Bank: это быстрее и без шума Yahoo.
+    if sym.endswith(".ME") and _tbank_available():
+        tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
+        if tb_hist is not None and not tb_hist.empty:
+            profile = classify_instrument(sym, {})
+            last = float(tb_hist["Close"].iloc[-1])
+            snap = TickerSnapshot(
+                symbol=sym,
+                last_close=last,
+                currency=tb_currency or "RUB",
+                company_name=tb_name or sym,
+                history=tb_hist,
+            )
+            return snap, info, profile
+
+    t = yf.Ticker(ysym)
     try:
         info = t.info or {}
     except Exception:
@@ -96,7 +136,21 @@ def fetch_snapshot_with_meta(symbol: str) -> tuple[TickerSnapshot, dict[str, Any
 def fetch_history(symbol: str, period: str = "6mo", interval: str = "1d") -> TickerSnapshot:
     """Обратная совместимость: без классификации по типу бумаги."""
     sym = symbol.strip().upper()
-    t = yf.Ticker(sym)
+    ysym = _symbol_for_yahoo(sym)
+
+    if sym.endswith(".ME") and _tbank_available():
+        tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
+        if tb_hist is not None and not tb_hist.empty:
+            last = float(tb_hist["Close"].iloc[-1])
+            return TickerSnapshot(
+                symbol=sym,
+                last_close=last,
+                currency=tb_currency or "RUB",
+                company_name=tb_name or sym,
+                history=tb_hist,
+            )
+
+    t = yf.Ticker(ysym)
     hist = t.history(period=period, interval=interval, auto_adjust=True)
     if hist is None or hist.empty:
         raise ValueError(
