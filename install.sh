@@ -1,637 +1,263 @@
-#!/usr/bin/env bash
-###############################################################################
-#  Stock Signal Analyzer — Установка (интерактив + авто)
-#
-#  Использование:
-#    git clone <repo-url> && cd stock_signal_analyzer && bash install.sh
-#    bash install.sh --auto
-#    TELEGRAM_BOT_TOKEN=... TINKOFF_INVEST_TOKEN=... FINNHUB_API_KEY=... bash install.sh --auto
-#
-#  Что делает:
-#    1. Ставит системные пакеты (python3, venv)
-#    2. Создаёт venv + зависимости (PyPI + T-Bank SDK)
-#    3. Запрашивает токены (Telegram, T-Bank, Finnhub)
-#    4. Настраивает systemd-сервис
-#    5. Запускает бота
-###############################################################################
-set -euo pipefail
+#!/bin/bash
+# Полная автоматическая установка Stock Signal Analyzer на сервере
 
-# Не выполнять установку как root при «sudo bash install.sh»: перезапуск под исходным пользователем (venv и User= совпадут).
-if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    exec sudo -u "$SUDO_USER" bash "$0" "$@"
+set -e
+
+echo "🚀 Stock Signal Analyzer - Полная автоматическая установка"
+echo "==========================================================="
+echo ""
+
+# Проверка ОС
+if [[ "$OSTYPE" != "linux-gnu"* ]]; then
+    echo "❌ Этот скрипт работает только на Linux"
+    exit 1
 fi
 
-# ── Режимы и аргументы ───────────────────────────────────────────────────────
-AUTO_MODE=0
-MENU_CHOICE="${MENU_CHOICE:-}"
-AUTO_INSTALL_TBANK="${AUTO_INSTALL_TBANK:-y}"        # y/n
-AUTO_ENABLE_SERVICE="${AUTO_ENABLE_SERVICE:-y}"      # y/n
-AUTO_START_SERVICE="${AUTO_START_SERVICE:-y}"        # y/n
-AUTO_COLLECT_INTERVAL_SEC="${AUTO_COLLECT_INTERVAL_SEC:-14400}"
-AUTO_RUN_SMOKE_TEST="${AUTO_RUN_SMOKE_TEST:-n}"      # y/n
-
-for arg in "$@"; do
-    case "$arg" in
-        --auto|-a)
-            AUTO_MODE=1
-            MENU_CHOICE="1"
-            ;;
-        --check)
-            MENU_CHOICE="6"
-            ;;
-        --help|-h)
-            cat <<'USAGE'
-Usage:
-  bash install.sh               # interactive menu
-  bash install.sh --auto        # full automatic install for VPS
-  bash install.sh --check       # run health checks
-
-Auto mode environment variables:
-  TELEGRAM_BOT_TOKEN=...        required for bot runtime
-  TINKOFF_INVEST_TOKEN=...      optional
-  FINNHUB_API_KEY=...           optional
-  AUTO_INSTALL_TBANK=y|n        default: y
-  AUTO_ENABLE_SERVICE=y|n       default: y
-  AUTO_START_SERVICE=y|n        default: y
-  AUTO_COLLECT_INTERVAL_SEC=... default: 14400
-  AUTO_RUN_SMOKE_TEST=y|n       default: n
-USAGE
-            exit 0
-            ;;
-    esac
-done
-
-# ── Цвета ────────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
-
-# ── Хелперы ──────────────────────────────────────────────────────────────────
-info()    { echo -e "${CYAN}[INFO]${NC} $*"; }
-ok()      { echo -e "${GREEN}[  OK]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
-fail()    { echo -e "${RED}[FAIL]${NC} $*"; }
-header()  { echo -e "\n${BOLD}═══ $* ═══${NC}\n"; }
-divider() { echo -e "${DIM}─────────────────────────────────────────────────${NC}"; }
-
-normalize_yn() {
-    local value="${1:-n}"
-    if [[ "$value" =~ ^[Yy]([Ee][Ss])?$ ]]; then
-        echo "y"
-    else
-        echo "n"
-    fi
-}
-
-ensure_linux_vps_prereqs() {
-    if [ ! -f /etc/os-release ]; then
-        fail "Нужен Linux VPS с /etc/os-release (Ubuntu/Debian)."
-        exit 1
-    fi
-
-    . /etc/os-release
-    info "Система: ${PRETTY_NAME:-unknown}"
-
-    if ! command -v apt-get >/dev/null 2>&1; then
-        fail "apt-get не найден. Скрипт рассчитан на Ubuntu/Debian."
-        exit 1
-    fi
-
-    if ! command -v systemctl >/dev/null 2>&1; then
-        fail "systemctl не найден. Нужна система с systemd."
-        exit 1
-    fi
-}
-
-ensure_sudo_available() {
-    if ! command -v sudo &>/dev/null; then
-        fail "sudo не найден. Запустите от root или установите sudo."
-        exit 1
-    fi
-    if [ "$AUTO_MODE" -eq 1 ] && [ "$(id -u)" -ne 0 ]; then
-        if ! sudo -n true 2>/dev/null; then
-            fail "В --auto режиме нужен парольless sudo (или запуск от root)."
-            exit 1
-        fi
-    fi
-}
-
-ask() {
-    local prompt="$1" default="${2:-}" var_name="$3"
-    if [ -n "$default" ]; then
-        echo -en "${BOLD}$prompt${NC} ${DIM}[$default]${NC}: "
-    else
-        echo -en "${BOLD}$prompt${NC}: "
-    fi
-    read -r input
-    eval "$var_name=\"${input:-$default}\""
-}
-
-ask_secret() {
-    local prompt="$1" var_name="$2"
-    echo -en "${BOLD}$prompt${NC}: "
-    read -rs input
-    echo ""
-    eval "$var_name=\"$input\""
-}
-
-ask_yn() {
-    local prompt="$1" default="${2:-y}"
-    local hint="Y/n"
-    [ "$default" = "n" ] && hint="y/N"
-    echo -en "${BOLD}$prompt${NC} ${DIM}[$hint]${NC}: "
-    read -r input
-    input="${input:-$default}"
-    [[ "$input" =~ ^[Yy] ]]
-}
-
-spinner() {
-    local pid=$1 msg="$2"
-    local chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    while kill -0 "$pid" 2>/dev/null; do
-        for (( i=0; i<${#chars}; i++ )); do
-            echo -en "\r  ${CYAN}${chars:$i:1}${NC} $msg"
-            sleep 0.1
-        done
-    done
-    wait "$pid" 2>/dev/null
-    local rc=$?
-    echo -en "\r"
-    return $rc
-}
-
-run_with_spinner() {
-    local msg="$1"; shift
-    "$@" &>/tmp/ssa_install_log.txt &
-    local pid=$!
-    spinner "$pid" "$msg" && ok "$msg" || { fail "$msg"; echo "  Лог: /tmp/ssa_install_log.txt"; return 1; }
-}
-
-# ── Баннер ───────────────────────────────────────────────────────────────────
-# В неинтерактивной среде TERM может быть не задан; не падаем на clear.
-if command -v clear >/dev/null 2>&1; then
-    clear 2>/dev/null || true
-fi
-echo -e "${BOLD}"
-cat << 'BANNER'
-
-  ╔═══════════════════════════════════════════════════════╗
-  ║                                                       ║
-  ║     📊  Stock Signal Analyzer                         ║
-  ║     ─────────────────────────────                     ║
-  ║     Институциональные алгоритмы                       ║
-  ║     AQR • Bridgewater • DE Shaw • Two Sigma           ║
-  ║                                                       ║
-  ║     Telegram-бот + CLI + Бэктест                      ║
-  ║                                                       ║
-  ╚═══════════════════════════════════════════════════════╝
-
-BANNER
-echo -e "${NC}"
-
-# ── Базовая проверка среды ───────────────────────────────────────────────────
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    info "Система: ${PRETTY_NAME:-unknown}"
-else
-    warn "Не удалось определить ОС"
-fi
-ensure_sudo_available
-
-# ── Главное меню ─────────────────────────────────────────────────────────────
-if [ -z "$MENU_CHOICE" ]; then
-    header "Главное меню"
-    echo -e "  ${BOLD}1${NC}  Полная установка (рекомендуется)"
-    echo -e "  ${BOLD}2${NC}  Только обновить зависимости"
-    echo -e "  ${BOLD}3${NC}  Только настроить токены (.env)"
-    echo -e "  ${BOLD}4${NC}  Только настроить systemd-сервис"
-    echo -e "  ${BOLD}5${NC}  Управление ботом (старт/стоп/логи)"
-    echo -e "  ${BOLD}6${NC}  Проверка работоспособности"
-    echo -e "  ${BOLD}0${NC}  Выход"
-    echo ""
-    ask "Выберите" "1" MENU_CHOICE
-else
-    info "Режим: AUTO (пункт меню $MENU_CHOICE)"
+# Проверка прав
+if [[ $EUID -ne 0 ]]; then
+   echo "❌ Этот скрипт должен запускаться с sudo"
+   exit 1
 fi
 
-# ── Директория проекта ───────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$SCRIPT_DIR"
+# Проверка Python
+if ! command -v python3 &> /dev/null; then
+    echo "❌ Python 3 не установлен"
+    echo "Установите: apt install python3 python3-venv python3-pip"
+    exit 1
+fi
 
-install_system_deps() {
-    ensure_linux_vps_prereqs
-    header "Системные пакеты"
-    info "Устанавливаю python3, venv, pip, git, rsync..."
-    run_with_spinner "apt-get update" sudo apt-get update -qq
-    run_with_spinner "Установка системных пакетов" sudo apt-get install -y -qq python3 python3-venv python3-pip git rsync
-    ok "Системные пакеты готовы"
-}
+echo "✓ Python 3 найден: $(python3 --version)"
+echo ""
 
-install_python_deps() {
-    header "Python-зависимости"
+# Определить текущего пользователя (не root)
+CURRENT_USER=${SUDO_USER:-$(whoami)}
+if [ "$CURRENT_USER" = "root" ]; then
+    CURRENT_USER="root"
+fi
 
-    local pymaj pymin
-    pymaj=$(python3 -c 'import sys; print(sys.version_info[0])')
-    pymin=$(python3 -c 'import sys; print(sys.version_info[1])')
-    if (( pymaj < 3 || (pymaj == 3 && pymin < 9) )); then
-        fail "Нужен Python 3.9+, сейчас: $(python3 -V)"
-        exit 1
-    fi
+PROJECT_DIR=$(pwd)
+echo "📁 Директория проекта: $PROJECT_DIR"
+echo "👤 Пользователь: $CURRENT_USER"
+echo ""
 
-    if [ ! -d "$APP_DIR/.venv" ]; then
-        info "Создаю виртуальное окружение..."
-        python3 -m venv "$APP_DIR/.venv"
-        ok "venv создан"
-    else
-        ok "venv уже существует"
-    fi
+# ============================================================================
+# 1. СОЗДАТЬ VENV И УСТАНОВИТЬ ЗАВИСИМОСТИ
+# ============================================================================
 
-    run_with_spinner "Обновление pip" "$APP_DIR/.venv/bin/pip" install --upgrade pip -q
-    run_with_spinner "Установка зависимостей (PyPI)" "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" -q
+echo "📦 Создание виртуального окружения..."
+python3 -m venv venv
+chown -R $CURRENT_USER:$CURRENT_USER venv
 
-    divider
-    local install_tbank_answer
-    if [ "$AUTO_MODE" -eq 1 ]; then
-        install_tbank_answer="$(normalize_yn "$AUTO_INSTALL_TBANK")"
-        info "AUTO: установка T-Bank SDK = $install_tbank_answer"
-    elif ask_yn "Установить T-Bank SDK (для РФ-акций)?"; then
-        install_tbank_answer="y"
-    else
-        install_tbank_answer="n"
-    fi
+echo "✓ Активация venv..."
+source venv/bin/activate
 
-    if [ "$install_tbank_answer" = "y" ]; then
-        run_with_spinner "Установка T-Bank SDK" "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements-tbank.txt" -q \
-            || warn "T-Bank SDK не установился (не критично для US-тикеров)"
-    fi
+echo "📥 Установка зависимостей (это может занять 2-3 минуты)..."
+pip install --upgrade pip setuptools wheel > /dev/null 2>&1
+pip install -r requirements.txt > /dev/null 2>&1
 
-    ok "Все зависимости установлены"
-}
+echo "✅ Зависимости установлены!"
+echo ""
 
-configure_tokens() {
-    header "Настройка токенов"
+# ============================================================================
+# 2. СОЗДАТЬ ДИРЕКТОРИИ ДЛЯ ДАННЫХ
+# ============================================================================
 
-    local tg_token="" tb_token="" fh_key=""
-    local collect_sec="14400"
+echo "📂 Создание директорий для данных..."
+mkdir -p /var/lib/stock_signal_analyzer
+mkdir -p /var/log/stock_signal
+chown -R $CURRENT_USER:$CURRENT_USER /var/lib/stock_signal_analyzer
+chown -R $CURRENT_USER:$CURRENT_USER /var/log/stock_signal
+chmod 755 /var/lib/stock_signal_analyzer
+chmod 755 /var/log/stock_signal
 
-    if [ -f "$APP_DIR/.env" ]; then
-        # Подгрузить существующие значения
-        tg_token="$(grep -oP '(?<=^TELEGRAM_BOT_TOKEN=).+' "$APP_DIR/.env" 2>/dev/null || true)"
-        tb_token="$(grep -oP '(?<=^TINKOFF_INVEST_TOKEN=).+' "$APP_DIR/.env" 2>/dev/null || true)"
-        fh_key="$(grep -oP '(?<=^FINNHUB_API_KEY=).+' "$APP_DIR/.env" 2>/dev/null || true)"
-        collect_sec="$(grep -oP '(?<=^COLLECT_INTERVAL_SEC=).+' "$APP_DIR/.env" 2>/dev/null || true)"
-        collect_sec="${collect_sec:-14400}"
-        info "Найден .env — текущие значения будут показаны как default"
-    fi
+echo "✓ Директории созданы"
+echo ""
 
-    if [ "$AUTO_MODE" -eq 1 ]; then
-        tg_token="${TELEGRAM_BOT_TOKEN:-$tg_token}"
-        tb_token="${TINKOFF_INVEST_TOKEN:-$tb_token}"
-        fh_key="${FINNHUB_API_KEY:-$fh_key}"
-        collect_sec="${AUTO_COLLECT_INTERVAL_SEC:-$collect_sec}"
+# ============================================================================
+# 3. ЗАПРОСИТЬ КЛЮЧИ И СОЗДАТЬ .ENV
+# ============================================================================
 
-        if [ -z "$tg_token" ]; then
-            fail "В --auto режиме обязателен TELEGRAM_BOT_TOKEN."
-            exit 1
-        fi
-        info "AUTO: токены взяты из переменных окружения/существующего .env"
-    else
-        divider
-        echo -e "${BOLD}1. Telegram Bot Token${NC} (обязательно)"
-        echo -e "   ${DIM}Получить: @BotFather в Telegram → /newbot${NC}"
-        if [ -n "$tg_token" ]; then
-            local masked="${tg_token:0:8}...${tg_token: -4}"
-            echo -e "   ${DIM}Текущий: $masked${NC}"
-            if ! ask_yn "   Изменить?"; then
-                : # оставить как есть
-            else
-                ask_secret "   Токен Telegram" tg_token
-            fi
-        else
-            ask_secret "   Токен Telegram" tg_token
-        fi
+echo "🔑 Настройка ключей и токенов"
+echo "=============================="
+echo ""
 
-        divider
-        echo -e "${BOLD}2. T-Bank (Tinkoff Invest) Token${NC} (для РФ-акций)"
-        echo -e "   ${DIM}Получить: tbank.ru/invest/settings/api/${NC}"
-        if [ -n "$tb_token" ]; then
-            local masked="${tb_token:0:8}...${tb_token: -4}"
-            echo -e "   ${DIM}Текущий: $masked${NC}"
-            if ! ask_yn "   Изменить?" "n"; then
-                : # оставить
-            else
-                ask_secret "   Токен T-Bank" tb_token
-            fi
-        else
-            ask_secret "   Токен T-Bank (Enter — пропустить)" tb_token
-        fi
+# Telegram Bot Token
+echo "📱 Telegram Bot Token"
+echo "Получить: https://t.me/BotFather"
+read -p "Введите Bot Token (или Enter для пропуска): " TELEGRAM_TOKEN
 
-        divider
-        echo -e "${BOLD}3. Finnhub API Key${NC} (для US-новостей, макро-календаря)"
-        echo -e "   ${DIM}Бесплатно: finnhub.io → Get Free API Key${NC}"
-        if [ -n "$fh_key" ]; then
-            echo -e "   ${DIM}Текущий: ${fh_key:0:6}...${NC}"
-            if ! ask_yn "   Изменить?" "n"; then
-                : # оставить
-            else
-                ask_secret "   Ключ Finnhub (Enter — пропустить)" fh_key
-            fi
-        else
-            ask_secret "   Ключ Finnhub (Enter — пропустить)" fh_key
-        fi
+# Tinkoff Token
+echo ""
+echo "🏦 Tinkoff/T-Bank Token"
+echo "Получить: https://www.tbank.ru/invest/settings/api/"
+read -p "Введите Tinkoff Token (или Enter для пропуска): " TINKOFF_TOKEN
 
-        divider
-        echo -e "${BOLD}4. Автосбор сигналов${NC}"
-        echo -e "   ${DIM}Бот будет автоматически анализировать 30+ тикеров каждые N секунд${NC}"
-        echo -e "   ${DIM}14400 = каждые 4 часа, 0 = выключен${NC}"
-        ask "   Интервал (сек)" "$collect_sec" collect_sec
-    fi
+# Finnhub API Key
+echo ""
+echo "📊 Finnhub API Key (для US акций)"
+echo "Получить: https://finnhub.io/register"
+read -p "Введите Finnhub API Key (или Enter для пропуска): " FINNHUB_KEY
 
-    # Записываем .env
-    mkdir -p "$APP_DIR/data"
-    cat > "$APP_DIR/.env" << ENVEOF
-# === Stock Signal Analyzer — Конфигурация ===
-# Сгенерировано install.sh $(date '+%Y-%m-%d %H:%M')
+echo ""
 
-# Telegram Bot Token (обязательно для бота)
-TELEGRAM_BOT_TOKEN=${tg_token}
+# ============================================================================
+# 4. СОЗДАТЬ .ENV ФАЙЛ
+# ============================================================================
 
-# T-Bank (Tinkoff Invest) API Token — для РФ-акций
-TINKOFF_INVEST_TOKEN=${tb_token}
+echo "💾 Создание .env файла..."
 
-# Finnhub API Key — для US-новостей и макро-календаря
-FINNHUB_API_KEY=${fh_key}
+cat > "$PROJECT_DIR/.env" << EOF
+# Stock Signal Analyzer Configuration
+# Generated: $(date)
 
-# Лог сигналов (для /collect, /export и бэктеста)
-SSA_SIGNAL_LOG=${APP_DIR}/data/signals.jsonl
+# Telegram
+TELEGRAM_BOT_TOKEN=$TELEGRAM_TOKEN
 
-# Автосбор сигналов (секунды, 0 = выкл)
-COLLECT_INTERVAL_SEC=${collect_sec}
+# Tinkoff / T-Bank
+TINKOFF_TOKEN=$TINKOFF_TOKEN
 
-# Уведомления «сильный вне списка» (секунды)
+# Finnhub (для US акций)
+FINNHUB_API_KEY=$FINNHUB_KEY
+
+# Пути
+SSA_SIGNAL_LOG=/var/lib/stock_signal_analyzer/signals.jsonl
+STOCK_SIGNAL_DATA=/var/lib/stock_signal_analyzer
+
+# Автосбор (каждые 4 часа)
+COLLECT_INTERVAL_SEC=14400
+
+# Уведомления (каждый час)
 NOTIFY_INTERVAL_SEC=3600
-ENVEOF
+EOF
 
-    chmod 600 "$APP_DIR/.env"
-    ok "Файл .env сохранён (chmod 600)"
-}
+chown $CURRENT_USER:$CURRENT_USER "$PROJECT_DIR/.env"
+chmod 600 "$PROJECT_DIR/.env"
 
-setup_systemd() {
-    ensure_linux_vps_prereqs
-    header "Systemd-сервис"
+echo "✓ .env файл создан"
+echo ""
 
-    local svc_name="ssa-bot"
-    local svc_file="/etc/systemd/system/${svc_name}.service"
+# ============================================================================
+# 5. ДОБАВИТЬ ПЕРЕМЕННЫЕ В ~/.bashrc
+# ============================================================================
 
-    info "Создаю $svc_file..."
+echo "📝 Добавление переменных в ~/.bashrc..."
 
-    sudo tee "$svc_file" > /dev/null << SVCEOF
+BASHRC_FILE="/root/.bashrc"
+if [ "$CURRENT_USER" != "root" ]; then
+    BASHRC_FILE="/home/$CURRENT_USER/.bashrc"
+fi
+
+if ! grep -q "# Stock Signal Analyzer" "$BASHRC_FILE"; then
+    cat >> "$BASHRC_FILE" << 'EOF'
+
+# Stock Signal Analyzer
+export SSA_SIGNAL_LOG="/var/lib/stock_signal_analyzer/signals.jsonl"
+export STOCK_SIGNAL_DATA="/var/lib/stock_signal_analyzer"
+export COLLECT_INTERVAL_SEC="14400"
+EOF
+    echo "✓ Переменные добавлены в ~/.bashrc"
+else
+    echo "ℹ️  Переменные уже есть в ~/.bashrc"
+fi
+
+echo ""
+
+# ============================================================================
+# 6. НАСТРОИТЬ SYSTEMD СЕРВИС
+# ============================================================================
+
+echo "⚙️  Настройка systemd сервиса..."
+
+# Определить путь к Python в venv
+PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
+
+# Создать systemd сервис
+cat > /etc/systemd/system/stock-signal-bot.service << EOF
 [Unit]
 Description=Stock Signal Analyzer Telegram Bot
-After=network-online.target
-Wants=network-online.target
+After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
-WorkingDirectory=${APP_DIR}
-ExecStart=${APP_DIR}/.venv/bin/python telegram_bot.py
-Restart=on-failure
-RestartSec=15
+User=$CURRENT_USER
+WorkingDirectory=$PROJECT_DIR
+Environment="PATH=$PROJECT_DIR/venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=$PYTHON_BIN telegram_bot.py
+Restart=always
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
-# Безопасность
-NoNewPrivileges=true
-ProtectSystem=strict
-# Весь каталог проекта: импорт пишет __pycache__ в stock_signal_analyzer/, данные в data/, .env
-ReadWritePaths=${APP_DIR}
-PrivateTmp=true
-
 [Install]
 WantedBy=multi-user.target
-SVCEOF
+EOF
 
-    sudo systemctl daemon-reload
-    ok "Сервис $svc_name создан"
+echo "✓ Systemd сервис создан"
+echo ""
 
-    local enable_answer start_answer
-    if [ "$AUTO_MODE" -eq 1 ]; then
-        enable_answer="$(normalize_yn "$AUTO_ENABLE_SERVICE")"
-        start_answer="$(normalize_yn "$AUTO_START_SERVICE")"
-        info "AUTO: enable=$enable_answer, start=$start_answer"
-    else
-        if ask_yn "Включить автозапуск при перезагрузке?"; then
-            enable_answer="y"
-        else
-            enable_answer="n"
-        fi
-        if ask_yn "Запустить бота прямо сейчас?"; then
-            start_answer="y"
-        else
-            start_answer="n"
-        fi
-    fi
+# ============================================================================
+# 7. ЗАПУСТИТЬ SYSTEMD СЕРВИС
+# ============================================================================
 
-    if [ "$enable_answer" = "y" ]; then
-        sudo systemctl enable "$svc_name"
-        ok "Автозапуск включён"
-    fi
+echo "🚀 Запуск systemd сервиса..."
 
-    if [ "$start_answer" = "y" ]; then
-        sudo systemctl restart "$svc_name"
-        sleep 2
-        if sudo systemctl is-active --quiet "$svc_name"; then
-            ok "Бот запущен!"
-        else
-            fail "Бот не запустился. Логи:"
-            sudo journalctl -u "$svc_name" --no-pager -n 15
-        fi
-    fi
-}
+systemctl daemon-reload
+systemctl enable stock-signal-bot.service
+systemctl start stock-signal-bot.service
 
-manage_bot() {
-    ensure_linux_vps_prereqs
-    header "Управление ботом"
+sleep 2
 
-    local svc="ssa-bot"
-    local status
-    status="$(sudo systemctl is-active "$svc" 2>/dev/null || echo "not-found")"
-
-    echo -e "  Статус: ${BOLD}$status${NC}"
-    echo ""
-    echo -e "  ${BOLD}1${NC}  Запустить / Перезапустить"
-    echo -e "  ${BOLD}2${NC}  Остановить"
-    echo -e "  ${BOLD}3${NC}  Показать логи (последние 50 строк)"
-    echo -e "  ${BOLD}4${NC}  Следить за логами (live)"
-    echo -e "  ${BOLD}5${NC}  Статус подробный"
-    echo -e "  ${BOLD}0${NC}  Назад"
-    echo ""
-    ask "Выберите" "1" BOT_ACTION
-
-    case "$BOT_ACTION" in
-        1) sudo systemctl restart "$svc" && sleep 2 && ok "Бот перезапущен" ;;
-        2) sudo systemctl stop "$svc" && ok "Бот остановлен" ;;
-        3) sudo journalctl -u "$svc" --no-pager -n 50 ;;
-        4) info "Ctrl+C для выхода"; sudo journalctl -u "$svc" -f ;;
-        5) sudo systemctl status "$svc" --no-pager ;;
-        0) return ;;
-    esac
-}
-
-run_check() {
-    header "Проверка работоспособности"
-
-    divider
-    echo -n "  Python............... "
-    if "$APP_DIR/.venv/bin/python" --version &>/dev/null; then
-        ok "$("$APP_DIR/.venv/bin/python" --version 2>&1)"
-    else
-        fail "не найден"
-    fi
-
-    echo -n "  numpy+pandas......... "
-    if "$APP_DIR/.venv/bin/python" -c "import numpy, pandas" &>/dev/null; then
-        ok "OK"
-    else
-        fail "не установлены"
-    fi
-
-    echo -n "  yfinance............. "
-    if "$APP_DIR/.venv/bin/python" -c "import yfinance" &>/dev/null; then
-        ok "OK"
-    else
-        fail "не установлен"
-    fi
-
-    echo -n "  T-Bank SDK........... "
-    if "$APP_DIR/.venv/bin/python" -c "from t_tech.invest import Client" &>/dev/null; then
-        ok "OK (t_tech.invest)"
-    elif "$APP_DIR/.venv/bin/python" -c "from tinkoff.invest import Client" &>/dev/null; then
-        ok "OK (tinkoff.invest)"
-    else
-        warn "не установлен (РФ-тикеры без fallback)"
-    fi
-
-    echo -n "  Telegram PTB......... "
-    if "$APP_DIR/.venv/bin/python" -c "from telegram.ext import Application" &>/dev/null; then
-        ok "OK"
-    else
-        fail "не установлен"
-    fi
-
-    divider
-    echo -n "  .env файл............ "
-    if [ -f "$APP_DIR/.env" ]; then
-        ok "найден"
-    else
-        fail "отсутствует (запустите: настройка токенов)"
-    fi
-
-    echo -n "  TELEGRAM_BOT_TOKEN... "
-    local tg
-    tg="$("$APP_DIR/.venv/bin/python" -c "
-import stenv; stenv.load_project_env()
-import os; t=os.environ.get('TELEGRAM_BOT_TOKEN','')
-print('set' if t and t != '' else 'empty')
-" 2>/dev/null || echo "error")"
-    if [ "$tg" = "set" ]; then ok "задан"; else warn "не задан"; fi
-
-    echo -n "  TINKOFF_INVEST_TOKEN. "
-    local tb
-    tb="$("$APP_DIR/.venv/bin/python" -c "
-import stenv; stenv.load_project_env()
-import os; t=os.environ.get('TINKOFF_INVEST_TOKEN','')
-print('set' if t and t != '' else 'empty')
-" 2>/dev/null || echo "error")"
-    if [ "$tb" = "set" ]; then ok "задан"; else warn "не задан (РФ-акции не будут работать)"; fi
-
-    echo -n "  FINNHUB_API_KEY...... "
-    local fh
-    fh="$("$APP_DIR/.venv/bin/python" -c "
-import stenv; stenv.load_project_env()
-import os; t=os.environ.get('FINNHUB_API_KEY','')
-print('set' if t and t != '' else 'empty')
-" 2>/dev/null || echo "error")"
-    if [ "$fh" = "set" ]; then ok "задан"; else warn "не задан (макро-календарь отключён)"; fi
-
-    divider
-    echo -n "  systemd сервис....... "
-    if [ -f /etc/systemd/system/ssa-bot.service ]; then
-        local st
-        st="$(sudo systemctl is-active ssa-bot 2>/dev/null || echo "inactive")"
-        if [ "$st" = "active" ]; then ok "активен"; else warn "$st"; fi
-    else
-        warn "не создан"
-    fi
-
-    divider
-    local smoke_answer="n"
-    if [ "$AUTO_MODE" -eq 1 ]; then
-        smoke_answer="$(normalize_yn "$AUTO_RUN_SMOKE_TEST")"
-        info "AUTO: тестовый анализ AAPL = $smoke_answer"
-    elif ask_yn "Запустить тестовый анализ (AAPL)?"; then
-        smoke_answer="y"
-    fi
-
-    if [ "$smoke_answer" = "y" ]; then
-        info "Анализ AAPL..."
-        "$APP_DIR/.venv/bin/python" main.py AAPL 2>&1 | head -40
-    fi
-}
-
-# ── Выполнение ───────────────────────────────────────────────────────────────
-case "$MENU_CHOICE" in
-    1)
-        install_system_deps
-        install_python_deps
-        configure_tokens
-        setup_systemd
-        if [ "$AUTO_MODE" -eq 1 ]; then
-            run_check
-        fi
-
-        header "Установка завершена!"
-        echo -e "  ${GREEN}Бот готов к работе.${NC}"
-        echo ""
-        echo -e "  Команды:"
-        echo -e "    ${BOLD}sudo systemctl status ssa-bot${NC}   — статус"
-        echo -e "    ${BOLD}sudo journalctl -u ssa-bot -f${NC}  — логи"
-        echo -e "    ${BOLD}bash install.sh${NC}                 — меню"
-        echo ""
-        echo -e "  Telegram-команды бота:"
-        echo -e "    /signal AAPL — анализ тикера"
-        echo -e "    /collect — собрать 30+ сигналов"
-        echo -e "    /export — выгрузить для анализа"
-        echo ""
-        ;;
-    2)
-        install_python_deps
-        ;;
-    3)
-        configure_tokens
-        ;;
-    4)
-        setup_systemd
-        ;;
-    5)
-        manage_bot
-        ;;
-    6)
-        run_check
-        ;;
-    0)
-        echo "Выход."
-        exit 0
-        ;;
-    *)
-        fail "Неизвестный выбор: $MENU_CHOICE"
-        exit 1
-        ;;
-esac
+# Проверить статус
+if systemctl is-active --quiet stock-signal-bot.service; then
+    echo "✅ Бот успешно запущен!"
+else
+    echo "⚠️  Бот не запустился. Проверьте логи:"
+    echo "   journalctl -u stock-signal-bot.service -e"
+fi
 
 echo ""
+
+# ============================================================================
+# 8. ИТОГОВАЯ ИНФОРМАЦИЯ
+# ============================================================================
+
+echo "==========================================================="
+echo "✅ УСТАНОВКА ЗАВЕРШЕНА!"
+echo "==========================================================="
+echo ""
+
+echo "📋 Конфигурация:"
+echo "  Telegram Token: ${TELEGRAM_TOKEN:0:20}..."
+echo "  Tinkoff Token: ${TINKOFF_TOKEN:0:20}..."
+echo "  Finnhub Key: ${FINNHUB_KEY:0:20}..."
+echo ""
+
+echo "📂 Директории:"
+echo "  Проект: $PROJECT_DIR"
+echo "  Данные: /var/lib/stock_signal_analyzer"
+echo "  Логи: /var/log/stock_signal"
+echo ""
+
+echo "🎮 Управление ботом:"
+echo "  Статус:     sudo systemctl status stock-signal-bot.service"
+echo "  Логи:       sudo journalctl -u stock-signal-bot.service -f"
+echo "  Перезапуск: sudo systemctl restart stock-signal-bot.service"
+echo "  Остановка:  sudo systemctl stop stock-signal-bot.service"
+echo ""
+
+echo "📚 Документация:"
+echo "  BACKGROUND_RUN_TINKOFF.md - Полная инструкция"
+echo "  READY_TO_RUN.md - Быстрый старт"
+echo ""
+
+echo "🎯 Что дальше:"
+echo "  1. Бот работает в фоновом режиме 24/7"
+echo "  2. Автоматически собирает сигналы каждые 4 часа"
+echo "  3. Через 1-2 недели наберется 50+ сигналов"
+echo "  4. Запустить бэктест: python tools/backtest.py \$SSA_SIGNAL_LOG"
+echo ""
+
+echo "✨ Готово к использованию!"
+echo ""
+

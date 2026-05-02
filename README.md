@@ -15,7 +15,7 @@
 
 - **Торговые планы:**
   - Точки входа/выхода
-  - Стоп-лоссы и тейк-профиты (2 уровня)
+  - Стоп-лоссы и тейк-профиты (3 уровня)
   - Risk/Reward соотношения
   - Размер позиции с учётом риск-менеджмента
   - Trailing stop рекомендации
@@ -25,28 +25,194 @@
   - Полные отчёты по тикерам
   - Дашборды по спискам (РФ голубые фишки / US / дивидендные)
   - Автоматические уведомления о сильных сигналах
-  - Интерактивное меню
+  - Интерактивное меню на русском языке
+  - Управление автосбором через меню
 
 - **Поддержка рынков:**
   - 🇺🇸 US акции (Yahoo Finance, Finnhub)
-  - 🇷🇺 Российские акции (MOEX ISS, Т-Банк Invest API)
+  - 🇷🇺 Российские акции (MOEX ISS, Tinkoff Invest API)
   - Real-time данные через WebSocket
+
+- **Монетизация:**
+  - Автоматический сбор сигналов
+  - Отслеживание результатов (outcome tracker)
+  - Бэктестер для оценки прибыльности
+  - Фильтрация сигналов (3 пресета)
 
 ## 📋 Требования
 
-- Python 3.9+
+- Python 3.10+
+- Ubuntu 22.04+ или Debian 11+ (для продакшена)
 - API ключи:
-  - **Telegram Bot Token** (обязательно для бота) — получить у [@BotFather](https://t.me/BotFather)
-  - **Finnhub API Key** (опционально, для US новостей и real-time) — [finnhub.io](https://finnhub.io)
-  - **T-Bank Invest Token** (опционально, для РФ рынка) — [developer.tbank.ru](https://developer.tbank.ru)
+  - **Telegram Bot Token** (обязательно) — получить у [@BotFather](https://t.me/BotFather)
+  - **Tinkoff Token** (для РФ акций) — [tbank.ru/invest/settings/api](https://www.tbank.ru/invest/settings/api/)
+  - **Finnhub API Key** (для US акций) — [finnhub.io](https://finnhub.io)
 
-## 🚀 Быстрый старт
+## 🚀 Быстрый старт на сервере
 
-### 1. Клонирование и установка
+### Автоматическая установка (одна команда)
 
 ```bash
-git clone <repository-url>
-cd stock_signal_analyzer
+git clone git@github.com:username/stock_signal_analyzer.git && \
+cd stock_signal_analyzer && \
+sudo ./install.sh
+```
+
+**Скрипт автоматически:**
+- ✅ Создаст venv и установит все зависимости
+- ✅ Запросит все ключи (Telegram, Tinkoff, Finnhub)
+- ✅ Создаст .env файл
+- ✅ Настроит systemd сервис
+- ✅ Запустит бота в фоновом режиме
+
+### Проверка работы
+
+```bash
+# Статус бота
+sudo systemctl status stock-signal-bot.service
+
+# Логи в реальном времени
+sudo journalctl -u stock-signal-bot.service -f
+
+# Отправить в Telegram
+/start
+```
+
+## 📱 Telegram команды
+
+### Аналитика
+- `/signal AAPL` — полный анализ тикера с торговым планом
+- `/price SBER.ME` — быстрая цена
+- `/dashboard` — обзор рынка (топ сигналов)
+
+### Сбор сигналов
+- `/collect` — массовый сбор сигналов (30+ тикеров)
+- `/status` — статус сбора (сколько сигналов собрано)
+- `/export` — выгрузить все сигналы в файл
+
+### Управление
+- **⚙️ Настройки** → **🤖 Настройка автосбора**
+  - Включить/выключить дефолтные 30 тикеров
+  - Добавить свои тикеры для автосбора
+  - Просмотреть текущую конфигурацию
+
+## 🎮 Управление ботом
+
+```bash
+# Перезапуск
+sudo systemctl restart stock-signal-bot.service
+
+# Остановка
+sudo systemctl stop stock-signal-bot.service
+
+# Логи
+sudo journalctl -u stock-signal-bot.service -n 50
+```
+
+## 🔄 Обновление
+
+```bash
+cd /root/stock_signal_analyzer
+sudo systemctl stop stock-signal-bot.service
+git pull origin main
+source venv/bin/activate
+pip install -r requirements.txt --upgrade
+sudo systemctl start stock-signal-bot.service
+```
+
+## 📊 Монетизация
+
+### Путь к прибыли
+
+**Неделя 1-2: Сбор данных**
+- Бот автоматически собирает сигналы каждые 4 часа
+- Цель: 50-100 сигналов
+
+**Неделя 2: Бэктест**
+```bash
+source venv/bin/activate
+python tools/backtest.py /var/lib/stock_signal_analyzer/signals.jsonl --min-tier A
+```
+
+**Целевые метрики:**
+- Win rate: >60%
+- Profit factor: >2.0
+
+**Неделя 3+: Оптимизация и paper trading**
+
+**Месяц 2: MVP подписка**
+- Запуск платной подписки ($50-100/месяц)
+
+## 📚 Документация
+
+| Файл | Описание |
+|------|---------|
+| **QUICKSTART.md** | Быстрый старт (одна команда) |
+| **INSTALLATION_COMPLETE.md** | Полное описание установки |
+| **READY_TO_RUN.md** | Инструкция по запуску |
+| **BACKGROUND_RUN_TINKOFF.md** | Фоновый запуск + Tinkoff API |
+| **TELEGRAM_AUTOCOLLECT_READY.md** | Управление автосбором |
+| **QUICK_START_MONETIZATION.md** | Путь к монетизации |
+
+## 🛠️ Разработка
+
+### Локальный запуск (macOS/Linux)
+
+```bash
+# Создать venv
+python3 -m venv venv
+source venv/bin/activate
+
+# Установить зависимости
+pip install -r requirements.txt
+
+# Создать .env
+cp .env.example .env
+# Отредактировать .env (добавить токены)
+
+# Запустить бота
+python telegram_bot.py
+```
+
+## 🏗️ Архитектура
+
+```
+stock_signal_analyzer/
+├── engine.py              # Движок анализа
+├── signal_filter.py       # Фильтрация сигналов
+├── outcome_tracker.py     # Отслеживание результатов
+├── tinkoff_api.py         # Tinkoff API интеграция
+├── user_store.py          # Настройки пользователей
+└── ...
+
+telegram_bot.py            # Telegram бот
+
+tools/
+├── backtest.py            # Бэктестер
+├── monitor_signals.py     # Мониторинг сбора
+└── verify_monetization.py # Проверка компонентов
+
+deploy/
+├── stock-signal-bot-simple.service  # Systemd сервис
+└── ...
+
+install.sh                 # Автоматическая установка
+```
+
+## 📄 Лицензия
+
+MIT
+
+## 🤝 Поддержка
+
+- GitHub Issues: [github.com/username/stock_signal_analyzer/issues](https://github.com/username/stock_signal_analyzer/issues)
+- Документация: см. файлы `*.md` в корне проекта
+
+---
+
+**Версия:** 1.4.0  
+**Дата:** 2026-05-02  
+**Статус:** ✅ Готово к использованию
 
 # Создать виртуальное окружение
 python3 -m venv venv

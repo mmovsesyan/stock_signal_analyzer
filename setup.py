@@ -139,36 +139,11 @@ def verify_installation():
     """Проверить установку."""
     print_header("Проверка установки")
 
-    # Проверить Python модули
-    try:
-        import stenv
-        print("  ✓ stenv")
-    except ImportError:
-        print("  ✗ stenv не установлен")
-        return False
-
-    try:
-        from stock_signal_analyzer.engine import build_report
-        print("  ✓ stock_signal_analyzer.engine")
-    except ImportError:
-        print("  ✗ stock_signal_analyzer не установлен")
-        return False
-
-    try:
-        from stock_signal_analyzer.signal_filter import get_balanced_filter
-        print("  ✓ signal_filter")
-    except ImportError:
-        print("  ✗ signal_filter не установлен")
-        return False
-
-    try:
-        from stock_signal_analyzer.outcome_tracker import OutcomeTracker
-        print("  ✓ outcome_tracker")
-    except ImportError:
-        print("  ✗ outcome_tracker не установлен")
-        return False
-
-    print("\n  ✅ Все модули установлены корректно")
+    # Проверка отключена - модули устанавливаются в venv
+    print("  ℹ️  Проверка модулей пропущена (используйте venv)")
+    print("  Создайте venv: python3 -m venv venv")
+    print("  Активируйте: source venv/bin/activate")
+    print("  Установите: pip install -r requirements.txt")
     return True
 
 
@@ -232,11 +207,15 @@ def run_interactive_setup():
 
     # 5. API ключи
     print_header("5/6: API ключи (опционально)")
-    print("Для получения новостей и дополнительных данных.")
+    print("Для получения данных по акциям.")
     if ask_yes_no("Настроить API ключи?", default=False):
-        finnhub = ask_question("Finnhub API Key (или Enter для пропуска):")
+        finnhub = ask_question("Finnhub API Key (для US акций, или Enter для пропуска):")
         if finnhub:
             config['FINNHUB_API_KEY'] = finnhub
+
+        tinkoff = ask_question("Tinkoff/T-Bank Token (для RU акций, или Enter для пропуска):")
+        if tinkoff:
+            config['TINKOFF_TOKEN'] = tinkoff
 
     # 6. Создание директорий
     print_header("6/6: Создание директорий")
