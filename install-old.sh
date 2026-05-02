@@ -1,6 +1,5 @@
 #!/bin/bash
 # Полная автоматическая установка Stock Signal Analyzer на сервере
-# Версия 2 - исправлена работа с sudo и read
 
 set -e
 
@@ -14,6 +13,12 @@ if [[ "$OSTYPE" != "linux-gnu"* ]]; then
     exit 1
 fi
 
+# Проверка прав
+if [[ $EUID -ne 0 ]]; then
+   echo "❌ Этот скрипт должен запускаться с sudo"
+   exit 1
+fi
+
 # Проверка Python
 if ! command -v python3 &> /dev/null; then
     echo "❌ Python 3 не установлен"
@@ -24,13 +29,10 @@ fi
 echo "✓ Python 3 найден: $(python3 --version)"
 echo ""
 
-# Определить текущего пользователя
-if [ "$EUID" -eq 0 ]; then
-    # Запущено с sudo
-    CURRENT_USER=${SUDO_USER:-root}
-else
-    # Запущено без sudo
-    CURRENT_USER=$(whoami)
+# Определить текущего пользователя (не root)
+CURRENT_USER=${SUDO_USER:-$(whoami)}
+if [ "$CURRENT_USER" = "root" ]; then
+    CURRENT_USER="root"
 fi
 
 PROJECT_DIR=$(pwd)
@@ -44,7 +46,7 @@ echo ""
 
 echo "📦 Создание виртуального окружения..."
 python3 -m venv venv
-chown -R $CURRENT_USER:$CURRENT_USER venv 2>/dev/null || true
+chown -R $CURRENT_USER:$CURRENT_USER venv
 
 echo "✓ Активация venv..."
 source venv/bin/activate
@@ -63,8 +65,8 @@ echo ""
 echo "📂 Создание директорий для данных..."
 mkdir -p /var/lib/stock_signal_analyzer
 mkdir -p /var/log/stock_signal
-chown -R $CURRENT_USER:$CURRENT_USER /var/lib/stock_signal_analyzer 2>/dev/null || true
-chown -R $CURRENT_USER:$CURRENT_USER /var/log/stock_signal 2>/dev/null || true
+chown -R $CURRENT_USER:$CURRENT_USER /var/lib/stock_signal_analyzer
+chown -R $CURRENT_USER:$CURRENT_USER /var/log/stock_signal
 chmod 755 /var/lib/stock_signal_analyzer
 chmod 755 /var/log/stock_signal
 
@@ -79,27 +81,22 @@ echo "🔑 Настройка ключей и токенов"
 echo "=============================="
 echo ""
 
-# Если запущено с sudo, нужно читать из /dev/tty
-if [ "$EUID" -eq 0 ]; then
-    exec < /dev/tty
-fi
-
 # Telegram Bot Token
 echo "📱 Telegram Bot Token"
 echo "Получить: https://t.me/BotFather"
-read -r -p "Введите Bot Token (или Enter для пропуска): " TELEGRAM_TOKEN
+read -r -p "Введите Bot Token (или Enter для пропуска): " TELEGRAM_TOKEN < /dev/tty
 
 # Tinkoff Token
 echo ""
 echo "🏦 Tinkoff/T-Bank Token"
 echo "Получить: https://www.tbank.ru/invest/settings/api/"
-read -r -p "Введите Tinkoff Token (или Enter для пропуска): " TINKOFF_TOKEN
+read -r -p "Введите Tinkoff Token (или Enter для пропуска): " TINKOFF_TOKEN < /dev/tty
 
 # Finnhub API Key
 echo ""
 echo "📊 Finnhub API Key (для US акций)"
 echo "Получить: https://finnhub.io/register"
-read -r -p "Введите Finnhub API Key (или Enter для пропуска): " FINNHUB_KEY
+read -r -p "Введите Finnhub API Key (или Enter для пропуска): " FINNHUB_KEY < /dev/tty
 
 echo ""
 
@@ -133,7 +130,7 @@ COLLECT_INTERVAL_SEC=14400
 NOTIFY_INTERVAL_SEC=3600
 EOF
 
-chown $CURRENT_USER:$CURRENT_USER "$PROJECT_DIR/.env" 2>/dev/null || true
+chown $CURRENT_USER:$CURRENT_USER "$PROJECT_DIR/.env"
 chmod 600 "$PROJECT_DIR/.env"
 
 echo "✓ .env файл создан"
@@ -145,27 +142,22 @@ echo ""
 
 echo "📝 Добавление переменных в ~/.bashrc..."
 
-if [ "$CURRENT_USER" = "root" ]; then
-    BASHRC_FILE="/root/.bashrc"
-else
+BASHRC_FILE="/root/.bashrc"
+if [ "$CURRENT_USER" != "root" ]; then
     BASHRC_FILE="/home/$CURRENT_USER/.bashrc"
 fi
 
-if [ -f "$BASHRC_FILE" ]; then
-    if ! grep -q "# Stock Signal Analyzer" "$BASHRC_FILE"; then
-        cat >> "$BASHRC_FILE" << 'EOF'
+if ! grep -q "# Stock Signal Analyzer" "$BASHRC_FILE"; then
+    cat >> "$BASHRC_FILE" << 'EOF'
 
 # Stock Signal Analyzer
 export SSA_SIGNAL_LOG="/var/lib/stock_signal_analyzer/signals.jsonl"
 export STOCK_SIGNAL_DATA="/var/lib/stock_signal_analyzer"
 export COLLECT_INTERVAL_SEC="14400"
 EOF
-        echo "✓ Переменные добавлены в ~/.bashrc"
-    else
-        echo "ℹ️  Переменные уже есть в ~/.bashrc"
-    fi
+    echo "✓ Переменные добавлены в ~/.bashrc"
 else
-    echo "⚠️  ~/.bashrc не найден"
+    echo "ℹ️  Переменные уже есть в ~/.bashrc"
 fi
 
 echo ""
@@ -236,24 +228,9 @@ echo "==========================================================="
 echo ""
 
 echo "📋 Конфигурация:"
-if [ -n "$TELEGRAM_TOKEN" ]; then
-    echo "  ✓ Telegram Token: ${TELEGRAM_TOKEN:0:20}..."
-else
-    echo "  ⚠️  Telegram Token: не установлен"
-fi
-
-if [ -n "$TINKOFF_TOKEN" ]; then
-    echo "  ✓ Tinkoff Token: ${TINKOFF_TOKEN:0:20}..."
-else
-    echo "  ℹ️  Tinkoff Token: не установлен (опционально)"
-fi
-
-if [ -n "$FINNHUB_KEY" ]; then
-    echo "  ✓ Finnhub Key: ${FINNHUB_KEY:0:20}..."
-else
-    echo "  ℹ️  Finnhub Key: не установлен (опционально)"
-fi
-
+echo "  Telegram Token: ${TELEGRAM_TOKEN:0:20}..."
+echo "  Tinkoff Token: ${TINKOFF_TOKEN:0:20}..."
+echo "  Finnhub Key: ${FINNHUB_KEY:0:20}..."
 echo ""
 
 echo "📂 Директории:"
@@ -270,9 +247,8 @@ echo "  Остановка:  sudo systemctl stop stock-signal-bot.service"
 echo ""
 
 echo "📚 Документация:"
-echo "  QUICKSTART.md - Быстрый старт"
-echo "  INSTALLATION_COMPLETE.md - Полное описание"
-echo "  READY_TO_RUN.md - Инструкция по запуску"
+echo "  BACKGROUND_RUN_TINKOFF.md - Полная инструкция"
+echo "  READY_TO_RUN.md - Быстрый старт"
 echo ""
 
 echo "🎯 Что дальше:"
@@ -284,3 +260,4 @@ echo ""
 
 echo "✨ Готово к использованию!"
 echo ""
+
