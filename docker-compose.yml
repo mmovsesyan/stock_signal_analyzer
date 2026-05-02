@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # Telegram бот для сбора сигналов
+  bot:
+    build: .
+    container_name: stock-signal-bot
+    restart: unless-stopped
+    environment:
+      - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
+      - STOCK_SIGNAL_DATA=/data
+      - COLLECT_INTERVAL_SEC=${COLLECT_INTERVAL_SEC:-14400}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - NOTIFY_INTERVAL_SEC=${NOTIFY_INTERVAL_SEC:-3600}
+      - NOTIFY_MIN_TIER=${NOTIFY_MIN_TIER:-A}
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    command: telegram_bot.py
+    networks:
+      - stock-signal-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Outcome tracker (запускается по расписанию)
+  tracker:
+    build: .
+    container_name: stock-signal-tracker
+    restart: "no"
+    environment:
+      - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
+      - STOCK_SIGNAL_DATA=/data
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    command: -m stock_signal_analyzer.outcome_tracker
+    networks:
+      - stock-signal-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Cron для периодического запуска tracker
+  cron:
+    image: alpine:latest
+    container_name: stock-signal-cron
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: >
+      sh -c "
+      apk add --no-cache docker-cli &&
+      echo '0 * * * * docker start stock-signal-tracker' | crontab - &&
+      crond -f -l 2
+      "
+    networks:
+      - stock-signal-net
+
+networks:
+  stock-signal-net:
+    driver: bridge
+
+volumes:
+  data:
+  logs:

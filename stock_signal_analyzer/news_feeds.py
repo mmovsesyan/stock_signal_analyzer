@@ -22,18 +22,29 @@ class NewsItem:
     published_ts: float | None = None  # unix time, для затухания по давности
 
 
-def _fetch_rss(url: str, timeout: float = 12.0) -> list[NewsItem]:
+def _fetch_rss(url: str, timeout: float = 12.0, retries: int = 2) -> list[NewsItem]:
     headers = {
         "User-Agent": "StockSignalAnalyzer/0.1 (+https://example.local)",
         "Accept": "application/rss+xml, application/xml, text/xml, */*",
     }
     out: list[NewsItem] = []
-    try:
-        r = requests.get(url, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        parsed = feedparser.parse(r.content)
-    except Exception:
-        return out
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 429:
+                wait = 1.5 * (attempt + 1)
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            parsed = feedparser.parse(r.content)
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(0.8 * (attempt + 1))
+    else:
+        return out  # все попытки исчерпаны
     for e in getattr(parsed, "entries", [])[:40]:
         title = getattr(e, "title", "") or ""
         link = getattr(e, "link", "") or ""

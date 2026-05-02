@@ -172,7 +172,7 @@ def _main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton("📈 Аналитика"), KeyboardButton("📚 Списки и подбор")],
-            [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Уведомления")],
+            [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Настройки")],
             [KeyboardButton("🏠 Главное меню"), KeyboardButton("❓ Помощь")],
         ],
         resize_keyboard=True,
@@ -219,11 +219,39 @@ def _collect_menu_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def _settings_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("🤖 Настройка автосбора"), KeyboardButton("🔔 Уведомления")],
+            [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
 def _notify_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton("🔔 Уведомления ВКЛ"), KeyboardButton("🔕 Уведомления ВЫКЛ")],
-            [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
+            [KeyboardButton("⬅️ Назад в настройки"), KeyboardButton("🏠 Главное меню")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
+def _autocollect_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
+    prefs = load_prefs(uid)
+    default_status = "✅" if prefs.use_default_tickers else "❌"
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(f"{default_status} Дефолтные тикеры (30)")],
+            [KeyboardButton("➕ Добавить свои тикеры"), KeyboardButton("📋 Показать текущие")],
+            [KeyboardButton("🗑️ Очистить свои тикеры")],
+            [KeyboardButton("⬅️ Назад в настройки"), KeyboardButton("🏠 Главное меню")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
@@ -278,26 +306,65 @@ async def _show_collect_menu(message) -> None:
     )
 
 
+async def _show_settings_menu(message, uid: int) -> None:
+    if not message:
+        return
+    await message.reply_text(
+        "⚙️ <b>Настройки</b>\n"
+        "• Настройка автосбора сигналов\n"
+        "• Управление уведомлениями",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_settings_menu_keyboard(),
+    )
+
+
 async def _show_notify_menu(message) -> None:
     if not message:
         return
     await message.reply_text(
-        "⚙️ <b>Уведомления</b>\n"
+        "🔔 <b>Уведомления</b>\n"
         "Включение/выключение уведомлений о сильных сигналах вне watchlist.",
         parse_mode=ParseMode.HTML,
         reply_markup=_notify_menu_keyboard(),
     )
 
 
-def _keyboard_for_section(section: str) -> ReplyKeyboardMarkup:
+async def _show_autocollect_menu(message, uid: int) -> None:
+    if not message:
+        return
+    prefs = load_prefs(uid)
+    default_status = "включены" if prefs.use_default_tickers else "выключены"
+    custom_count = len(prefs.autocollect_tickers)
+
+    text = (
+        "🤖 <b>Настройка автосбора</b>\n\n"
+        f"Дефолтные тикеры (30): <b>{default_status}</b>\n"
+        f"Ваши тикеры: <b>{custom_count}</b>\n\n"
+        "Автосбор использует:\n"
+        "• Дефолтные 30 тикеров (если включены)\n"
+        "• Ваши добавленные тикеры\n"
+        "• Ваш watchlist"
+    )
+    await message.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_autocollect_menu_keyboard(uid),
+    )
+
+
+def _keyboard_for_section(section: str, uid: int = 0) -> ReplyKeyboardMarkup:
     if section == "analysis":
         return _analysis_menu_keyboard()
     if section == "lists":
         return _lists_menu_keyboard()
     if section == "collect":
         return _collect_menu_keyboard()
+    if section == "settings":
+        return _settings_menu_keyboard()
     if section == "notify":
         return _notify_menu_keyboard()
+    if section == "autocollect" and uid:
+        return _autocollect_menu_keyboard(uid)
     return _main_menu_keyboard()
 
 
@@ -308,8 +375,12 @@ def _section_for_action(action: str) -> str:
         return "lists"
     if action in ("collect", "status", "export"):
         return "collect"
+    if action in ("settings",):
+        return "settings"
     if action in ("notify_on", "notify_off"):
         return "notify"
+    if action in ("autocollect", "toggle_default", "add_custom", "show_custom", "clear_custom"):
+        return "autocollect"
     return "root"
 
 
@@ -345,7 +416,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "• 📈 Аналитика\n"
         "• 📚 Списки и подбор\n"
         "• 🗂️ Сбор и экспорт\n"
-        "• ⚙️ Уведомления\n\n"
+        "• ⚙️ Настройки\n\n"
         "Выберите раздел кнопками ниже."
     )
     await update.message.reply_text(
@@ -914,6 +985,40 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         _clear_pending_action(context)
         await _cmd_signal_message_with_args(update.message, args)
+        return
+
+    if pending == "add_custom":
+        uid = _uid(update)
+        if not uid:
+            return
+
+        # Нормализуем и добавляем тикеры
+        prefs = load_prefs(uid)
+        added = []
+        for arg in args:
+            normalized = normalize_symbol(arg)
+            if normalized and normalized not in prefs.autocollect_tickers:
+                prefs.autocollect_tickers.append(normalized)
+                added.append(normalized)
+
+        save_prefs(uid, prefs)
+        _clear_pending_action(context)
+
+        if added:
+            await update.message.reply_text(
+                f"✅ Добавлено тикеров: {len(added)}\n"
+                f"{', '.join(_esc(t) for t in added)}\n\n"
+                f"Всего ваших тикеров: {len(prefs.autocollect_tickers)}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_autocollect_menu_keyboard(uid),
+            )
+        else:
+            await update.message.reply_text(
+                "Все указанные тикеры уже есть в списке.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_autocollect_menu_keyboard(uid),
+            )
+        return
 
 
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1013,15 +1118,33 @@ _DEFAULT_COLLECT_TICKERS: list[str] = [
 
 
 def _collect_tickers_for_user(uid: int) -> list[str]:
-    """Тикеры для сбора: watchlist + default, уникальные."""
+    """Тикеры для сбора: watchlist + autocollect_tickers + default (если включены), уникальные."""
     prefs = load_prefs(uid)
     seen: set[str] = set()
     result: list[str] = []
-    for s in list(prefs.watchlist) + _DEFAULT_COLLECT_TICKERS:
+
+    # Добавляем watchlist
+    for s in prefs.watchlist:
         n = normalize_symbol(s)
         if n and n not in seen:
             seen.add(n)
             result.append(n)
+
+    # Добавляем пользовательские тикеры для автосбора
+    for s in prefs.autocollect_tickers:
+        n = normalize_symbol(s)
+        if n and n not in seen:
+            seen.add(n)
+            result.append(n)
+
+    # Добавляем дефолтные, если включены
+    if prefs.use_default_tickers:
+        for s in _DEFAULT_COLLECT_TICKERS:
+            n = normalize_symbol(s)
+            if n and n not in seen:
+                seen.add(n)
+                result.append(n)
+
     return result
 
 
@@ -1210,15 +1333,13 @@ async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not log_p:
         return
 
-    tickers = list(_DEFAULT_COLLECT_TICKERS)
-
+    # Собираем тикеры от всех пользователей
+    all_tickers: set[str] = set()
     for uid in all_user_ids():
-        prefs = load_prefs(uid)
-        for s in prefs.watchlist:
-            n = normalize_symbol(s)
-            if n and n not in tickers:
-                tickers.append(n)
+        for ticker in _collect_tickers_for_user(uid):
+            all_tickers.add(ticker)
 
+    tickers = list(all_tickers)
     log.info("autocollect: запуск, %d тикеров", len(tickers))
     ok, errs, _ = _collect_signals_sync(tickers)
     log.info("autocollect: ok=%d, err=%d", ok, errs)
@@ -1241,6 +1362,124 @@ async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
             except Exception:
                 pass
+
+
+async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки '⚙️ Настройки'."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    await _show_settings_menu(update.message, uid)
+
+
+async def on_menu_autocollect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки '🤖 Настройка автосбора'."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    await _show_autocollect_menu(update.message, uid)
+
+
+async def on_menu_toggle_default_tickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки переключения дефолтных тикеров."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+
+    prefs = load_prefs(uid)
+    prefs.use_default_tickers = not prefs.use_default_tickers
+    save_prefs(uid, prefs)
+
+    status = "включены" if prefs.use_default_tickers else "выключены"
+    await update.message.reply_text(
+        f"✅ Дефолтные тикеры (30): <b>{status}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_autocollect_menu_keyboard(uid),
+    )
+
+
+async def on_menu_add_custom_tickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки '➕ Добавить свои тикеры'."""
+    if not update.message:
+        return
+    _set_pending_action(context, "add_custom")
+    await update.message.reply_text(
+        "➕ <b>Добавить тикеры для автосбора</b>\n\n"
+        "Введите тикеры через пробел, например:\n"
+        "<code>AAPL TSLA SBER.ME GAZP.ME</code>\n\n"
+        "Или напишите: отмена",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def on_menu_show_custom_tickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки '📋 Показать текущие'."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+
+    prefs = load_prefs(uid)
+
+    lines = ["📋 <b>Текущая конфигурация автосбора</b>\n"]
+
+    # Дефолтные тикеры
+    default_status = "✅ включены" if prefs.use_default_tickers else "❌ выключены"
+    lines.append(f"<b>Дефолтные тикеры (30):</b> {default_status}")
+
+    # Пользовательские тикеры
+    if prefs.autocollect_tickers:
+        lines.append(f"\n<b>Ваши тикеры ({len(prefs.autocollect_tickers)}):</b>")
+        lines.append(", ".join(_esc(t) for t in prefs.autocollect_tickers))
+    else:
+        lines.append("\n<b>Ваши тикеры:</b> нет")
+
+    # Watchlist
+    if prefs.watchlist:
+        lines.append(f"\n<b>Watchlist ({len(prefs.watchlist)}):</b>")
+        lines.append(", ".join(_esc(t) for t in prefs.watchlist))
+    else:
+        lines.append("\n<b>Watchlist:</b> пуст")
+
+    # Итого
+    total_tickers = _collect_tickers_for_user(uid)
+    lines.append(f"\n<b>Итого тикеров для автосбора: {len(total_tickers)}</b>")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=_autocollect_menu_keyboard(uid),
+    )
+
+
+async def on_menu_clear_custom_tickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки '🗑️ Очистить свои тикеры'."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+
+    prefs = load_prefs(uid)
+    prefs.autocollect_tickers = []
+    save_prefs(uid, prefs)
+
+    await update.message.reply_text(
+        "🗑️ Ваши тикеры для автосбора очищены.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_autocollect_menu_keyboard(uid),
+    )
+
+
+async def on_menu_back_to_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки '⬅️ Назад в настройки'."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    await _show_settings_menu(update.message, uid)
 
 
 async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1345,8 +1584,11 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Аналитика$"), on_menu_section_analysis))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Списки и подбор$"), on_menu_section_lists))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Сбор и экспорт$"), on_menu_section_collect))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройки$"), on_menu_section_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления$"), on_menu_section_notify))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройка автосбора$"), on_menu_autocollect))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в разделы$"), on_menu_back_sections))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в настройки$"), on_menu_back_to_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Главное меню$"), cmd_start))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Помощь$"), cmd_help))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Анализ тикера$"), on_menu_signal))
@@ -1359,6 +1601,10 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Выгрузить лог$"), on_menu_export))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления ВКЛ$"), on_menu_notify_on))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления ВЫКЛ$"), on_menu_notify_off))
+    app.add_handler(MessageHandler(filters.Regex(r"^[✅❌]\s*Дефолтные тикеры"), on_menu_toggle_default_tickers))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Добавить свои тикеры$"), on_menu_add_custom_tickers))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Показать текущие$"), on_menu_show_custom_tickers))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Очистить свои тикеры$"), on_menu_clear_custom_tickers))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, on_pending_text)
     )

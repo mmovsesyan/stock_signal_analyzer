@@ -99,6 +99,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--watch", action="store_true", help="Повторять анализ в цикле")
     p.add_argument("--interval", type=int, default=600, help="Интервал в секундах в режиме watch (по умолчанию 600)")
     p.add_argument(
+        "--fast",
+        action="store_true",
+        help="Быстрый режим: пропустить новости и real-time данные (анализ ~3-5 сек вместо ~16 сек)",
+    )
+    p.add_argument(
         "--finnhub-ws",
         action="store_true",
         help="Краткий WebSocket Finnhub по сделкам (нужен FINNHUB_API_KEY; для US-ликвидных тикеров)",
@@ -121,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
                 use_finnhub_ws=args.finnhub_ws,
                 ws_seconds=args.ws_seconds,
                 volume_tape_ws=args.volume_tape,
+                fast_mode=args.fast,
             )
             _print_report(r)
         except KeyboardInterrupt:

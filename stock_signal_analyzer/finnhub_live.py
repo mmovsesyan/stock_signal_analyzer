@@ -15,6 +15,7 @@ from typing import Any
 import requests
 
 from .news_feeds import NewsItem
+from .retry_utils import retry_with_backoff
 
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 
@@ -53,6 +54,7 @@ class FinnhubQuote:
     detail: str
 
 
+@retry_with_backoff(max_retries=3, initial_delay=1.0, retry_on=(requests.RequestException,))
 def fetch_quote(symbol: str, api_key: str | None = None, timeout: float = 12.0) -> FinnhubQuote:
     key = api_key or _token()
     if not key:
@@ -93,6 +95,7 @@ def fetch_quote(symbol: str, api_key: str | None = None, timeout: float = 12.0) 
     )
 
 
+@retry_with_backoff(max_retries=3, initial_delay=1.0, retry_on=(requests.RequestException,))
 def fetch_company_news(
     symbol: str,
     api_key: str | None = None,

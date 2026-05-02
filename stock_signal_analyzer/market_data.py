@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,10 @@ import yfinance as yf
 from .universe import InstrumentProfile, classify_instrument, history_period_for_profile
 
 _log = logging.getLogger(__name__)
+
+# ── Кэш для котировок ────────────────────────────────────────────────────────
+_CACHE: dict[str, tuple[tuple[TickerSnapshot, dict[str, Any], InstrumentProfile], float]] = {}
+_CACHE_TTL = 300  # 5 минут
 
 
 @dataclass
@@ -78,12 +83,25 @@ def _try_tbank_history(sym: str) -> tuple[pd.DataFrame | None, str, str]:
         return None, "", ""
 
 
-def fetch_snapshot_with_meta(symbol: str) -> tuple[TickerSnapshot, dict[str, Any], InstrumentProfile]:
+def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[TickerSnapshot, dict[str, Any], InstrumentProfile]:
     """
     Загрузка с учётом типа инструмента: для облигаций — более длинный период истории.
     Для .ME тикеров: если Yahoo не отдаёт данные, пробуем T-Bank API.
+
+    Args:
+        symbol: Тикер для загрузки
+        force_refresh: Если True, игнорировать кэш и загрузить свежие данные
     """
     sym = symbol.strip().upper()
+
+    # Проверка кэша
+    if not force_refresh and sym in _CACHE:
+        cached_data, timestamp = _CACHE[sym]
+        age = time.time() - timestamp
+        if age < _CACHE_TTL:
+            _log.debug("Используем кэшированные данные для %s (возраст: %.1fs)", sym, age)
+            return cached_data
+
     ysym = _symbol_for_yahoo(sym)
     info: dict[str, Any] = {}
 
@@ -100,7 +118,9 @@ def fetch_snapshot_with_meta(symbol: str) -> tuple[TickerSnapshot, dict[str, Any
                 company_name=tb_name or sym,
                 history=tb_hist,
             )
-            return snap, info, profile
+            result = (snap, info, profile)
+            _CACHE[sym] = (result, time.time())
+            return result
 
     t = yf.Ticker(ysym)
     try:
@@ -124,7 +144,9 @@ def fetch_snapshot_with_meta(symbol: str) -> tuple[TickerSnapshot, dict[str, Any
                 company_name=tb_name or sym,
                 history=tb_hist,
             )
-            return snap, info, profile
+            result = (snap, info, profile)
+            _CACHE[sym] = (result, time.time())
+            return result
 
     if hist is None or hist.empty:
         hint = _tbank_hint(sym)
@@ -142,7 +164,9 @@ def fetch_snapshot_with_meta(symbol: str) -> tuple[TickerSnapshot, dict[str, Any
         company_name=name,
         history=hist,
     )
-    return snap, info, profile
+    result = (snap, info, profile)
+    _CACHE[sym] = (result, time.time())
+    return result
 
 
 def fetch_history(symbol: str, period: str = "6mo", interval: str = "1d") -> TickerSnapshot:

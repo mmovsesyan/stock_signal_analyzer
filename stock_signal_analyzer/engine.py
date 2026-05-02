@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -291,12 +292,45 @@ def _verdict_from_score(x: float, confidence: float) -> str:
 
 # ── Приватные функции-части build_report ────────────────────────────────────
 
+def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tuple[list[NewsItem], list[NewsItem], list[NewsItem]]:
+    """Параллельная загрузка новостей из разных источников."""
+    ticker_news: list[NewsItem] = []
+    fh_news: list[NewsItem] = []
+    macro_news: list[NewsItem] = []
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(fetch_ticker_news_google, symbol, company_name): 'ticker',
+            executor.submit(fetch_macro_headlines): 'macro',
+        }
+
+        if key:
+            futures[executor.submit(fetch_company_news, symbol, api_key=key, limit=30)] = 'finnhub'
+
+        for future in as_completed(futures, timeout=15):
+            source = futures[future]
+            try:
+                result = future.result(timeout=5)
+                if source == 'ticker':
+                    ticker_news = result
+                elif source == 'finnhub':
+                    fh_news = result
+                elif source == 'macro':
+                    macro_news = result
+            except Exception as e:
+                # Логируем, но не падаем - продолжаем с пустым списком
+                pass
+
+    return ticker_news, fh_news, macro_news
+
+
 def _gather_inputs(
     symbol: str,
     key: str | None,
     use_finnhub_ws: bool,
     ws_seconds: float,
     volume_tape_ws: bool,
+    fast_mode: bool = False,
 ) -> _RawInputs:
     """Все сетевые запросы и первичная обработка данных."""
     snap, _info, profile = fetch_snapshot_with_meta(symbol)
@@ -307,14 +341,15 @@ def _gather_inputs(
     atr_pct = atr_percent_14(hist)
     mom = analyze_momentum(close, atr_pct=atr_pct, adx14=tech.adx14)
 
-    ticker_news = fetch_ticker_news_google(snap.symbol, snap.company_name)
-    fh_news: list[NewsItem] = []
-    if key:
-        try:
-            fh_news = fetch_company_news(snap.symbol, api_key=key, limit=30)
-        except Exception:
-            fh_news = []
-    macro_news = fetch_macro_headlines()
+    # В быстром режиме пропускаем новости
+    if fast_mode:
+        ticker_news: list[NewsItem] = []
+        fh_news: list[NewsItem] = []
+        macro_news: list[NewsItem] = []
+    else:
+        # Параллельная загрузка новостей
+        ticker_news, fh_news, macro_news = _fetch_news_parallel(snap.symbol, snap.company_name, key)
+
     now_ts = time.time()
     combined, news_weights = _merge_news_with_weights(fh_news, ticker_news, macro_news, now_ts)
     combined = combined[:60]
@@ -322,13 +357,17 @@ def _gather_inputs(
     sent = score_headlines(combined, news_weights)
     news_score = float(np.clip(sent.compound, -1.0, 1.0))
 
-    intra = build_intraday(
-        snap.symbol,
-        finnhub_api_key=key,
-        use_finnhub_ws=use_finnhub_ws,
-        ws_seconds=ws_seconds,
-        yahoo_last_daily_close=yahoo_last,
-    )
+    # В быстром режиме пропускаем intraday данные
+    if fast_mode:
+        intra = None
+    else:
+        intra = build_intraday(
+            snap.symbol,
+            finnhub_api_key=key,
+            use_finnhub_ws=use_finnhub_ws,
+            ws_seconds=ws_seconds,
+            yahoo_last_daily_close=yahoo_last,
+        )
     has_intra = intra is not None
     online_hint = _online_hint(snap.symbol, has_intra, bool(key))
     wt, wm, wn, wi = select_component_weights(profile, has_intra)
@@ -583,10 +622,22 @@ def build_report(
     use_finnhub_ws: bool = False,
     ws_seconds: float = 8.0,
     volume_tape_ws: bool = False,
+    fast_mode: bool = False,
 ) -> SignalReport:
+    """
+    Построить полный отчёт по тикеру.
+
+    Args:
+        symbol: Тикер для анализа
+        finnhub_api_key: API ключ Finnhub (опционально)
+        use_finnhub_ws: Использовать WebSocket для real-time данных
+        ws_seconds: Длительность сбора данных через WebSocket
+        volume_tape_ws: Использовать ленту сделок для анализа объёма
+        fast_mode: Быстрый режим - пропустить новости и real-time данные
+    """
     key = finnhub_api_key or os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
 
-    inputs = _gather_inputs(symbol, key, use_finnhub_ws, ws_seconds, volume_tape_ws)
+    inputs = _gather_inputs(symbol, key, use_finnhub_ws, ws_seconds, volume_tape_ws, fast_mode)
     bundle = _compute_score(inputs)
 
     risk = (
