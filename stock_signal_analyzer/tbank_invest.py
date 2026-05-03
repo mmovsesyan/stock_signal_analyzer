@@ -157,7 +157,7 @@ def fetch_last_price_tbank(symbol: str, token: str | None = None) -> TbankQuote 
             return None
         p0 = lp.last_prices[0]
         price = _quotation_to_float(getattr(p0, "price", None))
-        if price != price:
+        if price != price or price <= 0:
             return None
         cur = str(getattr(inst, "currency", "") or "rub").upper()
         detail = f"Т-Инвестиции API: {name}, last={price:.4f} {cur}"
@@ -222,7 +222,7 @@ def fetch_quote_and_volume_context(
             return None, None
         p0 = lp.last_prices[0]
         price = _quotation_to_float(getattr(p0, "price", None))
-        if price != price:
+        if price != price or price <= 0:
             return None, None
         cur = str(getattr(inst, "currency", "") or "rub").upper()
         detail = f"Т-Инвестиции API: {name}, last={price:.4f} {cur}"

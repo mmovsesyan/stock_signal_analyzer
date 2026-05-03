@@ -97,7 +97,7 @@ class _TinkoffProvider(_IntradayProvider):
             tq, vol_ctx = fetch_quote_and_volume_context(
                 sym_u, yahoo_last_daily_close=yahoo_last_daily_close,
             )
-            if tq is None:
+            if tq is None or tq.last_price <= 0:
                 return None
             pct_t = (tq.last_price / float(yahoo_last_daily_close) - 1.0) * 100.0
             sc = _score_from_pct(pct_t)
