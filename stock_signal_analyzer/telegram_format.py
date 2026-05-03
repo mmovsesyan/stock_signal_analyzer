@@ -56,6 +56,89 @@ def _format_trade_plan_html(r: SignalReport) -> str:
     return "\n".join(lines)
 
 
+def _plain_language_summary(r: SignalReport) -> str:
+    """Вывод простым языком в конце отчёта."""
+    parts: list[str] = []
+    parts.append("📝 <b>Вывод простым языком</b>")
+
+    sym = _esc(r.symbol)
+    company = _esc(r.company)
+    score = r.score
+    tier = r.signal_tier
+    conf = r.confidence
+
+    # Направление
+    if score > 0.35:
+        direction = "заметный сигнал на рост"
+    elif score > 0.15:
+        direction = "слабый сигнал на рост"
+    elif score < -0.35:
+        direction = "заметный сигнал на снижение"
+    elif score < -0.15:
+        direction = "слабый сигнал на снижение"
+    else:
+        direction = "нет выраженного направления"
+
+    parts.append(f"{sym} ({company}) — <b>{direction}</b>.")
+
+    # Согласованность
+    if conf >= 0.80:
+        parts.append("Индикаторы хорошо согласованы между собой.")
+    elif conf >= 0.60:
+        parts.append("Индикаторы в целом согласованы, но есть расхождения.")
+    else:
+        parts.append("Индикаторы противоречат друг другу — сигнал ненадёжный.")
+
+    # Что говорят компоненты
+    drivers: list[str] = []
+    if r.technical_score > 0.15:
+        drivers.append("техника за рост")
+    elif r.technical_score < -0.15:
+        drivers.append("техника за снижение")
+
+    if r.momentum_score > 0.15:
+        drivers.append("импульс вверх")
+    elif r.momentum_score < -0.15:
+        drivers.append("импульс вниз")
+
+    if r.news_score > 0.15:
+        drivers.append("новости позитивные")
+    elif r.news_score < -0.15:
+        drivers.append("новости негативные")
+
+    if r.volume_score > 0.15:
+        drivers.append("объём подтверждает покупки")
+    elif r.volume_score < -0.15:
+        drivers.append("объём указывает на продажи")
+
+    if drivers:
+        parts.append("Ключевые факторы: " + ", ".join(drivers) + ".")
+
+    # Макро
+    if r.macro_dampening < 0.75:
+        parts.append("⚠️ Впереди важные макро-события (ЦБ, инфляция) — сигнал ослаблен, лучше подождать.")
+    elif r.macro_dampening < 0.90:
+        parts.append("Макро-фон умеренно неопределённый — учитывайте риск.")
+
+    # Класс и рекомендация
+    if tier == "A":
+        tp = r.trade_plan
+        if tp and tp.direction != "none":
+            d = "покупку" if tp.direction == "long" else "продажу"
+            parts.append(
+                f"✅ <b>Класс A</b> — сильный сигнал. Можно рассмотреть {d} "
+                f"со стопом {tp.stop_pct:+.1f}% и целью {tp.target1_pct:+.1f}%."
+            )
+        else:
+            parts.append("✅ <b>Класс A</b> — сильный сигнал по всем критериям.")
+    elif tier == "B":
+        parts.append("🔶 <b>Класс B</b> — средний сигнал. Можно рассмотреть, но с осторожностью.")
+    else:
+        parts.append("⚪ <b>Класс C</b> — слабый или противоречивый сигнал. Лучше наблюдать и не торговать.")
+
+    return "\n".join(parts)
+
+
 def format_signal_report(r: SignalReport) -> str:
     lines: list[str] = []
     lines.append(f"📈 <b>{_esc(r.symbol)}</b> — {_esc(r.company)}")
@@ -124,6 +207,8 @@ def format_signal_report(r: SignalReport) -> str:
     lines.append(_esc(r.macro_summary))
     if hasattr(r, "levels_detail") and r.levels_detail:
         lines.append(f"📐 Уровни: {_esc(r.levels_detail)}")
+    lines.append("")
+    lines.append(_plain_language_summary(r))
     lines.append("")
     lines.append(_esc(r.risk_note))
     return "\n".join(lines)
