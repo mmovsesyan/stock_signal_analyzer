@@ -1802,8 +1802,8 @@ def main() -> int:
         log.info("Telegram API через base_url прокси: %s", base_url)
     if proxy_url:
         from telegram.request import HTTPXRequest
-        builder = builder.request(HTTPXRequest(proxy=proxy_url))
-        builder = builder.get_updates_request(HTTPXRequest(proxy=proxy_url))
+        builder = builder.request(HTTPXRequest(proxy=proxy_url, connect_timeout=20.0, read_timeout=30.0))
+        builder = builder.get_updates_request(HTTPXRequest(proxy=proxy_url, connect_timeout=20.0, read_timeout=30.0, pool_timeout=10.0))
         log.info("Telegram API через SOCKS5 прокси: %s", proxy_url.split("@")[-1] if "@" in proxy_url else "***")
 
     app = builder.build()
