@@ -340,7 +340,7 @@ def main():
         # Cleanup test log
         try:
             os.unlink(test_log)
-        except:
+        except Exception:
             pass
 
     # Print summary

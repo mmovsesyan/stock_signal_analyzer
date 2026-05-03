@@ -213,9 +213,9 @@ def parse_dash_args(args: list[str]) -> tuple[list[str], bool, bool]:
         if lo == "ws":
             ws = True
             continue
-        cleaned = re.sub(r"[^A-Za-z0-9.\-]", "", a).strip()
-        if cleaned:
-            syms.append(cleaned.upper())
+        cleaned = re.sub(r"[^A-Za-z0-9.\-]", "", a).strip().upper()
+        if cleaned and len(cleaned) <= 12 and re.fullmatch(r"[A-Z0-9]{1,10}(?:\.[A-Z]{1,4})?(?:-[A-Z])?", cleaned):
+            syms.append(cleaned)
     return syms, tape, ws
 
 
@@ -227,7 +227,10 @@ def sanitize_command_args(args: list[str]) -> tuple[str, bool, bool, bool]:
     if not args:
         return "", False, False, True
     sym = re.sub(r"[^A-Za-z0-9.\-]", "", args[0]).strip().upper()
-    if not sym:
+    if not sym or len(sym) > 12:
+        return "", False, False, True
+    # Строгая валидация формата тикера: буквы/цифры, опционально .XX суффикс
+    if not re.fullmatch(r"[A-Z0-9]{1,10}(?:\.[A-Z]{1,4})?(?:-[A-Z])?", sym):
         return "", False, False, True
     tail = {a.lower() for a in args[1:]}
     return sym, "tape" in tail, "ws" in tail, False

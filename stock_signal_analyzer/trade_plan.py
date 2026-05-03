@@ -125,6 +125,26 @@ def build_trade_plan(
         t1_m *= 0.8
         t2_m *= 0.8
 
+    # ── Масштабирование по абсолютному ATR% ──
+    # Для высоковолатильных бумаг (ATR > 3%) сужаем множители,
+    # чтобы стоп в абсолюте не был слишком далеко.
+    # Для низковолатильных (ATR < 1%) расширяем, чтобы не выбивало шумом.
+    if atr_pct > 4.0:
+        atr_scale = 3.5 / atr_pct  # сжатие
+        stop_m *= max(0.6, atr_scale)
+        t1_m *= max(0.6, atr_scale)
+        t2_m *= max(0.6, atr_scale)
+    elif atr_pct > 3.0:
+        atr_scale = 3.0 / atr_pct
+        stop_m *= max(0.75, atr_scale)
+        t1_m *= max(0.75, atr_scale)
+        t2_m *= max(0.75, atr_scale)
+    elif atr_pct < 0.8:
+        atr_scale = 0.8 / atr_pct
+        stop_m *= min(1.5, atr_scale)
+        t1_m *= min(1.4, atr_scale)
+        t2_m *= min(1.4, atr_scale)
+
     atr_abs = ref_price * atr_pct / 100.0
     sign = 1.0 if direction == "long" else -1.0
 

@@ -25,8 +25,12 @@ def append_signal_record(path: str | None, record: dict[str, Any]) -> None:
             parent = os.path.dirname(os.path.abspath(path))
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line)
+            # Открываем с ограниченными правами (owner-only read/write)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            try:
+                os.write(fd, line.encode("utf-8"))
+            finally:
+                os.close(fd)
     except OSError as e:
         _log.warning("SSA_SIGNAL_LOG: не удалось записать в %s: %s", path, e)
 

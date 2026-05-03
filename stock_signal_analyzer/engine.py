@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +10,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+
+_log = logging.getLogger(__name__)
 
 from .adaptive_weights import AdaptiveWeightsResult, compute_adaptive_weights
 from .finnhub_live import fetch_company_news
@@ -204,7 +207,7 @@ def _news_item_weight(it: NewsItem, kind: str, now: float) -> float:
         w = 0.32
     if it.published_ts:
         age_d = max(0.0, (now - float(it.published_ts)) / 86400.0)
-        w *= float(0.25 + 0.75 * np.exp(-age_d / 5.0))
+        w *= float(0.25 + 0.75 * np.exp(-age_d / 2.0))
     else:
         w *= 0.88
     return float(max(0.05, w))
@@ -398,33 +401,52 @@ def _gather_inputs(
     # ── Quant models ──
     try:
         mtf_mom = analyze_mtf_momentum(close)
-    except Exception:
+    except Exception as exc:
+        _log.debug("MTF momentum failed: %s", exc)
         mtf_mom = None
     try:
         zscore_res = analyze_zscore(close)
-    except Exception:
+    except Exception as exc:
+        _log.debug("Z-score failed: %s", exc)
         zscore_res = None
     try:
         vol_regime_res = analyze_vol_regime(close)
-    except Exception:
+    except Exception as exc:
+        _log.debug("Vol regime failed: %s", exc)
         vol_regime_res = None
 
     trend_str_res: TrendStrengthResult | None = None
     if all(c in hist.columns for c in ("High", "Low")):
         try:
             trend_str_res = analyze_trend_strength(close, hist["High"], hist["Low"])
-        except Exception:
+        except Exception as exc:
+            _log.debug("Trend strength failed: %s", exc)
             trend_str_res = None
 
     try:
         cross_asset_res = build_cross_asset_regime()
-    except Exception:
+    except Exception as exc:
+        _log.debug("Cross-asset regime failed: %s", exc)
         cross_asset_res = None
 
     try:
         adaptive_w = compute_adaptive_weights()
-    except Exception:
+    except Exception as exc:
+        _log.debug("Adaptive weights failed: %s", exc)
         adaptive_w = None
+
+    # ── Адаптивная корректировка весов по IC ──
+    # Если накоплено достаточно данных (≥30 сигналов с исходами),
+    # adaptive_weights сдвигает веса в сторону компонентов с высоким IC.
+    # Сдвиг мягкий (blend 30% adaptive + 70% base), чтобы не переоптимизировать.
+    if adaptive_w is not None and adaptive_w.adapted:
+        _AW_BLEND = 0.30  # доля адаптивных весов
+        aw = adaptive_w.weights
+        wt = wt * (1.0 - _AW_BLEND) + aw.get("technical", wt) * _AW_BLEND
+        wm = wm * (1.0 - _AW_BLEND) + aw.get("momentum", wm) * _AW_BLEND
+        wn = wn * (1.0 - _AW_BLEND) + aw.get("news", wn) * _AW_BLEND
+        # intraday вес не адаптируем (нет IC для него)
+        wt, wm, wn, wi = _normalize_weights(wt, wm, wn, wi)
 
     return _RawInputs(
         snap=snap,

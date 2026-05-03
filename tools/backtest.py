@@ -83,10 +83,19 @@ def _load_signals(path: str, min_tier: str | None) -> list[dict[str, Any]]:
 def _simulate_trade(
     row: dict[str, Any],
     target_n: int = 1,
+    commission_pct: float = 0.1,
 ) -> TradeResult | None:
+    """Симуляция сделки.
+
+    Улучшения vs v1:
+    - Вход по Open следующего дня (реалистичнее, чем по цене сигнала).
+    - Комиссия (commission_pct × 2: вход + выход) вычитается из PnL.
+    - Если в один день сработали и стоп, и цель — считаем стоп
+      (worst-case; без интрадей-данных нельзя определить порядок).
+    """
     symbol = row.get("symbol", "")
     direction = row.get("tp_direction") or row.get("direction", "")
-    entry = float(row.get("tp_entry") or row.get("ref_price", 0))
+    signal_entry = float(row.get("tp_entry") or row.get("ref_price", 0))
     initial_stop = float(row.get("tp_stop", 0))
     if target_n == 2:
         target = float(row.get("tp_target2") or row.get("tp_target1", 0))
@@ -99,7 +108,7 @@ def _simulate_trade(
     trail_act_pct = float(row.get("tp_trailing_act_pct", 0))
     trail_step_pct = float(row.get("tp_trailing_step_pct", 0))
 
-    if not symbol or entry <= 0 or initial_stop <= 0 or target <= 0:
+    if not symbol or signal_entry <= 0 or initial_stop <= 0 or target <= 0:
         return None
 
     try:
@@ -107,8 +116,9 @@ def _simulate_trade(
     except (ValueError, TypeError):
         return None
 
+    # Загружаем на 1 день больше: первый день — для Open (реальный вход)
     start = (dt_signal + timedelta(days=1)).strftime("%Y-%m-%d")
-    end = (dt_signal + timedelta(days=max_hold + 5)).strftime("%Y-%m-%d")
+    end = (dt_signal + timedelta(days=max_hold + 7)).strftime("%Y-%m-%d")
 
     try:
         hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
@@ -118,9 +128,22 @@ def _simulate_trade(
     if hist is None or hist.empty:
         return None
 
-    stop = initial_stop
+    # ── Реалистичный вход: Open следующего торгового дня ──
+    actual_entry = float(hist.iloc[0].get("Open", 0))
+    if actual_entry <= 0:
+        actual_entry = signal_entry  # fallback
+
+    # Пересчитать стоп/цель пропорционально сдвигу входа
+    entry_ratio = actual_entry / signal_entry if signal_entry > 0 else 1.0
+    stop = initial_stop * entry_ratio
+    initial_stop_adj = stop
+    target = target * entry_ratio
+    entry = actual_entry
+
     trail_act_abs = entry * trail_act_pct / 100.0 if trail_act_pct > 0 else 0.0
     trail_step_abs = entry * trail_step_pct / 100.0 if trail_step_pct > 0 else 0.0
+
+    round_trip_commission = commission_pct * 2.0  # вход + выход
 
     for i in range(min(max_hold, len(hist))):
         day = hist.iloc[i]
@@ -135,13 +158,16 @@ def _simulate_trade(
                 elif excursion >= trail_act_abs:
                     stop = max(stop, entry)
 
-            if lo <= stop:
-                pnl = (stop / entry - 1.0) * 100.0
-                reason = "trail" if stop > initial_stop else "stop"
-                return TradeResult(symbol, direction, tier, entry, initial_stop, target, stop, reason, pnl, i + 1, ts_utc)
-            if h >= target:
-                pnl = (target / entry - 1.0) * 100.0
-                return TradeResult(symbol, direction, tier, entry, initial_stop, target, target, "target", pnl, i + 1, ts_utc)
+            stop_hit = lo <= stop
+            target_hit = h >= target
+
+            if stop_hit:
+                pnl = (stop / entry - 1.0) * 100.0 - round_trip_commission
+                reason = "trail" if stop > initial_stop_adj else "stop"
+                return TradeResult(symbol, direction, tier, entry, initial_stop_adj, target, stop, reason, pnl, i + 1, ts_utc)
+            if target_hit:
+                pnl = (target / entry - 1.0) * 100.0 - round_trip_commission
+                return TradeResult(symbol, direction, tier, entry, initial_stop_adj, target, target, "target", pnl, i + 1, ts_utc)
         else:
             if trail_act_abs > 0:
                 excursion = entry - lo
@@ -150,21 +176,24 @@ def _simulate_trade(
                 elif excursion >= trail_act_abs:
                     stop = min(stop, entry)
 
-            if h >= stop:
-                pnl = (1.0 - stop / entry) * 100.0
-                reason = "trail" if stop < initial_stop else "stop"
-                return TradeResult(symbol, direction, tier, entry, initial_stop, target, stop, reason, pnl, i + 1, ts_utc)
-            if lo <= target:
-                pnl = (1.0 - target / entry) * 100.0
-                return TradeResult(symbol, direction, tier, entry, initial_stop, target, target, "target", pnl, i + 1, ts_utc)
+            stop_hit = h >= stop
+            target_hit = lo <= target
+
+            if stop_hit:
+                pnl = (1.0 - stop / entry) * 100.0 - round_trip_commission
+                reason = "trail" if stop < initial_stop_adj else "stop"
+                return TradeResult(symbol, direction, tier, entry, initial_stop_adj, target, stop, reason, pnl, i + 1, ts_utc)
+            if target_hit:
+                pnl = (1.0 - target / entry) * 100.0 - round_trip_commission
+                return TradeResult(symbol, direction, tier, entry, initial_stop_adj, target, target, "target", pnl, i + 1, ts_utc)
 
     last_close = float(hist["Close"].iloc[min(max_hold - 1, len(hist) - 1)])
     if direction == "long":
-        pnl = (last_close / entry - 1.0) * 100.0
+        pnl = (last_close / entry - 1.0) * 100.0 - round_trip_commission
     else:
-        pnl = (1.0 - last_close / entry) * 100.0
+        pnl = (1.0 - last_close / entry) * 100.0 - round_trip_commission
     days_held = min(max_hold, len(hist))
-    return TradeResult(symbol, direction, tier, entry, initial_stop, target, last_close, "time", pnl, days_held, ts_utc)
+    return TradeResult(symbol, direction, tier, entry, initial_stop_adj, target, last_close, "time", pnl, days_held, ts_utc)
 
 
 def _consecutive_streaks(pnl_list: list[float]) -> tuple[int, int]:
@@ -294,6 +323,7 @@ def main() -> int:
     p.add_argument("path", help="Файл .jsonl (SSA_SIGNAL_LOG)")
     p.add_argument("--min-tier", default=None, choices=["A", "B", "C"], help="Минимальный класс (A = только A)")
     p.add_argument("--target", type=int, default=1, choices=[1, 2], help="Какую цель проверять (1 или 2)")
+    p.add_argument("--commission", type=float, default=0.1, help="Комиссия за сделку в %% (по умолчанию 0.1%%)")
     args = p.parse_args()
 
     signals = _load_signals(args.path, args.min_tier)
@@ -301,11 +331,11 @@ def main() -> int:
         print(f"Нет подходящих записей в {args.path}.", file=sys.stderr)
         return 1
 
-    print(f"Загружено {len(signals)} сигналов. Загрузка истории...")
+    print(f"Загружено {len(signals)} сигналов. Комиссия: {args.commission}% на сделку. Загрузка истории...")
 
     stats = Stats()
     for i, row in enumerate(signals, 1):
-        result = _simulate_trade(row, target_n=args.target)
+        result = _simulate_trade(row, target_n=args.target, commission_pct=args.commission)
         if result is None:
             continue
         stats.total += 1

@@ -100,11 +100,15 @@ class OutcomeTracker:
                     if signal_id in self.checked_signals:
                         continue
 
-                    # Пропустить сигналы без торгового плана
-                    trade_plan = signal.get('trade_plan', {})
-                    if not trade_plan or trade_plan.get('direction') == 'none':
+                    # Signal log хранит торговый план в плоских ключах (tp_direction, tp_entry, ...)
+                    # Собираем их во вложенный dict для единообразия.
+                    trade_plan = signal.get('trade_plan')
+                    if not trade_plan:
+                        trade_plan = self._extract_trade_plan(signal)
+                    if not trade_plan or trade_plan.get('direction') in ('none', '', None):
                         continue
 
+                    signal['trade_plan'] = trade_plan
                     signals.append(signal)
 
                 except json.JSONDecodeError:
@@ -112,6 +116,21 @@ class OutcomeTracker:
 
         _log.info(f"Найдено {len(signals)} открытых сигналов")
         return signals
+
+    @staticmethod
+    def _extract_trade_plan(signal: dict[str, Any]) -> dict[str, Any]:
+        """Собрать trade_plan из плоских tp_* ключей signal log."""
+        direction = signal.get('tp_direction') or signal.get('direction', '')
+        if not direction or direction in ('none', 'neutral'):
+            return {}
+        return {
+            'direction': direction,
+            'entry_price': float(signal.get('tp_entry') or signal.get('ref_price', 0)),
+            'stop_price': float(signal.get('tp_stop', 0)),
+            'target1_price': float(signal.get('tp_target1', 0)),
+            'target2_price': float(signal.get('tp_target2', 0)),
+            'max_hold_days': int(signal.get('tp_max_hold_days', 5)),
+        }
 
     def _get_signal_id(self, signal: dict[str, Any]) -> str:
         """Получить уникальный ID сигнала."""
@@ -309,7 +328,7 @@ class OutcomeTracker:
             return (entry - exit) / entry * 100
 
     def _save_outcome(self, outcome: SignalOutcome, signal: dict[str, Any]):
-        """Сохранить результат в файл."""
+        """Сохранить результат в файл и обогатить signal log для IC."""
         record = {
             'signal_id': outcome.signal_id,
             'symbol': outcome.symbol,
@@ -321,7 +340,14 @@ class OutcomeTracker:
             'signal_tier': signal.get('signal_tier'),
             'confidence': signal.get('confidence'),
             'entry_date': signal['ts_utc'],
-            'checked_at': datetime.now(timezone.utc).isoformat()
+            'checked_at': datetime.now(timezone.utc).isoformat(),
+            # Компонентные scores для IC-анализа в adaptive_weights
+            'technical_score': signal.get('technical_score'),
+            'momentum_score': signal.get('momentum_score'),
+            'news_score': signal.get('news_score'),
+            'volume_score': signal.get('volume_score'),
+            'score': signal.get('score'),
+            'outcome_pnl': outcome.pnl_pct,
         }
 
         # Создать директорию если нужно

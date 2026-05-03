@@ -26,22 +26,20 @@ import numpy as np
 
 _log = logging.getLogger(__name__)
 
-# Базовые веса (если нет истории для адаптации)
+# Базовые веса для 4 основных компонентов (используются в engine.py для wt/wm/wn/wi).
+# Квант-модели (mtf_momentum, zscore, trend) добавляются в score отдельно в engine.py.
 _BASE_WEIGHTS = {
-    "technical": 0.30,
+    "technical": 0.35,
     "momentum": 0.25,
-    "news": 0.15,
-    "volume": 0.10,
-    "mtf_momentum": 0.10,
-    "zscore": 0.05,
-    "trend": 0.05,
+    "news": 0.20,
+    "volume": 0.20,
 }
 
 # Halflife в днях для каждого компонента (для decay-корректировки)
 _SIGNAL_HALFLIFE = {
     "technical": 5.0,
     "momentum": 10.0,
-    "news": 2.0,
+    "news": 1.5,
     "volume": 3.0,
     "mtf_momentum": 20.0,
     "zscore": 7.0,
@@ -61,23 +59,51 @@ class AdaptiveWeightsResult:
 
 
 def _load_signal_history(max_records: int = 500) -> list[dict[str, Any]]:
-    """Загружает историю сигналов из SSA_SIGNAL_LOG."""
-    path = os.environ.get("SSA_SIGNAL_LOG") or os.environ.get("SIGNAL_LOG_JSONL")
-    if not path or not os.path.exists(path):
-        return []
+    """Загружает историю сигналов: сначала outcomes (с реальным PnL), потом signal log."""
     records: list[dict[str, Any]] = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    except OSError:
-        return []
+
+    # 1. Outcomes file (приоритет — содержит реальный PnL)
+    outcomes_path = os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer")
+    outcomes_file = os.path.join(outcomes_path, "outcomes.jsonl")
+    if os.path.exists(outcomes_file):
+        try:
+            with open(outcomes_file, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                        # Пропускаем open (ещё нет результата)
+                        if r.get("outcome") == "open":
+                            continue
+                        records.append(r)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            pass
+
+    # 2. Signal log (fallback, если outcomes мало)
+    if len(records) < max_records:
+        path = os.environ.get("SSA_SIGNAL_LOG") or os.environ.get("SIGNAL_LOG_JSONL")
+        if path and os.path.exists(path):
+            seen_ids = {r.get("signal_id") for r in records}
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            r = json.loads(line)
+                            sig_id = f"{r.get('symbol', '')}_{r.get('ts_utc', '')}"
+                            if sig_id not in seen_ids:
+                                records.append(r)
+                        except json.JSONDecodeError:
+                            continue
+            except OSError:
+                pass
+
     return records[-max_records:]
 
 
@@ -88,20 +114,31 @@ def _compute_ic(
 ) -> float:
     """
     Information Coefficient: ранговая корреляция Спирмена между
-    значением компонента и итоговым score.
+    значением компонента и реальным исходом.
+
+    Приоритет outcome_key:
+    1. 'outcome_pnl' — реальный PnL из outcome_tracker (если есть)
+    2. 'score' — итоговый score (fallback)
+
     IC > 0.05 = информативный; IC > 0.10 = сильный.
     """
     vals = []
     outcomes = []
     for r in records:
         v = r.get(component_key)
-        o = r.get(outcome_key)
-        if v is not None and o is not None:
-            try:
-                vals.append(float(v))
-                outcomes.append(float(o))
-            except (ValueError, TypeError):
-                continue
+        if v is None:
+            continue
+        # Предпочитаем реальный PnL, если outcome_tracker его записал
+        o = r.get("outcome_pnl")
+        if o is None:
+            o = r.get(outcome_key)
+        if o is None:
+            continue
+        try:
+            vals.append(float(v))
+            outcomes.append(float(o))
+        except (ValueError, TypeError):
+            continue
 
     if len(vals) < _MIN_RECORDS:
         return 0.0

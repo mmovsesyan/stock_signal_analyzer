@@ -74,7 +74,12 @@ def _save_raw(path: Path, data: dict[str, Any]) -> None:
     global _cache, _cache_path
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Атомарная запись с ограниченными правами (0o600 — только владелец)
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+    finally:
+        os.close(fd)
     tmp.replace(path)
     # Обновляем кэш после успешной записи
     _cache = data

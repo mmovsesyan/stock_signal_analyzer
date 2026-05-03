@@ -34,6 +34,9 @@ def _table_dict(payload: dict, table: str) -> tuple[list[str], list]:
 def fetch_tqbr_quote(secid: str, timeout: float = 12.0) -> MoexQuote:
     """Последняя цена и изменение к предыдущему закрытию на режиме TQBR."""
     sid = secid.replace(".ME", "").strip().upper()
+    # Валидация: только буквы и цифры, макс 12 символов (защита от path traversal / SSRF)
+    if not sid or len(sid) > 12 or not sid.isalnum():
+        return MoexQuote(secid=sid, last=None, change_pct_from_prev=None, detail="Невалидный SECID.")
     url = (
         f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{sid}.json"
     )
@@ -79,6 +82,8 @@ def fetch_tqbr_quote(secid: str, timeout: float = 12.0) -> MoexQuote:
 def fetch_tqbr_volume_today(secid: str, timeout: float = 12.0) -> MoexVolumeToday:
     """Сегодняшний объём в бумагах (VOLTODAY), оборот (VALTODAY), число сделок (NUMTRADES)."""
     sid = secid.replace(".ME", "").strip().upper()
+    if not sid or len(sid) > 12 or not sid.isalnum():
+        return MoexVolumeToday(secid=sid, voltoday=None, valtoday=None, numtrades=None, detail="Невалидный SECID.")
     url = (
         f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/{sid}.json"
     )

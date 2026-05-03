@@ -17,6 +17,10 @@ import requests
 from .news_feeds import NewsItem
 from .retry_utils import retry_with_backoff
 
+# Подавить логирование WebSocket (содержит токен в URL)
+import logging as _logging
+_logging.getLogger("websocket").setLevel(_logging.WARNING)
+
 FINNHUB_BASE = "https://finnhub.io/api/v1"
 
 _rate_lock = threading.Lock()

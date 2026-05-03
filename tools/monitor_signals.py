@@ -59,7 +59,7 @@ def parse_timestamp(ts_str):
         if ts_str.endswith('Z'):
             ts_str = ts_str[:-1] + '+00:00'
         return datetime.fromisoformat(ts_str)
-    except:
+    except Exception:
         return None
 
 
