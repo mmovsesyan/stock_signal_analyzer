@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from functools import wraps
 from typing import Any, Callable, TypeVar
@@ -10,6 +11,14 @@ from typing import Any, Callable, TypeVar
 _log = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# Паттерн для удаления токенов/ключей из URL в сообщениях об ошибках
+_SECRET_RE = re.compile(r"(token|key|apikey|api_key)=[^&\s]+", re.IGNORECASE)
+
+
+def _sanitize_error(msg: str) -> str:
+    """Убрать токены и ключи из сообщения об ошибке."""
+    return _SECRET_RE.sub(r"\1=***", msg)
 
 
 def retry_with_backoff(
@@ -62,7 +71,7 @@ def retry_with_backoff(
                             func.__name__,
                             attempt + 1,
                             max_retries + 1,
-                            str(e)[:100],
+                            _sanitize_error(str(e)[:200]),
                             current_delay,
                         )
 
@@ -73,7 +82,7 @@ def retry_with_backoff(
                             "%s failed after %d attempts: %s",
                             func.__name__,
                             max_retries + 1,
-                            str(e)[:200],
+                            _sanitize_error(str(e)[:200]),
                         )
 
             # Если все попытки исчерпаны, пробрасываем последнее исключение

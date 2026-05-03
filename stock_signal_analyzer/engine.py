@@ -308,7 +308,9 @@ def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tup
         }
 
         if key:
-            futures[executor.submit(fetch_company_news, symbol, api_key=key, limit=30)] = 'finnhub'
+            # Finnhub не поддерживает .ME тикеры — не тратим запросы
+            if not symbol.strip().upper().endswith(".ME"):
+                futures[executor.submit(fetch_company_news, symbol, api_key=key, limit=30)] = 'finnhub'
 
         for future in as_completed(futures, timeout=15):
             source = futures[future]
