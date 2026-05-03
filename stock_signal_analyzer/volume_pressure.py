@@ -125,13 +125,27 @@ def _moex_volume_score(
         return None, f"MOEX объём: ошибка ({e})."
     if snap.voltoday is None:
         return None, f"MOEX объём: нет данных ({snap.detail})."
-    avg = float(hist_volume.tail(20).mean())
-    if avg <= 0:
-        return None, "MOEX объём: нет среднего объёма в истории Yahoo."
+
+    # Для .ME тикеров: используем историю из MOEX ISS если Yahoo-объём ненадёжный.
+    # Yahoo часто отдаёт 0 или мусор для Мосбиржи.
+    avg = float(hist_volume.tail(20).mean()) if len(hist_volume) >= 20 else 0.0
+
+    # Если средний объём из истории слишком мал (Yahoo не отдаёт .ME) —
+    # используем только абсолютный MOEX voltoday без сравнения.
+    if avg <= 0 or (snap.voltoday > 0 and avg > 0 and snap.voltoday / avg > 5.0):
+        # Yahoo-объём ненадёжный — оцениваем по абсолютному MOEX voltoday
+        # Нейтральный score: есть объём, но нет базы для сравнения
+        if snap.voltoday > 10000:
+            sc = 0.0  # нейтрально — объём есть, но не знаем много это или мало
+        else:
+            sc = -0.15  # мало сделок
+        detail = f"MOEX: {snap.detail} (нет надёжной базы для сравнения)"
+        return sc, detail
+
     ratio = snap.voltoday / avg
     sc = float(max(-1.0, min(1.0, math.tanh(math.log(max(ratio, 1e-6)) * 0.9))))
     detail = (
-        f"MOEX: {snap.detail}, отн. к ср. дневн. объёму Yahoo ≈ {ratio:.2f}x → score={sc:+.3f}"
+        f"MOEX: {snap.detail}, отн. к ср. дневн. объёму ≈ {ratio:.2f}x → score={sc:+.3f}"
     )
     return sc, detail
 

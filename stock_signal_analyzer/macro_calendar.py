@@ -122,6 +122,66 @@ _macro_cache_ts: float = 0.0
 _MACRO_CACHE_TTL: float = 300.0
 
 
+# ── Классификация событий по реальному влиянию на рынок ──────────────────────
+
+def _event_severity(name: str, impact: str) -> str:
+    """
+    Классифицировать событие по реальному влиянию:
+    - 'critical': решение по ставке, CPI, NFP, GDP — двигают рынок на 1-3%
+    - 'important': пресс-конференция, протоколы, PMI — двигают на 0.3-1%
+    - 'minor': речи чиновников, обзоры, отчёты — обычно < 0.3%
+    """
+    low = name.lower()
+    # Критические — реально двигают рынок
+    if re.search(r"interest rate|rate decision|funds rate|ставк\w+\s+реш", low):
+        return "critical"
+    if re.search(r"\bcpi\b|consumer price|inflation rate|инфляци", low):
+        return "critical"
+    if re.search(r"non[\s-]?farm|nfp|\bpayroll|jobs report", low):
+        return "critical"
+    if re.search(r"\bgdp\b|gross domestic", low):
+        return "critical"
+    # Важные — могут двинуть рынок
+    if re.search(r"press conference|пресс.конф", low):
+        return "important"
+    if re.search(r"minutes|протокол|statement|заявлен", low):
+        return "important"
+    if re.search(r"\bpmi\b|manufacturing|services\s+pmi", low):
+        return "important"
+    if re.search(r"unemployment|безработиц|retail sales|розничн", low):
+        return "important"
+    # Остальное — речи, обзоры, прогнозы
+    if impact == "high":
+        return "important"
+    return "minor"
+
+
+def _dampening_for_event(name: str, impact: str, hours_until: float) -> float:
+    """Dampening для конкретного события в зависимости от типа и времени до него."""
+    severity = _event_severity(name, impact)
+
+    if severity == "critical":
+        if hours_until <= 3:
+            return 0.48
+        if hours_until <= 6:
+            return 0.55
+        if hours_until <= 24:
+            return 0.65
+        return 0.75
+    elif severity == "important":
+        if hours_until <= 3:
+            return 0.72
+        if hours_until <= 6:
+            return 0.80
+        if hours_until <= 24:
+            return 0.88
+        return 0.93
+    else:  # minor — речи, обзоры
+        if hours_until <= 3:
+            return 0.90
+        return 0.95
+
+
 def build_macro_context(
     api_key: str | None = None,
     hours_window: float = 48.0,
@@ -179,14 +239,9 @@ def build_macro_context(
         hours = (dt - now).total_seconds() / 3600.0
         if -2.0 <= hours <= hours_window:
             critical_near = True
-            if hours <= 3:
-                best_damp = min(best_damp, 0.48)
-            elif hours <= 6:
-                best_damp = min(best_damp, 0.55)
-            elif hours <= 24:
-                best_damp = min(best_damp, 0.65)
-            else:
-                best_damp = min(best_damp, 0.72)
+            # Разный dampening по типу события
+            event_damp = _dampening_for_event(name, impact, hours)
+            best_damp = min(best_damp, event_damp)
 
     if not headlines:
         return MacroContext(

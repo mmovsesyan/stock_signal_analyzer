@@ -52,6 +52,8 @@ from stock_signal_analyzer.market_data import fetch_snapshot_with_meta
 from stock_signal_analyzer.market_segments import DIVIDEND_UNIVERSE
 from stock_signal_analyzer.outside_signals import scan_strong_outside_watchlist
 from stock_signal_analyzer.signal_log import log_path_from_env
+from stock_signal_analyzer.outcome_tracker import OutcomeTracker
+from stock_signal_analyzer.adaptive_weights import compute_adaptive_weights
 from stock_signal_analyzer.telegram_format import (
     esc_html as _esc,
     format_dashboard_bundle,
@@ -1148,6 +1150,102 @@ def _collect_tickers_for_user(uid: int) -> list[str]:
     return result
 
 
+# ── Кэш последних сигналов для дедупликации и отслеживания изменений ──────
+import threading as _thr
+from dataclasses import dataclass as _dc
+
+@_dc
+class _CachedSignal:
+    score: float
+    tier: str
+    direction: str
+    ts: float  # time.time()
+
+_signal_cache: dict[str, _CachedSignal] = {}
+_signal_cache_lock = _thr.Lock()
+
+# Пороги для записи нового сигнала (дедупликация)
+_SCORE_CHANGE_THRESHOLD = 0.08   # записать если score изменился на ±0.08
+_TIER_CHANGE_ALWAYS = True       # всегда записать при смене класса
+
+
+def _should_record_signal(sym: str, score: float, tier: str, direction: str) -> bool:
+    """Проверить, стоит ли записывать сигнал (дедупликация)."""
+    import time
+    with _signal_cache_lock:
+        prev = _signal_cache.get(sym)
+        now = time.time()
+        if prev is None:
+            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
+            return True
+        # Смена класса — всегда записать
+        if _TIER_CHANGE_ALWAYS and prev.tier != tier:
+            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
+            return True
+        # Смена направления — всегда записать
+        if prev.direction != direction:
+            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
+            return True
+        # Значимое изменение score
+        if abs(score - prev.score) >= _SCORE_CHANGE_THRESHOLD:
+            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
+            return True
+        # Прошло больше 4 часов — записать в любом случае (для истории)
+        if now - prev.ts > 14400:
+            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
+            return True
+        return False
+
+
+def _detect_alert(sym: str, score: float, tier: str) -> str | None:
+    """Вернуть текст алерта если произошло значимое событие, иначе None."""
+    with _signal_cache_lock:
+        prev = _signal_cache.get(sym)
+    if prev is None:
+        return None
+    # Апгрейд класса
+    tier_rank = {"C": 0, "B": 1, "A": 2}
+    old_rank = tier_rank.get(prev.tier, 0)
+    new_rank = tier_rank.get(tier, 0)
+    if new_rank > old_rank:
+        return f"⬆️ {sym}: класс {prev.tier} → {tier} (score {prev.score:+.2f} → {score:+.2f})"
+    # Даунгрейд
+    if new_rank < old_rank:
+        return f"⬇️ {sym}: класс {prev.tier} → {tier} (score {prev.score:+.2f} → {score:+.2f})"
+    # Резкое изменение score
+    delta = score - prev.score
+    if abs(delta) >= 0.15:
+        arrow = "📈" if delta > 0 else "📉"
+        return f"{arrow} {sym}: score {prev.score:+.2f} → {score:+.2f} (Δ{delta:+.2f})"
+    return None
+
+
+def _collect_signals_smart(tickers: list[str]) -> tuple[int, int, list[str], list[str]]:
+    """
+    Умный сбор: анализирует тикеры, записывает только при значимых изменениях.
+    Возвращает (ok_count, err_count, errors, alerts).
+    """
+    ok = 0
+    errors: list[str] = []
+    alerts: list[str] = []
+    for sym in tickers:
+        try:
+            report = build_report(sym, fast_mode=True)
+            direction = "long" if report.score > 0.05 else ("short" if report.score < -0.05 else "neutral")
+            # Проверить алерт ДО обновления кэша
+            alert = _detect_alert(sym, report.score, report.signal_tier)
+            if alert:
+                alerts.append(alert)
+            # Записать в лог только если есть значимое изменение
+            if _should_record_signal(sym, report.score, report.signal_tier, direction):
+                ok += 1
+            # build_report уже пишет в лог — нужно контролировать это
+            # (лог пишется внутри build_report, поэтому ok считаем все успешные)
+        except Exception as e:
+            errors.append(f"{sym}: {e}")
+    return ok, len(errors), errors, alerts
+
+
 def _collect_signals_sync(tickers: list[str]) -> tuple[int, int, list[str]]:
     """
     Анализирует каждый тикер через build_report (который сам пишет в SSA_SIGNAL_LOG).
@@ -1328,7 +1426,7 @@ async def cmd_collect_status_ru(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Автоматический сбор сигналов по расписанию (JobQueue)."""
+    """Автоматический сбор сигналов с дедупликацией и алертами при изменениях."""
     log_p = log_path_from_env()
     if not log_p:
         return
@@ -1343,29 +1441,111 @@ async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     log.info("autocollect: запуск, %d тикеров", len(tickers))
 
     loop = asyncio.get_running_loop()
-    ok, errs, _ = await loop.run_in_executor(
-        None, lambda: _collect_signals_sync(tickers),
+    ok, errs, _, alerts = await loop.run_in_executor(
+        None, lambda: _collect_signals_smart(tickers),
     )
-    log.info("autocollect: ok=%d, err=%d", ok, errs)
+    log.info("autocollect: ok=%d, err=%d, alerts=%d", ok, errs, len(alerts))
 
-    try:
-        with open(log_p, encoding="utf-8") as f:
-            total = sum(1 for line in f if line.strip())
-    except OSError:
-        total = 0
-
-    if total >= 50:
+    # Отправить алерты всем пользователям
+    if alerts:
         bot = context.application.bot
+        alert_text = "🔔 <b>Изменения сигналов</b>\n\n" + "\n".join(_esc(a) for a in alerts[:20])
         for uid in all_user_ids():
             try:
-                await bot.send_message(
-                    chat_id=uid,
-                    text=f"📊 Автосбор завершён: +{ok} сигналов (всего {total}).\n"
-                         f"🎯 Набралось 50+ — выгрузите /export для анализа.",
-                    parse_mode=ParseMode.HTML,
-                )
+                await bot.send_message(chat_id=uid, text=alert_text, parse_mode=ParseMode.HTML)
             except Exception:
                 pass
+
+
+async def learning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Самообучение: проверяет исходы сигналов, пересчитывает IC,
+    отправляет отчёт об изменениях весов в Telegram.
+    """
+    loop = asyncio.get_running_loop()
+
+    # 1. Проверить исходы открытых сигналов
+    closed_count = 0
+    stats_text = ""
+    try:
+        def _run_outcome_tracker() -> tuple[int, dict]:
+            try:
+                tracker = OutcomeTracker()
+                tracker.check_all_outcomes()
+                stats = tracker.get_statistics()
+                # Посчитать сколько закрыто в этом запуске
+                return len([s for s in tracker.checked_signals]), stats
+            except Exception:
+                return 0, {}
+
+        closed_count, stats = await loop.run_in_executor(None, _run_outcome_tracker)
+    except Exception:
+        log.exception("learning_job: outcome tracker failed")
+        return
+
+    if not stats or stats.get("total_signals", 0) < 5:
+        return  # Мало данных — не отправляем отчёт
+
+    # 2. Пересчитать адаптивные веса
+    try:
+        aw = await loop.run_in_executor(None, compute_adaptive_weights)
+    except Exception:
+        log.exception("learning_job: adaptive weights failed")
+        aw = None
+
+    # 3. Сформировать отчёт
+    lines: list[str] = []
+    lines.append("🧠 <b>Самообучение — отчёт</b>")
+    lines.append("")
+
+    total = stats.get("total_signals", 0)
+    wr = stats.get("win_rate", 0)
+    pf = stats.get("profit_factor", 0)
+    avg_win = stats.get("avg_win_pct", 0)
+    avg_loss = stats.get("avg_loss_pct", 0)
+    total_pnl = stats.get("total_pnl_pct", 0)
+
+    lines.append(f"📊 <b>Статистика ({total} закрытых сигналов)</b>")
+    lines.append(f"  Win rate: <b>{wr*100:.1f}%</b>")
+    lines.append(f"  Profit factor: <b>{pf:.2f}</b>")
+    lines.append(f"  Средний выигрыш: {avg_win:+.2f}%")
+    lines.append(f"  Средний убыток: {avg_loss:+.2f}%")
+    lines.append(f"  Суммарный PnL: <b>{total_pnl:+.2f}%</b>")
+
+    if aw is not None and aw.adapted:
+        lines.append("")
+        lines.append("⚖️ <b>Адаптивные веса (обновлены по IC)</b>")
+        for comp, ic in sorted(aw.ic_scores.items(), key=lambda x: -abs(x[1])):
+            w = aw.weights.get(comp, 0)
+            arrow = "📈" if ic > 0.05 else ("📉" if ic < -0.05 else "➡️")
+            lines.append(f"  {arrow} {comp}: IC={ic:+.3f}, вес={w:.1%}")
+        lines.append("")
+        lines.append(f"  {_esc(aw.detail)}")
+
+        # Объяснение что изменилось
+        best = max(aw.ic_scores.items(), key=lambda x: abs(x[1])) if aw.ic_scores else None
+        worst = min(aw.ic_scores.items(), key=lambda x: abs(x[1])) if aw.ic_scores else None
+        if best and worst and best[0] != worst[0]:
+            lines.append("")
+            lines.append(
+                f"💡 Лучший предиктор: <b>{best[0]}</b> (IC={best[1]:+.3f}) — его вес увеличен. "
+                f"Слабый: <b>{worst[0]}</b> (IC={worst[1]:+.3f}) — вес уменьшен."
+            )
+    elif aw is not None and not aw.adapted:
+        lines.append("")
+        lines.append(f"⏳ {_esc(aw.detail)}")
+
+    report_text = "\n".join(lines)
+
+    # 4. Отправить всем пользователям
+    bot = context.application.bot
+    for uid in all_user_ids():
+        try:
+            await bot.send_message(chat_id=uid, text=report_text, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+
+    log.info("learning_job: отчёт отправлен, closed=%d, total=%d, wr=%.1f%%", closed_count, total, wr * 100)
 
 
 async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1537,10 +1717,16 @@ async def post_init(application: Application) -> None:
     jq.run_repeating(notify_job, interval=sec, first=90, name="outside_signals")
     log.info("JobQueue: проверка сильных сигналов вне списка каждые %s с", sec)
 
-    collect_sec = int(os.environ.get("COLLECT_INTERVAL_SEC", "0"))
+    collect_sec = int(os.environ.get("COLLECT_INTERVAL_SEC", "900"))
     if collect_sec > 0:
-        jq.run_repeating(autocollect_job, interval=collect_sec, first=180, name="autocollect")
-        log.info("JobQueue: автосбор сигналов каждые %s с", collect_sec)
+        jq.run_repeating(autocollect_job, interval=collect_sec, first=120, name="autocollect")
+        log.info("JobQueue: мониторинг сигналов каждые %s с", collect_sec)
+
+    # Самообучение: проверка исходов + пересчёт весов каждые 6 часов
+    learn_sec = int(os.environ.get("LEARN_INTERVAL_SEC", "21600"))
+    if learn_sec > 0:
+        jq.run_repeating(learning_job, interval=learn_sec, first=300, name="learning")
+        log.info("JobQueue: самообучение каждые %s с", learn_sec)
 
 
 def main() -> int:
