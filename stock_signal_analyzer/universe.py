@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# Крупнейшие US (ликвидные «голубые фишки») — расширяемый список.
+# Крупнейшие US (ликвидные «голубые фишки») — топ S&P 500 по капитализации.
 US_BLUE_CHIPS = frozenset(
     {
         "AAPL",
@@ -16,8 +16,10 @@ US_BLUE_CHIPS = frozenset(
         "AMZN",
         "META",
         "NVDA",
+        "TSLA",
         "BRK-B",
         "BRK.B",
+        "LLY",
         "JPM",
         "V",
         "UNH",
@@ -38,14 +40,11 @@ US_BLUE_CHIPS = frozenset(
         "MCD",
         "CSCO",
         "ACN",
-        "DHR",
-        "NEE",
-        "ABT",
-        "LIN",
-        "DIS",
-        "WFC",
-        "PM",
-        "TXN",
+        "NFLX",
+        "AMD",
+        "BAC",
+        "MU",
+        "GE",
         "ORCL",
         "CRM",
         "IBM",
@@ -66,10 +65,19 @@ US_BLUE_CHIPS = frozenset(
         "DE",
         "BA",
         "LMT",
+        "WFC",
+        "NEE",
+        "ABT",
+        "LIN",
+        "DIS",
+        "PM",
+        "TXN",
+        "DHR",
     }
 )
 
 # Ликвидные бумаги Мосбиржи (без суффикса .ME).
+# Актуально: MOEXBC пересмотр декабрь 2025 — добавлены OZON, VTBR; убраны CHMF, NLMK.
 RU_BLUE_CHIPS = frozenset(
     {
         "SBER",
@@ -81,17 +89,22 @@ RU_BLUE_CHIPS = frozenset(
         "TATN",
         "MOEX",
         "MGNT",
-        "YNDX",
+        "YDEX",   # Яндекс (ранее YNDX)
         "PLZL",
         "ALRS",
-        "CHMF",
         "VTBR",
         "SNGS",
         "MTSS",
         "AFLT",
         "PHOR",
         "IRAO",
-        "NLMK",
+        "OZON",   # добавлен в MOEXBC дек. 2025
+        "TCSG",   # Т-Банк (TCS Group)
+        "RUAL",   # Русал
+        "MAGN",   # ММК
+        "PIKK",   # ПИК
+        "POLY",   # Полиметалл
+        "FEES",   # ФСК ЕЭС / Россети
     }
 )
 
