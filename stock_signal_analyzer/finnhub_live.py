@@ -310,3 +310,139 @@ def fetch_tape_imbalance_ws(
         f"Лента сделок (tick rule): сделок={len(rows)}, buy_vol≈{buy_v:.0f}, sell_vol≈{sell_v:.0f}, "
         f"imbalance={imb:+.3f}"
     )
+
+
+# ── Аналитика Wall Street ────────────────────────────────────────────────────
+
+@dataclass
+class AnalystConsensus:
+    """Консенсус рекомендаций аналитиков."""
+    strong_buy: int
+    buy: int
+    hold: int
+    sell: int
+    strong_sell: int
+    total: int
+    period: str
+    detail: str
+
+
+@dataclass
+class EarningsSurprise:
+    """Последний EPS surprise."""
+    period: str
+    actual: float | None
+    estimate: float | None
+    surprise_pct: float | None
+    detail: str
+
+
+def fetch_recommendation_trends(
+    symbol: str,
+    api_key: str | None = None,
+    timeout: float = 10.0,
+) -> AnalystConsensus | None:
+    """Рекомендации аналитиков Wall Street (бесплатный endpoint Finnhub)."""
+    key = api_key or _token()
+    if not key:
+        return None
+    sym = symbol.strip().upper()
+    if sym.endswith(".ME"):
+        return None  # Finnhub не поддерживает Мосбиржу
+    _rate_wait()
+    try:
+        r = requests.get(
+            f"{FINNHUB_BASE}/stock/recommendation",
+            params={"symbol": sym, "token": key},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return None
+    if not isinstance(data, list) or not data:
+        return None
+    # Берём самый свежий период
+    latest = data[0]
+    sb = int(latest.get("strongBuy", 0))
+    b = int(latest.get("buy", 0))
+    h = int(latest.get("hold", 0))
+    s = int(latest.get("sell", 0))
+    ss = int(latest.get("strongSell", 0))
+    total = sb + b + h + s + ss
+    period = str(latest.get("period", ""))
+    if total == 0:
+        return None
+    positive_pct = (sb + b) / total * 100
+    if positive_pct >= 70:
+        consensus = "Покупать"
+    elif positive_pct >= 50:
+        consensus = "Скорее покупать"
+    elif positive_pct <= 20:
+        consensus = "Продавать"
+    elif positive_pct <= 40:
+        consensus = "Скорее продавать"
+    else:
+        consensus = "Держать"
+    detail = (
+        f"Активно покупать: {sb} | Покупать: {b} | Держать: {h} | Продавать: {s} | Активно продавать: {ss} — "
+        f"Консенсус: {consensus} ({positive_pct:.0f}% позитивных)"
+    )
+    return AnalystConsensus(
+        strong_buy=sb, buy=b, hold=h, sell=s, strong_sell=ss,
+        total=total, period=period, detail=detail,
+    )
+
+
+def fetch_earnings_surprise(
+    symbol: str,
+    api_key: str | None = None,
+    timeout: float = 10.0,
+) -> EarningsSurprise | None:
+    """Последний EPS surprise (бесплатный endpoint Finnhub, 4 квартала)."""
+    key = api_key or _token()
+    if not key:
+        return None
+    sym = symbol.strip().upper()
+    if sym.endswith(".ME"):
+        return None
+    _rate_wait()
+    try:
+        r = requests.get(
+            f"{FINNHUB_BASE}/stock/earnings",
+            params={"symbol": sym, "token": key, "limit": 1},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return None
+    if not isinstance(data, list) or not data:
+        return None
+    latest = data[0]
+    actual = latest.get("actual")
+    estimate = latest.get("estimate")
+    surprise_pct = latest.get("surprisePercent")
+    period = str(latest.get("period", ""))
+    if actual is None and estimate is None:
+        return None
+    parts = []
+    if actual is not None:
+        parts.append(f"прибыль на акцию: ${actual:.2f}")
+    if estimate is not None:
+        parts.append(f"ожидали: ${estimate:.2f}")
+    if surprise_pct is not None:
+        if surprise_pct > 0:
+            parts.append(f"лучше прогноза на {surprise_pct:.1f}% ✅")
+        elif surprise_pct < 0:
+            parts.append(f"хуже прогноза на {abs(surprise_pct):.1f}% ❌")
+        else:
+            parts.append("совпал с прогнозом")
+    detail = f"Последний квартальный отчёт ({period}): " + ", ".join(parts)
+    return EarningsSurprise(
+        period=period,
+        actual=float(actual) if actual is not None else None,
+        estimate=float(estimate) if estimate is not None else None,
+        surprise_pct=float(surprise_pct) if surprise_pct is not None else None,
+        detail=detail,
+    )

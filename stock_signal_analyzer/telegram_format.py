@@ -168,6 +168,11 @@ def _plain_language_summary(r: SignalReport) -> str:
     elif r.macro_dampening < 0.90:
         parts.append("Макро-фон умеренно неопределённый — учитывайте риск.")
 
+    # ── Аналитики ──
+    analyst = getattr(r, "analyst_detail", "") or ""
+    if analyst:
+        parts.append(f"🏦 Аналитики: {analyst}")
+
     # ── Класс и рекомендация ──
     if tier == "A":
         tp = r.trade_plan
@@ -271,6 +276,16 @@ def format_signal_report(r: SignalReport) -> str:
     if hasattr(r, "levels_detail") and r.levels_detail:
         lines.append(f"📐 Уровни: {_esc(r.levels_detail)}")
     lines.append("")
+    # ── Аналитика Wall Street ──
+    analyst = getattr(r, "analyst_detail", "") or ""
+    earnings = getattr(r, "earnings_detail", "") or ""
+    if analyst or earnings:
+        lines.append("🏦 <b>Мнение аналитиков Wall Street</b>")
+        if analyst:
+            lines.append(f"  {_esc(analyst)}")
+        if earnings:
+            lines.append(f"  {_esc(earnings)}")
+        lines.append("")
     lines.append(_plain_language_summary(r))
     lines.append("")
     lines.append(_esc(r.risk_note))

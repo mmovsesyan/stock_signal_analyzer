@@ -14,7 +14,7 @@ import pandas as pd
 _log = logging.getLogger(__name__)
 
 from .adaptive_weights import AdaptiveWeightsResult, compute_adaptive_weights
-from .finnhub_live import fetch_company_news
+from .finnhub_live import fetch_company_news, fetch_recommendation_trends, fetch_earnings_surprise
 from .intraday import IntradayBundle, build_intraday
 from .levels import KeyLevels, compute_key_levels
 from .macro_calendar import MacroContext, build_macro_context
@@ -134,6 +134,9 @@ class SignalReport:
     cross_asset_detail: str = ""
     position_size_detail: str = ""
     quant_score: float = 0.0
+    # Аналитика Wall Street (Finnhub, только US)
+    analyst_detail: str = ""
+    earnings_detail: str = ""
 
 
 # ── Приватные датаклассы для промежуточных результатов ───────────────────────
@@ -749,6 +752,21 @@ def build_report(
         vol_regime=inputs.vol_regime.regime if inputs.vol_regime else "normal",
     )
     rep.trade_plan = tp
+
+    # ── Аналитика Wall Street (только US тикеры, Finnhub бесплатный) ──
+    if key and not inputs.snap.symbol.endswith(".ME"):
+        try:
+            rec = fetch_recommendation_trends(inputs.snap.symbol, api_key=key)
+            if rec:
+                rep.analyst_detail = rec.detail
+        except Exception:
+            pass
+        try:
+            earn = fetch_earnings_surprise(inputs.snap.symbol, api_key=key)
+            if earn:
+                rep.earnings_detail = earn.detail
+        except Exception:
+            pass
 
     log_p = log_path_from_env()
     if log_p:
