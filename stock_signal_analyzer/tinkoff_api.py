@@ -1,24 +1,59 @@
 """Интеграция с Tinkoff Invest API (T-Bank).
 
 Получение данных по российским акциям через официальный SDK.
+Поддерживает оба пакета: t-tech-investments (новый) и tinkoff-investments (старый).
 """
 
 from __future__ import annotations
 
+import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+_log = logging.getLogger(__name__)
+
+# Пробуем оба SDK
+_Client = None
+_CandleInterval = None
+_TINKOFF_AVAILABLE = False
+_SDK_SOURCE = ""
+
 try:
-    from tinkoff.invest import Client, RequestError, CandleInterval
-    from tinkoff.invest.schemas import Quotation
-    TINKOFF_AVAILABLE = True
+    from t_tech.invest import Client as _C, CandleInterval as _CI
+    _Client = _C
+    _CandleInterval = _CI
+    _TINKOFF_AVAILABLE = True
+    _SDK_SOURCE = "t_tech.invest"
 except ImportError:
-    TINKOFF_AVAILABLE = False
+    try:
+        from tinkoff.invest import Client as _C, CandleInterval as _CI
+        _Client = _C
+        _CandleInterval = _CI
+        _TINKOFF_AVAILABLE = True
+        _SDK_SOURCE = "tinkoff.invest"
+    except ImportError:
+        pass
+
+# Для обратной совместимости
+TINKOFF_AVAILABLE = _TINKOFF_AVAILABLE
 
 
 def _quotation_to_float(q: Any) -> float:
     """Конвертировать Quotation в float."""
+    if q is None:
+        return 0.0
+    # Пробуем утилиту SDK
+    try:
+        if _SDK_SOURCE == "t_tech.invest":
+            from t_tech.invest.utils import quotation_to_decimal
+            return float(quotation_to_decimal(q))
+        elif _SDK_SOURCE == "tinkoff.invest":
+            from tinkoff.invest.utils import quotation_to_decimal
+            return float(quotation_to_decimal(q))
+    except (ImportError, Exception):
+        pass
+    # Fallback
     if hasattr(q, 'units') and hasattr(q, 'nano'):
         return float(q.units) + float(q.nano) / 1e9
     return float(q)
@@ -26,20 +61,23 @@ def _quotation_to_float(q: Any) -> float:
 
 def get_tinkoff_token() -> str | None:
     """Получить токен Tinkoff из переменных окружения."""
-    return os.environ.get("TINKOFF_TOKEN") or os.environ.get("TBANK_TOKEN")
+    return (
+        os.environ.get("TINKOFF_INVEST_TOKEN")
+        or os.environ.get("TINKOFF_TOKEN")
+        or os.environ.get("TBANK_TOKEN")
+    )
+
+
+def is_tinkoff_available() -> bool:
+    """Проверить, доступен ли Tinkoff API."""
+    if not _TINKOFF_AVAILABLE:
+        return False
+    return get_tinkoff_token() is not None
 
 
 def fetch_tinkoff_price(ticker: str) -> dict[str, Any] | None:
-    """
-    Получить текущую цену акции через Tinkoff API.
-
-    Args:
-        ticker: Тикер акции (например, "SBER", "GAZP")
-
-    Returns:
-        dict с полями: price, currency, volume, или None если ошибка
-    """
-    if not TINKOFF_AVAILABLE:
+    """Получить текущую цену акции через Tinkoff/T-Bank API."""
+    if not _TINKOFF_AVAILABLE or _Client is None:
         return None
 
     token = get_tinkoff_token()
@@ -47,64 +85,62 @@ def fetch_tinkoff_price(ticker: str) -> dict[str, Any] | None:
         return None
 
     try:
-        with Client(token) as client:
-            # Поиск инструмента по тикеру
+        with _Client(token) as client:
             instruments = client.instruments.find_instrument(query=ticker)
             if not instruments.instruments:
                 return None
 
             instrument = instruments.instruments[0]
-            figi = instrument.figi
+            uid = getattr(instrument, "uid", None) or ""
+            figi = getattr(instrument, "figi", "") or ""
 
-            # Получить последнюю цену
-            last_prices = client.market_data.get_last_prices(figi=[figi])
+            if uid:
+                last_prices = client.market_data.get_last_prices(instrument_id=[uid])
+            elif figi:
+                last_prices = client.market_data.get_last_prices(figi=[figi])
+            else:
+                return None
+
             if not last_prices.last_prices:
                 return None
 
-            last_price = last_prices.last_prices[0]
-            price = _quotation_to_float(last_price.price)
-
-            # Получить объём торгов
-            candles = client.market_data.get_candles(
-                figi=figi,
-                from_=datetime.now() - timedelta(days=1),
-                to=datetime.now(),
-                interval=CandleInterval.CANDLE_INTERVAL_DAY
-            )
+            price = _quotation_to_float(last_prices.last_prices[0].price)
 
             volume = 0
-            if candles.candles:
-                volume = candles.candles[-1].volume
+            if _CandleInterval is not None:
+                try:
+                    kwargs = {
+                        "from_": datetime.now(timezone.utc) - timedelta(days=1),
+                        "to": datetime.now(timezone.utc),
+                        "interval": _CandleInterval.CANDLE_INTERVAL_DAY,
+                    }
+                    if uid:
+                        kwargs["instrument_id"] = uid
+                    else:
+                        kwargs["figi"] = figi
+                    candles = client.market_data.get_candles(**kwargs)
+                    if candles.candles:
+                        volume = candles.candles[-1].volume
+                except Exception:
+                    pass
 
             return {
                 "price": price,
-                "currency": instrument.currency,
+                "currency": getattr(instrument, "currency", "rub"),
                 "volume": volume,
                 "figi": figi,
-                "name": instrument.name,
-                "ticker": instrument.ticker,
+                "name": getattr(instrument, "name", ticker),
+                "ticker": getattr(instrument, "ticker", ticker),
             }
 
-    except RequestError as e:
-        print(f"Tinkoff API error for {ticker}: {e}")
-        return None
     except Exception as e:
-        print(f"Tinkoff error for {ticker}: {e}")
+        _log.warning("Tinkoff API error for %s: %s", ticker, type(e).__name__)
         return None
 
 
 def fetch_tinkoff_candles(ticker: str, days: int = 30) -> list[dict[str, Any]] | None:
-    """
-    Получить исторические свечи через Tinkoff API.
-
-    Args:
-        ticker: Тикер акции
-        days: Количество дней истории
-
-    Returns:
-        Список свечей с полями: date, open, high, low, close, volume
-    """
-    if not TINKOFF_AVAILABLE:
+    """Получить исторические свечи через Tinkoff/T-Bank API."""
+    if not _TINKOFF_AVAILABLE or _Client is None or _CandleInterval is None:
         return None
 
     token = get_tinkoff_token()
@@ -112,21 +148,26 @@ def fetch_tinkoff_candles(ticker: str, days: int = 30) -> list[dict[str, Any]] |
         return None
 
     try:
-        with Client(token) as client:
-            # Поиск инструмента
+        with _Client(token) as client:
             instruments = client.instruments.find_instrument(query=ticker)
             if not instruments.instruments:
                 return None
 
-            figi = instruments.instruments[0].figi
+            instrument = instruments.instruments[0]
+            uid = getattr(instrument, "uid", None) or ""
+            figi = getattr(instrument, "figi", "") or ""
 
-            # Получить свечи
-            candles = client.market_data.get_candles(
-                figi=figi,
-                from_=datetime.now() - timedelta(days=days),
-                to=datetime.now(),
-                interval=CandleInterval.CANDLE_INTERVAL_DAY
-            )
+            kwargs = {
+                "from_": datetime.now(timezone.utc) - timedelta(days=days),
+                "to": datetime.now(timezone.utc),
+                "interval": _CandleInterval.CANDLE_INTERVAL_DAY,
+            }
+            if uid:
+                kwargs["instrument_id"] = uid
+            else:
+                kwargs["figi"] = figi
+
+            candles = client.market_data.get_candles(**kwargs)
 
             result = []
             for candle in candles.candles:
@@ -142,26 +183,13 @@ def fetch_tinkoff_candles(ticker: str, days: int = 30) -> list[dict[str, Any]] |
             return result
 
     except Exception as e:
-        print(f"Tinkoff candles error for {ticker}: {e}")
+        _log.warning("Tinkoff candles error for %s: %s", ticker, type(e).__name__)
         return None
 
 
-def is_tinkoff_available() -> bool:
-    """Проверить, доступен ли Tinkoff API."""
-    if not TINKOFF_AVAILABLE:
-        return False
-    token = get_tinkoff_token()
-    return token is not None
-
-
 def get_tinkoff_portfolio() -> dict[str, Any] | None:
-    """
-    Получить портфель пользователя.
-
-    Returns:
-        dict с позициями и балансом
-    """
-    if not TINKOFF_AVAILABLE:
+    """Получить портфель пользователя."""
+    if not _TINKOFF_AVAILABLE or _Client is None:
         return None
 
     token = get_tinkoff_token()
@@ -169,15 +197,12 @@ def get_tinkoff_portfolio() -> dict[str, Any] | None:
         return None
 
     try:
-        with Client(token) as client:
-            # Получить список счетов
+        with _Client(token) as client:
             accounts = client.users.get_accounts()
             if not accounts.accounts:
                 return None
 
             account_id = accounts.accounts[0].id
-
-            # Получить портфель
             portfolio = client.operations.get_portfolio(account_id=account_id)
 
             positions = []
@@ -195,5 +220,5 @@ def get_tinkoff_portfolio() -> dict[str, Any] | None:
             }
 
     except Exception as e:
-        print(f"Tinkoff portfolio error: {e}")
+        _log.warning("Tinkoff portfolio error: %s", type(e).__name__)
         return None

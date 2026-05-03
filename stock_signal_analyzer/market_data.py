@@ -148,6 +148,28 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
             _CACHE[sym] = (result, time.time())
             return result
 
+    # Fallback на MOEX ISS (бесплатно, без токена) для РФ-тикеров
+    if (hist is None or hist.empty) and sym.endswith(".ME"):
+        _log.info("T-Bank недоступен для %s, пробуем MOEX ISS…", sym)
+        try:
+            from .moex_iss import fetch_moex_history
+            moex_hist = fetch_moex_history(sym, days=400)
+            if moex_hist is not None and not moex_hist.empty:
+                last = float(moex_hist["Close"].iloc[-1])
+                snap = TickerSnapshot(
+                    symbol=sym,
+                    last_close=last,
+                    currency="RUB",
+                    company_name=sym.replace(".ME", ""),
+                    history=moex_hist,
+                )
+                result = (snap, info, profile)
+                _CACHE[sym] = (result, time.time())
+                _log.info("MOEX ISS: загружено %d свечей для %s", len(moex_hist), sym)
+                return result
+        except Exception as e:
+            _log.warning("MOEX ISS fallback failed for %s: %s", sym, e)
+
     if hist is None or hist.empty:
         hint = _tbank_hint(sym)
         raise ValueError(

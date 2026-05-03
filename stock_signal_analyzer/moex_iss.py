@@ -127,3 +127,79 @@ def fetch_tqbr_volume_today(secid: str, timeout: float = 12.0) -> MoexVolumeToda
     nt = _f(rm.get("NUMTRADES"))
     detail = f"VOLTODAY={vo}, VALTODAY={va}, NUMTRADES={nt}"
     return MoexVolumeToday(secid=sid, voltoday=vo, valtoday=va, numtrades=nt, detail=detail)
+
+
+def fetch_moex_history(secid: str, days: int = 365, timeout: float = 15.0) -> "pd.DataFrame | None":
+    """
+    Дневные свечи с MOEX ISS (бесплатно, без токена).
+
+    Возвращает DataFrame с колонками Open, High, Low, Close, Volume
+    или None если данных нет.
+    """
+    import pandas as pd
+    from datetime import date, timedelta
+
+    sid = secid.replace(".ME", "").strip().upper()
+    if not sid or len(sid) > 12 or not sid.isalnum():
+        return None
+
+    d_from = (date.today() - timedelta(days=days)).isoformat()
+    d_to = date.today().isoformat()
+
+    # MOEX ISS отдаёт максимум 100 строк за запрос, нужна пагинация
+    all_rows: list[list] = []
+    cols: list[str] = []
+    start = 0
+
+    for _ in range(20):  # макс 20 страниц = 2000 свечей
+        url = (
+            "https://iss.moex.com/iss/history/engines/stock/markets/shares"
+            f"/boards/TQBR/securities/{sid}.json"
+        )
+        params = {
+            "iss.meta": "off",
+            "history.columns": "TRADEDATE,OPEN,HIGH,LOW,CLOSE,VOLUME",
+            "from": d_from,
+            "till": d_to,
+            "start": str(start),
+        }
+        try:
+            r = requests.get(url, params=params, timeout=timeout)
+            r.raise_for_status()
+            data = r.json()
+        except Exception:
+            break
+
+        h_cols, h_rows = _table_dict(data, "history")
+        if not h_rows:
+            break
+        if not cols:
+            cols = h_cols
+        all_rows.extend(h_rows)
+        # Если вернулось меньше 100 строк — это последняя страница
+        if len(h_rows) < 100:
+            break
+        start += 100
+
+    if not all_rows or not cols:
+        return None
+
+    raw = pd.DataFrame(all_rows, columns=cols)
+
+    # Преобразовать в стандартный OHLCV формат
+    df = pd.DataFrame()
+    df["Open"] = pd.to_numeric(raw["OPEN"], errors="coerce")
+    df["High"] = pd.to_numeric(raw["HIGH"], errors="coerce")
+    df["Low"] = pd.to_numeric(raw["LOW"], errors="coerce")
+    df["Close"] = pd.to_numeric(raw["CLOSE"], errors="coerce")
+    df["Volume"] = pd.to_numeric(raw["VOLUME"], errors="coerce")
+    df.index = pd.to_datetime(raw["TRADEDATE"])
+    df.index.name = "Date"
+
+    # Убрать строки с нулевыми ценами (выходные, нет торгов)
+    df = df[(df["Close"] > 0) & (df["Open"] > 0)].dropna()
+
+    if df.empty:
+        return None
+
+    return df
