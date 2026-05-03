@@ -494,6 +494,32 @@ async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
             parse_mode=ParseMode.HTML,
         )
         return
+
+    # Автодетекция рынка: если тикер без суффикса — проверить РФ и US списки
+    from stock_signal_analyzer.universe import RU_BLUE_CHIPS, US_BLUE_CHIPS, BOND_ETFS_AND_FUNDS
+    if "." not in sym and "-" not in sym:
+        base = sym.upper()
+        if base in RU_BLUE_CHIPS:
+            # Российский тикер без .ME — добавить автоматически
+            sym = f"{base}.ME"
+            args = [sym] + args[1:]
+        elif base not in US_BLUE_CHIPS and base not in BOND_ETFS_AND_FUNDS:
+            # Неизвестный тикер — предложить варианты
+            suggestions = []
+            if f"{base}.ME" != sym:
+                suggestions.append(f"<code>{base}.ME</code> (Мосбиржа)")
+            suggestions.append(f"<code>{base}</code> (US)")
+            await message.reply_text(
+                f"🔍 Тикер <code>{_esc(base)}</code> не найден в списках.\n"
+                f"Попробуйте: {' или '.join(suggestions)}",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+    status_msg = await message.reply_text(
+        f"⏳ Анализирую <b>{_esc(sym)}</b>… Это займёт 10-30 секунд.",
+        parse_mode=ParseMode.HTML,
+    )
     await message.reply_chat_action(action=ChatAction.TYPING)
     loop = asyncio.get_running_loop()
     try:
@@ -506,10 +532,29 @@ async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
                 ws_seconds=8.0,
             ),
         )
+    except ValueError as e:
+        # Тикер не найден — быстрый ответ
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await message.reply_text(
+            f"❌ {_esc(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
     except Exception as e:
         log.exception("signal")
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
         await message.reply_text(_esc(f"Ошибка: {e}"), parse_mode=ParseMode.HTML)
         return
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
     html_text = format_signal_report(report)
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
@@ -1750,7 +1795,7 @@ def main() -> int:
     # Поддержка Cloudflare Workers прокси для обхода блокировки Telegram API
     base_url = os.environ.get("TELEGRAM_BASE_URL")
     proxy_url = os.environ.get("TELEGRAM_PROXY")
-    builder = Application.builder().token(token).post_init(post_init)
+    builder = Application.builder().token(token).post_init(post_init).concurrent_updates(True)
     if base_url:
         base_url = base_url.rstrip("/")
         builder = builder.base_url(base_url).base_file_url(base_url + "/file/bot")
