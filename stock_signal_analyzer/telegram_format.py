@@ -66,8 +66,47 @@ def _plain_language_summary(r: SignalReport) -> str:
     score = r.score
     tier = r.signal_tier
     conf = r.confidence
+    ref = r.ref_price
 
-    # Направление
+    # ── Цена и волатильность ──
+    currency = "₽" if r.symbol.endswith(".ME") else "$"
+    price_str = f"{ref:,.2f}" if ref >= 1 else f"{ref:.4f}"
+    parts.append(f"💰 Цена сейчас: <b>{price_str} {currency}</b>")
+
+    if r.atr_pct is not None:
+        atr = r.atr_pct
+        if atr < 1.0:
+            vol_word = "низкая"
+        elif atr < 2.5:
+            vol_word = "умеренная"
+        elif atr < 4.0:
+            vol_word = "повышенная"
+        else:
+            vol_word = "высокая"
+        atr_abs = ref * atr / 100
+        parts.append(
+            f"📊 Волатильность: {vol_word} ({atr:.1f}% в день ≈ {atr_abs:,.2f} {currency})"
+        )
+
+    # ── Уровни ──
+    levels = getattr(r, "levels_detail", "") or ""
+    if levels:
+        # Парсим из строки вида "Pivot=319.38, поддержка: 316.92 (-0.9%), сопротивление: 322.36 (+0.8%)"
+        import re as _re
+        sup_m = _re.search(r"поддержка:\s*([\d.]+)\s*\(([^)]+)\)", levels)
+        res_m = _re.search(r"сопротивление:\s*([\d.]+)\s*\(([^)]+)\)", levels)
+        if sup_m and res_m:
+            sup_price = sup_m.group(1)
+            sup_pct = sup_m.group(2)
+            res_price = res_m.group(1)
+            res_pct = res_m.group(2)
+            parts.append(
+                f"📐 Ближайшие уровни:\n"
+                f"  🟢 Поддержка: {sup_price} {currency} ({sup_pct}) — если цена упадёт, здесь может остановиться\n"
+                f"  🔴 Сопротивление: {res_price} {currency} ({res_pct}) — если вырастет, здесь может затормозить"
+            )
+
+    # ── Направление ──
     if score > 0.35:
         direction = "заметный сигнал на рост"
     elif score > 0.15:
@@ -79,60 +118,84 @@ def _plain_language_summary(r: SignalReport) -> str:
     else:
         direction = "нет выраженного направления"
 
-    parts.append(f"{sym} ({company}) — <b>{direction}</b>.")
+    parts.append(f"\n📈 Направление: <b>{direction}</b>")
 
-    # Согласованность
+    # ── Согласованность ──
     if conf >= 0.80:
-        parts.append("Индикаторы хорошо согласованы между собой.")
+        parts.append("✅ Индикаторы хорошо согласованы между собой.")
     elif conf >= 0.60:
-        parts.append("Индикаторы в целом согласованы, но есть расхождения.")
+        parts.append("⚠️ Индикаторы в целом согласованы, но есть расхождения.")
     else:
-        parts.append("Индикаторы противоречат друг другу — сигнал ненадёжный.")
+        parts.append("❌ Индикаторы противоречат друг другу — сигнал ненадёжный.")
 
-    # Что говорят компоненты
+    # ── Что говорят компоненты ──
     drivers: list[str] = []
     if r.technical_score > 0.15:
-        drivers.append("техника за рост")
+        drivers.append("📊 техника за рост")
     elif r.technical_score < -0.15:
-        drivers.append("техника за снижение")
+        drivers.append("📊 техника за снижение")
 
     if r.momentum_score > 0.15:
-        drivers.append("импульс вверх")
+        drivers.append("🚀 импульс вверх")
     elif r.momentum_score < -0.15:
-        drivers.append("импульс вниз")
+        drivers.append("🚀 импульс вниз")
 
     if r.news_score > 0.15:
-        drivers.append("новости позитивные")
+        drivers.append("📰 новости позитивные")
     elif r.news_score < -0.15:
-        drivers.append("новости негативные")
+        drivers.append("📰 новости негативные")
 
     if r.volume_score > 0.15:
-        drivers.append("объём подтверждает покупки")
+        drivers.append("📦 объём подтверждает покупки")
     elif r.volume_score < -0.15:
-        drivers.append("объём указывает на продажи")
+        drivers.append("📦 объём указывает на продажи")
 
     if drivers:
         parts.append("Ключевые факторы: " + ", ".join(drivers) + ".")
 
-    # Макро
+    # ── Тренд ──
+    weekly = (r.weekly_regime or "").lower()
+    if "up" in weekly:
+        parts.append("📈 Недельный тренд: растущий.")
+    elif "down" in weekly:
+        parts.append("📉 Недельный тренд: падающий.")
+    elif "flat" in weekly:
+        parts.append("➡️ Недельный тренд: боковик.")
+
+    # ── Макро ──
     if r.macro_dampening < 0.75:
         parts.append("⚠️ Впереди важные макро-события (ЦБ, инфляция) — сигнал ослаблен, лучше подождать.")
     elif r.macro_dampening < 0.90:
         parts.append("Макро-фон умеренно неопределённый — учитывайте риск.")
 
-    # Класс и рекомендация
+    # ── Класс и рекомендация ──
     if tier == "A":
         tp = r.trade_plan
         if tp and tp.direction != "none":
             d = "покупку" if tp.direction == "long" else "продажу"
+            stop_abs = tp.stop_price
+            t1_abs = tp.target1_price
             parts.append(
-                f"✅ <b>Класс A</b> — сильный сигнал. Можно рассмотреть {d} "
-                f"со стопом {tp.stop_pct:+.1f}% и целью {tp.target1_pct:+.1f}%."
+                f"\n✅ <b>Класс A — сильный сигнал</b>\n"
+                f"Можно рассмотреть {d}:\n"
+                f"  Вход: ~{ref:,.2f} {currency}\n"
+                f"  Стоп-лосс: {stop_abs:,.2f} {currency} ({tp.stop_pct:+.1f}%)\n"
+                f"  Цель: {t1_abs:,.2f} {currency} ({tp.target1_pct:+.1f}%)\n"
+                f"  Удержание: до {tp.max_hold_days} дней"
             )
         else:
             parts.append("✅ <b>Класс A</b> — сильный сигнал по всем критериям.")
     elif tier == "B":
-        parts.append("🔶 <b>Класс B</b> — средний сигнал. Можно рассмотреть, но с осторожностью.")
+        tp = r.trade_plan
+        if tp and tp.direction != "none":
+            d = "покупку" if tp.direction == "long" else "продажу"
+            parts.append(
+                f"\n🔶 <b>Класс B — средний сигнал</b>\n"
+                f"Можно рассмотреть {d}, но с осторожностью.\n"
+                f"  Стоп: {tp.stop_price:,.2f} {currency} ({tp.stop_pct:+.1f}%)"
+            )
+        else:
+            parts.append("🔶 <b>Класс B</b> — средний сигнал. Можно рассмотреть, но с осторожностью.")
     else:
         parts.append("⚪ <b>Класс C</b> — слабый или противоречивый сигнал. Лучше наблюдать и не торговать.")
 
