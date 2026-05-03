@@ -1341,7 +1341,11 @@ async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     tickers = list(all_tickers)
     log.info("autocollect: запуск, %d тикеров", len(tickers))
-    ok, errs, _ = _collect_signals_sync(tickers)
+
+    loop = asyncio.get_running_loop()
+    ok, errs, _ = await loop.run_in_executor(
+        None, lambda: _collect_signals_sync(tickers),
+    )
     log.info("autocollect: ok=%d, err=%d", ok, errs)
 
     try:
@@ -1485,12 +1489,16 @@ async def on_menu_back_to_settings(update: Update, context: ContextTypes.DEFAULT
 async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Периодически: сильный сигнал по бумаге не из списка пользователя."""
     bot = context.application.bot
+    loop = asyncio.get_running_loop()
     for uid in all_user_ids():
         prefs = load_prefs(uid)
         if not prefs.notify_strong_outside or not prefs.watchlist:
             continue
         try:
-            strong = scan_strong_outside_watchlist(prefs.watchlist, prefs.strong_threshold)
+            strong = await loop.run_in_executor(
+                None,
+                lambda wl=list(prefs.watchlist), thr=prefs.strong_threshold: scan_strong_outside_watchlist(wl, thr),
+            )
         except Exception:
             log.exception("scan outside uid=%s", uid)
             continue
