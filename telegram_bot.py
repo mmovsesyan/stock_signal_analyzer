@@ -956,21 +956,28 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not text:
         return
     lower = text.lower()
-    if lower in ("отмена", "cancel"):
-        await cmd_cancel(update, context)
-        return
-    if lower in ("меню", "menu"):
-        _clear_pending_action(context)
-        await cmd_start(update, context)
-        return
+
+    # Любая кнопка меню или команда — сбросить pending и пропустить
+    menu_keywords = (
+        "отмена", "cancel", "меню", "menu", "главное меню",
+        "назад", "помощь", "аналитика", "списки", "сбор",
+        "настройки", "уведомления",
+    )
+    for kw in menu_keywords:
+        if kw in lower:
+            _clear_pending_action(context)
+            return  # Пусть другие handlers обработают кнопку
 
     args = text.split()
     if pending == "price":
         sym, _, _, bad = sanitize_command_args(args)
         if bad or not sym:
+            _clear_pending_action(context)
             await update.message.reply_text(
-                "Не понял тикер. Пример: <code>AAPL</code> или <code>SBER.ME</code>",
+                "Не понял тикер. Пример: <code>AAPL</code> или <code>SBER.ME</code>\n"
+                "Попробуйте ещё раз через меню.",
                 parse_mode=ParseMode.HTML,
+                reply_markup=_analysis_menu_keyboard(),
             )
             return
         _clear_pending_action(context)
@@ -980,9 +987,12 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if pending == "signal":
         sym, _, _, bad = sanitize_command_args(args)
         if bad or not sym:
+            _clear_pending_action(context)
             await update.message.reply_text(
-                "Не понял запрос. Пример: <code>AAPL</code> или <code>SBER.ME tape ws</code>",
+                "Не понял тикер. Пример: <code>AAPL</code> или <code>SBER.ME</code>\n"
+                "Попробуйте ещё раз через меню.",
                 parse_mode=ParseMode.HTML,
+                reply_markup=_analysis_menu_keyboard(),
             )
             return
         _clear_pending_action(context)
