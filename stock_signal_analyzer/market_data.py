@@ -137,9 +137,11 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
     info: dict[str, Any] = {}
 
     # Для РФ-тикеров при доступном SDK сразу идём в T-Bank: это быстрее и без шума Yahoo.
+    # Минимум 30 свечей нужно для RSI/MACD/ADX. Если T-Bank отдаёт мало — fallback на MOEX ISS.
+    _MIN_CANDLES = 30
     if sym.endswith(".ME") and _tbank_available():
         tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
-        if tb_hist is not None and not tb_hist.empty:
+        if tb_hist is not None and len(tb_hist) >= _MIN_CANDLES:
             profile = classify_instrument(sym, {})
             last = float(tb_hist["Close"].iloc[-1])
             snap = TickerSnapshot(
@@ -163,10 +165,10 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
     hist = t.history(period=period, interval="1d", auto_adjust=True)
 
     # Fallback на T-Bank API для РФ-тикеров
-    if (hist is None or hist.empty) and sym.endswith(".ME"):
+    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and sym.endswith(".ME"):
         _log.info("Yahoo Finance не отдал данные по %s, пробуем T-Bank API…", sym)
         tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
-        if tb_hist is not None and not tb_hist.empty:
+        if tb_hist is not None and len(tb_hist) >= _MIN_CANDLES:
             last = float(tb_hist["Close"].iloc[-1])
             snap = TickerSnapshot(
                 symbol=sym,
@@ -180,7 +182,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
             return result
 
     # Fallback на MOEX ISS (бесплатно, без токена) для РФ-тикеров
-    if (hist is None or hist.empty) and sym.endswith(".ME"):
+    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and sym.endswith(".ME"):
         _log.info("T-Bank недоступен для %s, пробуем MOEX ISS…", sym)
         try:
             from .moex_iss import fetch_moex_history

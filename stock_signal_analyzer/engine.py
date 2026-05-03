@@ -182,6 +182,7 @@ class _RawInputs:
     trend_str: TrendStrengthResult | None
     cross_asset: CrossAssetRegime | None
     adaptive_w: AdaptiveWeightsResult | None
+    live_price: float | None  # актуальная цена (T-Bank / MOEX ISS / Finnhub)
 
 
 @dataclass
@@ -453,6 +454,39 @@ def _gather_inputs(
         # intraday вес не адаптируем (нет IC для него)
         wt, wm, wn, wi = _normalize_weights(wt, wm, wn, wi)
 
+    # ── Актуальная цена (real-time) ──
+    # Приоритет: T-Bank → MOEX ISS marketdata → Finnhub → last_close из истории
+    live_price: float | None = None
+    sym_u = snap.symbol.strip().upper()
+    if sym_u.endswith(".ME"):
+        # T-Bank real-time
+        try:
+            from .tbank_invest import fetch_last_price_tbank
+            tq = fetch_last_price_tbank(sym_u)
+            if tq and tq.last_price > 0:
+                live_price = tq.last_price
+        except Exception:
+            pass
+        # MOEX ISS fallback
+        if live_price is None:
+            try:
+                from .moex_iss import fetch_tqbr_quote
+                mq = fetch_tqbr_quote(sym_u)
+                if mq.last is not None and mq.last > 0:
+                    live_price = mq.last
+            except Exception:
+                pass
+    else:
+        # Finnhub для US
+        if key:
+            try:
+                from .finnhub_live import fetch_quote
+                fq = fetch_quote(sym_u, api_key=key)
+                if fq.current is not None and fq.current > 0:
+                    live_price = fq.current
+            except Exception:
+                pass
+
     return _RawInputs(
         snap=snap,
         profile=profile,
@@ -491,6 +525,7 @@ def _gather_inputs(
         trend_str=trend_str_res,
         cross_asset=cross_asset_res,
         adaptive_w=adaptive_w,
+        live_price=live_price,
     )
 
 
@@ -824,7 +859,7 @@ def build_report(
         signal_tier=bundle.signal_tier,
         tier_rationale=bundle.tier_rationale,
         atr_pct=inputs.atr_pct,
-        ref_price=float(inputs.snap.last_close),
+        ref_price=float(inputs.live_price or inputs.snap.last_close),
         timing_detail=bundle.timing_detail,
         stop_hint_pct=inputs.stop_hint,
         weekly_regime=inputs.wk_reg,
