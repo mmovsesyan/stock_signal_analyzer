@@ -1737,12 +1737,21 @@ def main() -> int:
         log.error("Задайте TELEGRAM_BOT_TOKEN (или BOT_TOKEN)")
         return 1
 
-    app = (
-        Application.builder()
-        .token(token)
-        .post_init(post_init)
-        .build()
-    )
+    # Поддержка Cloudflare Workers прокси для обхода блокировки Telegram API
+    base_url = os.environ.get("TELEGRAM_BASE_URL")
+    proxy_url = os.environ.get("TELEGRAM_PROXY")
+    builder = Application.builder().token(token).post_init(post_init)
+    if base_url:
+        base_url = base_url.rstrip("/")
+        builder = builder.base_url(base_url).base_file_url(base_url + "/file/bot")
+        log.info("Telegram API через base_url прокси: %s", base_url)
+    if proxy_url:
+        from telegram.request import HTTPXRequest
+        builder = builder.request(HTTPXRequest(proxy=proxy_url))
+        builder = builder.get_updates_request(HTTPXRequest(proxy=proxy_url))
+        log.info("Telegram API через SOCKS5 прокси: %s", proxy_url.split("@")[-1] if "@" in proxy_url else "***")
+
+    app = builder.build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("menu", cmd_start))
