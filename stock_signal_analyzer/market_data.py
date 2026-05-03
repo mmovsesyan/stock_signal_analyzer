@@ -52,6 +52,37 @@ def _tbank_available() -> bool:
         return False
 
 
+# Имена РФ компаний (fallback если T-Bank недоступен)
+_RU_COMPANY_NAMES: dict[str, str] = {
+    "SBER": "Сбербанк", "GAZP": "Газпром", "LKOH": "ЛУКОЙЛ",
+    "GMKN": "Норникель", "NVTK": "НОВАТЭК", "ROSN": "Роснефть",
+    "TATN": "Татнефть", "MOEX": "Мосбиржа", "MGNT": "Магнит",
+    "YDEX": "Яндекс", "PLZL": "Полюс Золото", "ALRS": "АЛРОСА",
+    "VTBR": "ВТБ", "SNGS": "Сургутнефтегаз", "MTSS": "МТС",
+    "AFLT": "Аэрофлот", "PHOR": "ФосАгро", "IRAO": "Интер РАО",
+    "OZON": "Ozon", "TCSG": "Т-Банк", "RUAL": "Русал",
+    "MAGN": "ММК", "PIKK": "ПИК", "POLY": "Полиметалл",
+    "FEES": "Россети", "CHMF": "Северсталь", "NLMK": "НЛМК",
+    "RTKM": "Ростелеком", "HYDR": "РусГидро", "TRNFP": "Транснефть",
+    "FIVE": "X5 Group", "SGZH": "Сегежа", "VKCO": "VK",
+}
+
+
+def _resolve_ru_company_name(sym: str) -> str:
+    """Получить имя РФ компании: T-Bank → словарь → тикер."""
+    base = sym.replace(".ME", "").strip().upper()
+    # Попробовать T-Bank (быстрый запрос)
+    try:
+        from .tbank_invest import fetch_last_price_tbank
+        q = fetch_last_price_tbank(sym)
+        if q and q.name and q.name != base:
+            return q.name
+    except Exception:
+        pass
+    # Словарь
+    return _RU_COMPANY_NAMES.get(base, base)
+
+
 def _tbank_hint(sym: str) -> str:
     if not sym.endswith(".ME"):
         return ""
@@ -156,11 +187,13 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
             moex_hist = fetch_moex_history(sym, days=400)
             if moex_hist is not None and not moex_hist.empty:
                 last = float(moex_hist["Close"].iloc[-1])
+                # Попробовать получить имя из T-Bank (быстрый запрос)
+                company = _resolve_ru_company_name(sym)
                 snap = TickerSnapshot(
                     symbol=sym,
                     last_close=last,
                     currency="RUB",
-                    company_name=sym.replace(".ME", ""),
+                    company_name=company,
                     history=moex_hist,
                 )
                 result = (snap, info, profile)

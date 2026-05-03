@@ -643,6 +643,110 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
 
 # ── Публичная точка входа ────────────────────────────────────────────────────
 
+def _build_technical_consensus(rep: SignalReport, inputs: _RawInputs) -> str:
+    """
+    Сводная оценка: сколько индикаторов за рост / снижение / нейтрально.
+    Аналог консенсуса аналитиков, но на основе технических данных.
+    """
+    buy = 0
+    sell = 0
+    neutral = 0
+    signals: list[str] = []
+
+    # RSI
+    rsi = inputs.tech.rsi14
+    if rsi < 30:
+        buy += 1
+        signals.append("RSI перепродан")
+    elif rsi > 70:
+        sell += 1
+        signals.append("RSI перекуплен")
+    else:
+        neutral += 1
+
+    # MACD
+    if inputs.tech.macd_bullish:
+        buy += 1
+        signals.append("MACD бычий")
+    else:
+        sell += 1
+        signals.append("MACD медвежий")
+
+    # Цена vs SMA50
+    if inputs.tech.above_sma50:
+        buy += 1
+        signals.append("выше SMA50")
+    else:
+        sell += 1
+        signals.append("ниже SMA50")
+
+    # Импульс
+    if inputs.mom.score > 0.1:
+        buy += 1
+    elif inputs.mom.score < -0.1:
+        sell += 1
+    else:
+        neutral += 1
+
+    # Объём
+    if inputs.vol_res.score > 0.1:
+        buy += 1
+    elif inputs.vol_res.score < -0.1:
+        sell += 1
+    else:
+        neutral += 1
+
+    # Новости
+    if inputs.news_score > 0.1:
+        buy += 1
+    elif inputs.news_score < -0.1:
+        sell += 1
+    else:
+        neutral += 1
+
+    # Интрадей
+    if inputs.intra and abs(inputs.intra.score) > 0.05:
+        if inputs.intra.score > 0:
+            buy += 1
+        else:
+            sell += 1
+    else:
+        neutral += 1
+
+    # Квант-модели
+    if inputs.mtf_mom and abs(inputs.mtf_mom.score) > 0.05:
+        if inputs.mtf_mom.score > 0:
+            buy += 1
+        else:
+            sell += 1
+    if inputs.trend_str and abs(inputs.trend_str.score) > 0.05:
+        if inputs.trend_str.score > 0:
+            buy += 1
+        else:
+            sell += 1
+
+    total = buy + sell + neutral
+    if total == 0:
+        return ""
+
+    if buy > sell * 2:
+        verdict = "Покупать"
+    elif buy > sell:
+        verdict = "Скорее покупать"
+    elif sell > buy * 2:
+        verdict = "Продавать"
+    elif sell > buy:
+        verdict = "Скорее продавать"
+    else:
+        verdict = "Нейтрально"
+
+    key_signals = ", ".join(signals[:3])
+    return (
+        f"Индикаторы: ▲ рост {buy} | ● нейтрально {neutral} | ▼ снижение {sell} — "
+        f"{verdict} ({key_signals})"
+    )
+
+
 def build_report(
     symbol: str,
     finnhub_api_key: str | None = None,
@@ -767,6 +871,11 @@ def build_report(
                 rep.earnings_detail = earn.detail
         except Exception:
             pass
+
+    # ── Технический консенсус (для всех тикеров, включая РФ) ──
+    rep.analyst_detail = _build_technical_consensus(rep, inputs) + (
+        ("\n" + rep.analyst_detail) if rep.analyst_detail else ""
+    )
 
     log_p = log_path_from_env()
     if log_p:

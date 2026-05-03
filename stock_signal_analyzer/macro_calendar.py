@@ -136,6 +136,9 @@ def _event_severity(name: str, impact: str) -> str:
     if re.search(r"interest rate|rate decision|funds rate|ставк\w+\s+реш", low):
         return "critical"
     if re.search(r"\bcpi\b|consumer price|inflation rate|инфляци", low):
+        # CPI Expectations/Survey — это не сам релиз CPI
+        if re.search(r"expect|survey|forecast|прогноз|ожидан", low):
+            return "important"
         return "critical"
     if re.search(r"non[\s-]?farm|nfp|\bpayroll|jobs report", low):
         return "critical"

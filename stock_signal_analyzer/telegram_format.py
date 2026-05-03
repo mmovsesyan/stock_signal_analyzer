@@ -276,11 +276,14 @@ def format_signal_report(r: SignalReport) -> str:
     if hasattr(r, "levels_detail") and r.levels_detail:
         lines.append(f"📐 Уровни: {_esc(r.levels_detail)}")
     lines.append("")
-    # ── Аналитика Wall Street ──
+    # ── Аналитика ──
     analyst = getattr(r, "analyst_detail", "") or ""
     earnings = getattr(r, "earnings_detail", "") or ""
     if analyst or earnings:
-        lines.append("🏦 <b>Мнение аналитиков Wall Street</b>")
+        if r.symbol.endswith(".ME"):
+            lines.append("🏦 <b>Сводная оценка индикаторов</b>")
+        else:
+            lines.append("🏦 <b>Мнение аналитиков и индикаторов</b>")
         if analyst:
             lines.append(f"  {_esc(analyst)}")
         if earnings:
