@@ -1,0 +1,234 @@
+"""
+Celery tasks — асинхронная обработка тяжёлых задач.
+
+Бот и API кладут задачи в Redis очередь, workers обрабатывают параллельно.
+Это позволяет обслуживать 50-100 юзеров без блокировки.
+
+Переменные окружения:
+  CELERY_BROKER_URL  — Redis URL (по умолчанию redis://localhost:6379/0)
+  CELERY_RESULT_BACKEND — Redis URL для результатов
+
+Запуск worker:
+  celery -A stock_signal_analyzer.tasks worker --loglevel=info --concurrency=4
+
+Запуск beat (периодические задачи):
+  celery -A stock_signal_analyzer.tasks beat --loglevel=info
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from datetime import timedelta
+
+from celery import Celery
+from celery.schedules import crontab
+
+import stenv
+stenv.load_project_env()
+
+_log = logging.getLogger(__name__)
+
+BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+
+app = Celery(
+    "stock_signal_analyzer",
+    broker=BROKER_URL,
+    backend=RESULT_BACKEND,
+)
+
+app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    task_soft_time_limit=120,  # 2 мин soft limit
+    task_time_limit=180,       # 3 мин hard limit
+    worker_max_tasks_per_child=100,  # перезапуск worker после 100 задач (memory leak prevention)
+    task_acks_late=True,       # подтверждение после выполнения (retry при crash)
+    worker_prefetch_multiplier=1,  # по одной задаче за раз (fair scheduling)
+)
+
+# Периодические задачи
+app.conf.beat_schedule = {
+    "outcome-tracker": {
+        "task": "stock_signal_analyzer.tasks.run_outcome_tracker",
+        "schedule": timedelta(hours=1),
+    },
+    "llm-learning": {
+        "task": "stock_signal_analyzer.tasks.run_learning",
+        "schedule": timedelta(hours=6),
+    },
+    "collect-signals": {
+        "task": "stock_signal_analyzer.tasks.run_collect_all",
+        "schedule": timedelta(hours=4),
+    },
+}
+
+
+# ── Tasks ────────────────────────────────────────────────────────────────────
+
+
+@app.task(bind=True, max_retries=2, default_retry_delay=30)
+def analyze_ticker(self, symbol: str, user_id: int | None = None, fast_mode: bool = False) -> dict:
+    """
+    Полный анализ тикера. Возвращает dict с результатами.
+    Используется ботом и API вместо прямого вызова engine.
+    """
+    try:
+        from .engine import build_report
+        from .signal_log import build_record_from_report, append_signal_record, log_path_from_env
+
+        report = build_report(symbol, fast_mode=fast_mode)
+
+        # Сохранить в signal log
+        record = build_record_from_report(report, report.ref_price, "USD")
+        if user_id:
+            record["user_id"] = user_id
+        append_signal_record(log_path_from_env(), record)
+
+        # Сохранить в БД (если доступна)
+        try:
+            _save_signal_to_db(record, user_id)
+        except Exception:
+            pass
+
+        # Вернуть основные данные (сериализуемые)
+        from .trade_plan import trade_plan_to_dict
+        tp_dict = None
+        if report.trade_plan and report.trade_plan.direction != "none":
+            tp_dict = trade_plan_to_dict(report.trade_plan)
+
+        return {
+            "symbol": report.symbol,
+            "company": report.company,
+            "score": round(report.score, 4),
+            "signal_tier": report.signal_tier,
+            "confidence": round(report.confidence, 3),
+            "verdict": report.verdict,
+            "direction": report.trade_plan.direction if report.trade_plan else "none",
+            "technical_score": round(report.technical_score, 4),
+            "momentum_score": round(report.momentum_score, 4),
+            "news_score": round(report.news_score, 4),
+            "volume_score": round(report.volume_score, 4),
+            "trade_plan": tp_dict,
+            "macro_dampening": round(report.macro_dampening, 3),
+            "regime": report.regime_label,
+            "adx14": round(report.adx14, 1),
+            "atr_pct": round(report.atr_pct, 3) if report.atr_pct else None,
+            "ref_price": round(report.ref_price, 4),
+        }
+    except Exception as exc:
+        _log.exception("analyze_ticker failed for %s", symbol)
+        self.retry(exc=exc)
+
+
+@app.task(bind=True, max_retries=1)
+def run_outcome_tracker(self) -> dict:
+    """Проверить исходы открытых сигналов."""
+    try:
+        from .outcome_tracker import OutcomeTracker
+        tracker = OutcomeTracker()
+        tracker.check_all_outcomes()
+        stats = tracker.get_statistics()
+        return {"status": "ok", "stats": stats}
+    except Exception as exc:
+        _log.exception("outcome_tracker failed")
+        self.retry(exc=exc)
+
+
+@app.task(bind=True, max_retries=1)
+def run_learning(self) -> dict:
+    """Запустить цикл обучения (IC + LLM)."""
+    try:
+        from .llm_learning import run_learning_cycle, format_learning_report
+        state = run_learning_cycle()
+        return {
+            "status": "ok",
+            "outcomes_analyzed": state.total_outcomes_analyzed,
+            "win_rate": state.win_rate,
+            "adjustments": state.weight_adjustments,
+        }
+    except Exception as exc:
+        _log.exception("learning failed")
+        self.retry(exc=exc)
+
+
+@app.task(bind=True, max_retries=1, soft_time_limit=300, time_limit=360)
+def run_collect_all(self) -> dict:
+    """Массовый сбор сигналов по дефолтному списку."""
+    try:
+        from .universe import RU_BLUE_CHIPS, US_BLUE_CHIPS
+        from .engine import build_report
+        from .signal_log import build_record_from_report, append_signal_record, log_path_from_env
+
+        symbols = list(US_BLUE_CHIPS)[:15] + [f"{s}.ME" for s in list(RU_BLUE_CHIPS)[:15]]
+        collected = 0
+        errors = 0
+
+        for sym in symbols:
+            try:
+                report = build_report(sym, fast_mode=True)
+                record = build_record_from_report(report, report.ref_price, "USD")
+                append_signal_record(log_path_from_env(), record)
+                collected += 1
+            except Exception:
+                errors += 1
+
+        return {"status": "ok", "collected": collected, "errors": errors}
+    except Exception as exc:
+        _log.exception("collect_all failed")
+        self.retry(exc=exc)
+
+
+@app.task
+def analyze_batch(symbols: list[str], user_id: int | None = None) -> list[dict]:
+    """Анализ нескольких тикеров (для dashboard)."""
+    results = []
+    for sym in symbols:
+        try:
+            result = analyze_ticker.apply(args=[sym, user_id, True]).get(timeout=60)
+            results.append(result)
+        except Exception as e:
+            results.append({"symbol": sym, "error": str(e)})
+    return results
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _save_signal_to_db(record: dict, user_id: int | None) -> None:
+    """Сохранить сигнал в PostgreSQL."""
+    try:
+        from .db import get_session, Signal
+        with get_session() as session:
+            sig = Signal(
+                user_id=user_id,
+                symbol=record.get("symbol", ""),
+                score=record.get("score", 0),
+                score_before_macro=record.get("score_before_macro"),
+                confidence=record.get("confidence"),
+                signal_tier=record.get("signal_tier"),
+                direction=record.get("direction"),
+                technical_score=record.get("technical_score"),
+                momentum_score=record.get("momentum_score"),
+                news_score=record.get("news_score"),
+                volume_score=record.get("volume_score"),
+                intraday_score=record.get("intraday_score"),
+                ref_price=record.get("ref_price"),
+                tp_entry=record.get("tp_entry"),
+                tp_stop=record.get("tp_stop"),
+                tp_target1=record.get("tp_target1"),
+                tp_target2=record.get("tp_target2"),
+                tp_max_hold_days=record.get("tp_max_hold_days"),
+                adx14=record.get("adx14"),
+                atr_pct=record.get("atr_pct"),
+                macro_dampening=record.get("macro_dampening"),
+                regime=record.get("regime"),
+                weekly_regime=record.get("weekly_regime"),
+            )
+            session.add(sig)
+    except Exception as e:
+        _log.debug("DB save failed: %s", e)

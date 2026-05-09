@@ -104,6 +104,8 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
       - API_RATE_LIMIT_PER_MIN=${API_RATE_LIMIT_PER_MIN:-30}
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
+      - CELERY_BROKER_URL=redis://redis:6379/0
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -112,6 +114,8 @@ services:
     command: -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
     depends_on:
       - ollama
+      - postgres
+      - redis
     networks:
       - stock-signal-net
     logging:
@@ -119,6 +123,101 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: stock-signal-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=stock_signals
+      - POSTGRES_USER=ssa
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ssa_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - stock-signal-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ssa -d stock_signals"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (очередь задач + кэш)
+  redis:
+    image: redis:7-alpine
+    container_name: stock-signal-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - stock-signal-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Celery Worker (обработка задач)
+  worker:
+    build: .
+    container_name: stock-signal-worker
+    restart: unless-stopped
+    environment:
+      - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
+      - STOCK_SIGNAL_DATA=/data
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    entrypoint: []
+    command: celery -A stock_signal_analyzer.tasks worker --loglevel=info --concurrency=4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - stock-signal-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Celery Beat (периодические задачи)
+  beat:
+    build: .
+    container_name: stock-signal-beat
+    restart: unless-stopped
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
+    entrypoint: []
+    command: celery -A stock_signal_analyzer.tasks beat --loglevel=info
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - stock-signal-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   # Ollama LLM (sentiment analysis)
   ollama:
@@ -168,3 +267,5 @@ volumes:
   data:
   logs:
   ollama_data:
+  postgres_data:
+  redis_data:

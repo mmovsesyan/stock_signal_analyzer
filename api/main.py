@@ -134,9 +134,24 @@ _start_time = time.time()
 async def health():
     return HealthResponse(
         status="ok",
-        version="1.0.0",
+        version="2.0.0",
         uptime_sec=round(time.time() - _start_time, 1),
     )
+
+
+@app.get("/health/detailed")
+async def health_detailed():
+    """Детальный health check всех компонентов."""
+    from stock_signal_analyzer.scheduler import get_health_state, run_health_check
+    loop = asyncio.get_running_loop()
+    components = await loop.run_in_executor(None, run_health_check)
+    scheduler_state = get_health_state()
+    return {
+        "status": "ok",
+        "uptime_sec": round(time.time() - _start_time, 1),
+        "components": components,
+        "scheduler": scheduler_state,
+    }
 
 
 @app.get("/quote/{symbol}", response_model=QuoteResponse)
@@ -208,3 +223,102 @@ async def analyze(req: AnalyzeRequest):
 async def analyze_get(symbol: str, fast: bool = False):
     """GET-вариант анализа (удобно для браузера)."""
     return await analyze(AnalyzeRequest(symbol=symbol, fast_mode=fast))
+
+
+# ── Subscription & Stats endpoints ──────────────────────────────────────────
+
+
+@app.get("/subscription/{telegram_id}")
+async def get_subscription(telegram_id: int):
+    """Информация о подписке пользователя."""
+    from stock_signal_analyzer.subscriptions import get_user_tier, get_tier_limits, format_subscription_info
+    tier = get_user_tier(telegram_id)
+    limits = get_tier_limits(tier)
+    return {
+        "telegram_id": telegram_id,
+        "tier": tier,
+        "limits": {
+            "daily_analyses": limits.daily_analyses,
+            "markets": limits.markets,
+            "llm_sentiment": limits.llm_sentiment,
+            "autocollect": limits.autocollect,
+            "max_watchlist": limits.max_watchlist,
+        },
+    }
+
+
+@app.get("/stats")
+async def get_stats():
+    """Общая статистика системы."""
+    loop = asyncio.get_running_loop()
+
+    def _gather_stats():
+        stats = {}
+        try:
+            from stock_signal_analyzer.db import get_session, User, Signal, Outcome
+            with get_session() as session:
+                stats["total_users"] = session.query(User).count()
+                stats["total_signals"] = session.query(Signal).count()
+                stats["total_outcomes"] = session.query(Outcome).count()
+        except Exception:
+            stats["db"] = "unavailable"
+
+        try:
+            from stock_signal_analyzer.llm_learning import load_learning_state
+            state = load_learning_state()
+            if state:
+                stats["learning"] = {
+                    "outcomes_analyzed": state.total_outcomes_analyzed,
+                    "win_rate": round(state.win_rate * 100, 1),
+                    "last_updated": state.last_updated,
+                }
+        except Exception:
+            pass
+
+        return stats
+
+    stats = await loop.run_in_executor(None, _gather_stats)
+    return stats
+
+
+@app.get("/learning/report")
+async def learning_report():
+    """Отчёт об обучении системы."""
+    from stock_signal_analyzer.llm_learning import load_learning_state
+    state = load_learning_state()
+    if not state:
+        return {"status": "no_data", "message": "Обучение ещё не проводилось"}
+    return {
+        "total_outcomes": state.total_outcomes_analyzed,
+        "win_rate": round(state.win_rate * 100, 1),
+        "avg_win_pct": round(state.avg_win_pct, 2),
+        "avg_loss_pct": round(state.avg_loss_pct, 2),
+        "weight_adjustments": state.weight_adjustments,
+        "win_patterns": state.win_patterns,
+        "loss_patterns": state.loss_patterns,
+        "recommendations": state.recommendations,
+        "ic_scores": state.ic_scores,
+        "last_updated": state.last_updated,
+    }
+
+
+# ── Startup event ────────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup_event():
+    """Инициализация при старте API."""
+    # Создать таблицы если БД доступна
+    try:
+        from stock_signal_analyzer.db import init_db
+        init_db()
+        log.info("Database tables initialized")
+    except Exception as e:
+        log.warning("Database not available: %s", e)
+
+    # Запустить scheduler (если не Celery mode)
+    try:
+        from stock_signal_analyzer.scheduler import start_apscheduler
+        start_apscheduler()
+        log.info("Scheduler started")
+    except Exception as e:
+        log.warning("Scheduler failed to start: %s", e)
