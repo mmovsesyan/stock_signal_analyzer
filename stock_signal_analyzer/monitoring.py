@@ -67,10 +67,10 @@ def check_system_health() -> HealthStatus:
 
     # 2. Database
     try:
-        from .db import get_session
-        with get_session() as session:
+        from .db import _engine
+        with _engine.connect() as conn:
             from sqlalchemy import text
-            session.execute(text("SELECT 1"))
+            conn.execute(text("SELECT 1"))
         components["database"] = True
     except Exception:
         components["database"] = False
