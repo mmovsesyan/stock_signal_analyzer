@@ -253,9 +253,31 @@ nano .env
 
 ### LLM (AI модель)
 
+По умолчанию устанавливается `qwen2.5:1.5b`. Чтобы сменить модель:
+
+```bash
+# 1. Изменить в .env
+nano .env
+# OLLAMA_MODEL=gemma2:2b
+
+# 2. Скачать новую модель
+docker compose exec ollama ollama pull gemma2:2b
+
+# 3. Перезапустить
+./scripts/deploy.sh restart
+```
+
+Доступные модели (2-4 GB RAM):
+
+| Модель | RAM | Особенности |
+|--------|:---:|-------------|
+| `qwen2.5:1.5b` | 1.5 GB | Быстрая, хороший JSON output (по умолчанию) |
+| `gemma2:2b` | 2 GB | Google, качественнее |
+| `phi3:mini` | 2.3 GB | Microsoft, лучший reasoning |
+
 | Переменная | По умолчанию | Описание |
 |-----------|:---:|----------|
-| `OLLAMA_MODEL` | `qwen2.5:1.5b` | Модель. Варианты: `gemma2:2b`, `phi3:mini` |
+| `OLLAMA_MODEL` | `qwen2.5:1.5b` | Модель для sentiment + обучения |
 | `LLM_SENTIMENT` | `1` | Включить LLM sentiment. `0` = только VADER |
 | `LLM_LEARNING` | `1` | Включить LLM обучение. `0` = только числовой IC |
 | `LLM_CACHE_TTL` | `3600` | Кэш LLM ответов (секунды) |

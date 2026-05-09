@@ -254,23 +254,15 @@ do_configure() {
     if [ -n "$new_pgpass" ]; then cur_pgpass="$new_pgpass"; fi
     echo ""
 
-    # ── 6. Модель Ollama ──
+    # ── 6. LLM (автоматически) ──
     echo -e "  ${BOLD}6. LLM модель для AI-анализа${NC}"
-    echo "     Ollama устанавливается автоматически (регистрация не нужна)."
-    echo "     Модель скачивается при первом запуске (~1-2 мин)."
+    echo "     Модель: qwen2.5:1.5b (1.5 GB RAM)"
+    echo "     Устанавливается автоматически при первом запуске."
     echo "     Используется для: sentiment анализа новостей + обучения на outcomes."
-    echo "     Подробнее: https://ollama.com"
     echo ""
-    ask_choice "Выберите модель" \
-        "qwen2.5:1.5b — 1.5 GB RAM, быстрая, хороший JSON (рекомендуется)" \
-        "gemma2:2b — 2 GB RAM, Google, качественнее" \
-        "phi3:mini — 2.3 GB RAM, Microsoft, лучший reasoning" \
-        "Без LLM — только VADER sentiment (экономия RAM)"
-    local model_choice=$?
-    local models=("qwen2.5:1.5b" "gemma2:2b" "phi3:mini" "none")
-    local ollama_model="${models[$model_choice]}"
+    local ollama_model="qwen2.5:1.5b"
     local llm_enabled="1"
-    if [ "$ollama_model" = "none" ]; then llm_enabled="0"; ollama_model="qwen2.5:1.5b"; fi
+    ok "LLM: qwen2.5:1.5b (установится автоматически)"
 
     # ── 7. Интервалы ──
     echo ""
