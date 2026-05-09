@@ -81,6 +81,51 @@ logging.basicConfig(
 log = logging.getLogger("telegram_bot")
 _PENDING_ACTION_KEY = "pending_action"
 
+# ── Admin access control ─────────────────────────────────────────────────────
+# ADMIN_CHAT_ID — Telegram ID администратора. Получает уведомления о новых юзерах,
+# управляет доступом. Задать в .env.
+_ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
+# Множество одобренных user_id (загружается из файла)
+_APPROVED_USERS_FILE = os.path.join(
+    os.environ.get("STOCK_SIGNAL_DATA", "data"), "approved_users.json"
+)
+
+
+def _load_approved_users() -> set[int]:
+    """Загрузить список одобренных пользователей."""
+    try:
+        import json as _json
+        if os.path.exists(_APPROVED_USERS_FILE):
+            with open(_APPROVED_USERS_FILE, encoding="utf-8") as f:
+                data = _json.load(f)
+            return set(int(uid) for uid in data.get("approved", []))
+    except Exception:
+        pass
+    return set()
+
+
+def _save_approved_users(approved: set[int]) -> None:
+    """Сохранить список одобренных пользователей."""
+    import json as _json
+    os.makedirs(os.path.dirname(_APPROVED_USERS_FILE), exist_ok=True)
+    with open(_APPROVED_USERS_FILE, "w", encoding="utf-8") as f:
+        _json.dump({"approved": list(approved)}, f)
+
+
+def _is_admin(user_id: int) -> bool:
+    """Проверить, является ли пользователь админом."""
+    return _ADMIN_CHAT_ID and str(user_id) == _ADMIN_CHAT_ID
+
+
+def _is_approved(user_id: int) -> bool:
+    """Проверить, одобрен ли пользователь (или он админ)."""
+    if not _ADMIN_CHAT_ID:
+        return True  # Если админ не задан — доступ всем
+    if _is_admin(user_id):
+        return True
+    approved = _load_approved_users()
+    return user_id in approved
+
 
 def _normalize_menu_symbols(items: list[str]) -> list[str]:
     out: list[str] = []
@@ -412,20 +457,289 @@ def _uid(update: Update) -> int:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    text = (
-        "Привет. Это <b>Stock Signal Analyzer</b>.\n\n"
-        "Для удобства функции разложены по разделам:\n"
-        "• 📈 Аналитика\n"
-        "• 📚 Списки и подбор\n"
-        "• 🗂️ Сбор и экспорт\n"
-        "• ⚙️ Настройки\n\n"
-        "Выберите раздел кнопками ниже."
+    user = update.effective_user
+    uid = user.id if user else 0
+    if not uid:
+        return
+
+    # Если пользователь уже одобрен — показать главное меню
+    if _is_approved(uid):
+        text = (
+            "Привет. Это <b>Stock Signal Analyzer</b>.\n\n"
+            "Для удобства функции разложены по разделам:\n"
+            "• 📈 Аналитика\n"
+            "• 📚 Списки и подбор\n"
+            "• 🗂️ Сбор и экспорт\n"
+            "• ⚙️ Настройки\n\n"
+            "Выберите раздел кнопками ниже."
+        )
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=_main_menu_keyboard(),
+        )
+        return
+
+    # ── Новый пользователь — показать выбор плана ──
+    plan_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🆓 Free — базовый доступ", callback_data="plan|free")],
+        [InlineKeyboardButton("⭐ Pro — полный анализ US+RU", callback_data="plan|pro")],
+        [InlineKeyboardButton("💎 Premium — всё + AI обучение", callback_data="plan|premium")],
+    ])
+
+    welcome_text = (
+        "👋 Добро пожаловать в <b>Stock Signal Analyzer</b>!\n\n"
+        "Система AI-анализа торговых сигналов:\n"
+        "• 7+ факторов анализа\n"
+        "• Готовые торговые планы\n"
+        "• Самообучение на результатах\n\n"
+        "Выберите план для начала работы:"
     )
     await update.message.reply_text(
-        text,
+        welcome_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=_main_menu_keyboard(),
+        reply_markup=plan_keyboard,
     )
+
+
+async def _on_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка выбора плана новым пользователем."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    parts = query.data.split("|")
+    if len(parts) != 2 or parts[0] != "plan":
+        return
+
+    plan = parts[1]  # free, pro, premium
+    user = update.effective_user
+    if not user:
+        return
+
+    plan_names = {"free": "🆓 Free", "pro": "⭐ Pro", "premium": "💎 Premium"}
+    plan_label = plan_names.get(plan, plan)
+
+    # Подтверждение пользователю
+    await query.edit_message_text(
+        f"✅ Вы выбрали план: <b>{plan_label}</b>\n\n"
+        "Ваша заявка отправлена администратору.\n"
+        "Вы получите уведомление когда доступ будет активирован.\n\n"
+        "⏳ Обычно это занимает несколько минут.",
+        parse_mode=ParseMode.HTML,
+    )
+
+    # ── Уведомление админу ──
+    if _ADMIN_CHAT_ID:
+        username = user.username or "нет"
+        first_name = user.first_name or ""
+        last_name = user.last_name or ""
+        full_name = f"{first_name} {last_name}".strip() or "Без имени"
+        lang = user.language_code or "?"
+
+        admin_text = (
+            "🆕 <b>Новый пользователь запрашивает доступ</b>\n\n"
+            f"👤 <b>Имя:</b> {_esc(full_name)}\n"
+            f"📛 <b>Username:</b> @{_esc(username)}\n"
+            f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
+            f"🌐 <b>Язык:</b> {_esc(lang)}\n"
+            f"📋 <b>Выбранный план:</b> {plan_label}\n\n"
+            f"Для одобрения отправьте:\n"
+            f"<code>/approve {user.id}</code>\n\n"
+            f"Для одобрения с конкретным планом:\n"
+            f"<code>/approve {user.id} {plan}</code>\n\n"
+            f"Для отклонения:\n"
+            f"<code>/deny {user.id}</code>"
+        )
+
+        admin_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(f"✅ Одобрить ({plan_label})", callback_data=f"adm|approve|{user.id}|{plan}"),
+                InlineKeyboardButton("❌ Отклонить", callback_data=f"adm|deny|{user.id}"),
+            ],
+            [
+                InlineKeyboardButton("🆓 Дать Free", callback_data=f"adm|approve|{user.id}|free"),
+                InlineKeyboardButton("⭐ Дать Pro", callback_data=f"adm|approve|{user.id}|pro"),
+                InlineKeyboardButton("💎 Дать Premium", callback_data=f"adm|approve|{user.id}|premium"),
+            ],
+        ])
+
+        try:
+            await context.bot.send_message(
+                chat_id=int(_ADMIN_CHAT_ID),
+                text=admin_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=admin_keyboard,
+            )
+        except Exception as e:
+            log.warning("Failed to notify admin: %s", e)
+
+
+async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка кнопок одобрения/отклонения от админа."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    # Проверить что это админ
+    if not _is_admin(query.from_user.id if query.from_user else 0):
+        return
+
+    parts = query.data.split("|")
+    if len(parts) < 3 or parts[0] != "adm":
+        return
+
+    action = parts[1]  # approve, deny
+    target_uid = int(parts[2])
+    plan = parts[3] if len(parts) > 3 else "free"
+
+    if action == "approve":
+        # Добавить в approved
+        approved = _load_approved_users()
+        approved.add(target_uid)
+        _save_approved_users(approved)
+
+        # Сохранить тариф
+        prefs = load_prefs(target_uid)
+        save_prefs(target_uid, prefs)
+
+        plan_names = {"free": "🆓 Free", "pro": "⭐ Pro", "premium": "💎 Premium"}
+        plan_label = plan_names.get(plan, plan)
+
+        # Уведомить пользователя
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=(
+                    f"✅ <b>Доступ активирован!</b>\n\n"
+                    f"Ваш план: <b>{plan_label}</b>\n\n"
+                    "Отправьте /start чтобы начать работу."
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+
+        await query.edit_message_text(
+            query.message.text + f"\n\n✅ <b>ОДОБРЕНО</b> — план {plan_label}",
+            parse_mode=ParseMode.HTML,
+        )
+
+    elif action == "deny":
+        # Уведомить пользователя
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=(
+                    "❌ К сожалению, ваша заявка отклонена.\n"
+                    "Свяжитесь с администратором для уточнения."
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+
+        await query.edit_message_text(
+            query.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>",
+            parse_mode=ParseMode.HTML,
+        )
+
+
+async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /approve <user_id> [plan] — одобрить пользователя."""
+    if not update.message:
+        return
+    if not _is_admin(_uid(update)):
+        await update.message.reply_text("⛔ Только для администратора.")
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Использование: /approve <user_id> [free|pro|premium]")
+        return
+
+    try:
+        target_uid = int(args[0])
+    except ValueError:
+        await update.message.reply_text("Неверный user_id")
+        return
+
+    plan = args[1] if len(args) > 1 else "free"
+
+    approved = _load_approved_users()
+    approved.add(target_uid)
+    _save_approved_users(approved)
+
+    # Уведомить пользователя
+    plan_names = {"free": "🆓 Free", "pro": "⭐ Pro", "premium": "💎 Premium"}
+    plan_label = plan_names.get(plan, plan)
+    try:
+        await context.bot.send_message(
+            chat_id=target_uid,
+            text=f"✅ Доступ активирован! План: <b>{plan_label}</b>\nОтправьте /start",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text(f"✅ Пользователь {target_uid} одобрен (план: {plan_label})")
+
+
+async def cmd_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /deny <user_id> — отклонить/заблокировать пользователя."""
+    if not update.message:
+        return
+    if not _is_admin(_uid(update)):
+        await update.message.reply_text("⛔ Только для администратора.")
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Использование: /deny <user_id>")
+        return
+
+    try:
+        target_uid = int(args[0])
+    except ValueError:
+        await update.message.reply_text("Неверный user_id")
+        return
+
+    # Удалить из approved
+    approved = _load_approved_users()
+    approved.discard(target_uid)
+    _save_approved_users(approved)
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_uid,
+            text="❌ Ваш доступ отозван. Свяжитесь с администратором.",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
+
+    await update.message.reply_text(f"❌ Пользователь {target_uid} заблокирован")
+
+
+async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /users — список одобренных пользователей (только для админа)."""
+    if not update.message:
+        return
+    if not _is_admin(_uid(update)):
+        await update.message.reply_text("⛔ Только для администратора.")
+        return
+
+    approved = _load_approved_users()
+    if not approved:
+        await update.message.reply_text("Нет одобренных пользователей.")
+        return
+
+    lines = [f"👥 <b>Одобренные пользователи ({len(approved)}):</b>\n"]
+    for uid in sorted(approved):
+        lines.append(f"  • <code>{uid}</code>")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -714,6 +1028,10 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def cmd_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_approved(_uid(update)):
+        if update.message:
+            await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start для подачи заявки.")
+        return
     if not (context.args or []):
         _set_pending_action(context, "signal")
         if update.message:
@@ -1837,6 +2155,13 @@ def main() -> int:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("menu", cmd_start))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
+    # Admin commands
+    app.add_handler(CommandHandler("approve", cmd_approve))
+    app.add_handler(CommandHandler("deny", cmd_deny))
+    app.add_handler(CommandHandler("users", cmd_users))
+    # Plan selection & admin actions (callbacks)
+    app.add_handler(CallbackQueryHandler(_on_plan_selected, pattern=r"^plan\|"))
+    app.add_handler(CallbackQueryHandler(_on_admin_action, pattern=r"^adm\|"))
     app.add_handler(CommandHandler("price", cmd_price))
     app.add_handler(CommandHandler("quote", cmd_price))
     app.add_handler(CommandHandler("signal", cmd_signal))

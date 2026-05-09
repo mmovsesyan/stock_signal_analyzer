@@ -50,6 +50,22 @@ ask_input() {
     echo "${answer:-$default}"
 }
 
+# Версия ask_input которая не принимает пустой ответ
+ask_input_required() {
+    local question="$1" default="${2:-}"
+    local prompt="  ${CYAN}?${NC} $question"
+    if [ -n "$default" ]; then prompt="$prompt [${default}]"; fi
+    while true; do
+        read -r -p "$(echo -e "$prompt: ")" answer
+        answer="${answer:-$default}"
+        if [ -n "$answer" ]; then
+            echo "$answer"
+            return
+        fi
+        echo -e "    ${RED}Это поле обязательно. Введите значение.${NC}"
+    done
+}
+
 ask_secret() {
     local question="$1" default="${2:-}"
     local prompt="  ${CYAN}?${NC} $question"
@@ -127,12 +143,30 @@ do_configure() {
     local mask_tg=""
     if [ -n "$cur_tg" ]; then mask_tg="${cur_tg:0:10}..."; fi
     local new_tg
-    new_tg=$(ask_input "Telegram Bot Token" "$mask_tg")
+    new_tg=$(ask_input_required "Telegram Bot Token" "$mask_tg")
     if [[ "$new_tg" != "$mask_tg" ]] && [ -n "$new_tg" ]; then cur_tg="$new_tg"; fi
     if [ -z "$cur_tg" ]; then
         fail "Telegram Bot Token обязателен!"
         return 1
     fi
+    echo ""
+
+    # ── 1b. Admin Chat ID ──
+    echo -e "  ${BOLD}1b. Ваш Telegram ID${NC} ${YELLOW}(для управления доступом)${NC}"
+    echo "     Зачем: вы будете получать заявки от новых пользователей"
+    echo "     и одобрять/отклонять доступ кнопками прямо в Telegram."
+    echo "     Как узнать свой ID:"
+    echo "       1) Откройте Telegram, найдите @userinfobot"
+    echo "       2) Отправьте /start — бот покажет ваш ID (число)"
+    echo "     Ссылка: https://t.me/userinfobot"
+    echo ""
+    local cur_admin=""
+    if [ -f "$ENV_FILE" ]; then
+        cur_admin=$(grep -oP '(?<=^ADMIN_CHAT_ID=).+' "$ENV_FILE" 2>/dev/null || true)
+    fi
+    local new_admin
+    new_admin=$(ask_input_required "Ваш Telegram ID (число)" "$cur_admin")
+    if [ -n "$new_admin" ]; then cur_admin="$new_admin"; fi
     echo ""
 
     # ── 2. Polygon.io (рекомендуется) ──
@@ -235,6 +269,7 @@ do_configure() {
 
 # ── Telegram ──────────────────────────────────
 TELEGRAM_BOT_TOKEN=${cur_tg}
+ADMIN_CHAT_ID=${cur_admin}
 
 # ── API ключи ─────────────────────────────────
 POLYGON_API_KEY=${cur_pg}
