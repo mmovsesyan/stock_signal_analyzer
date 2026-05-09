@@ -1590,6 +1590,32 @@ async def learning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append("")
         lines.append(f"⏳ {_esc(aw.detail)}")
 
+    # 2b. LLM Learning (числовой + Ollama анализ паттернов)
+    try:
+        from stock_signal_analyzer.llm_learning import run_learning_cycle, format_learning_report
+        learning_state = await loop.run_in_executor(None, run_learning_cycle)
+        if learning_state and learning_state.total_outcomes_analyzed >= 20:
+            lines.append("")
+            lines.append("🤖 <b>LLM обучение на outcomes</b>")
+            if learning_state.weight_adjustments:
+                for comp, mult in sorted(learning_state.weight_adjustments.items()):
+                    arrow = "↑" if mult > 1.02 else ("↓" if mult < 0.98 else "→")
+                    lines.append(f"  {arrow} {comp}: ×{mult:.2f}")
+            if learning_state.win_patterns:
+                lines.append("  Паттерны успеха:")
+                for p in learning_state.win_patterns[:2]:
+                    lines.append(f"    ✓ {_esc(p)}")
+            if learning_state.loss_patterns:
+                lines.append("  Паттерны неудачи:")
+                for p in learning_state.loss_patterns[:2]:
+                    lines.append(f"    ✗ {_esc(p)}")
+            if learning_state.recommendations:
+                lines.append("  Рекомендации:")
+                for r in learning_state.recommendations[:2]:
+                    lines.append(f"    • {_esc(r)}")
+    except Exception:
+        log.debug("learning_job: LLM learning skipped")
+
     report_text = "\n".join(lines)
 
     # 4. Отправить всем пользователям

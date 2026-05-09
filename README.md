@@ -1,469 +1,455 @@
 # 📈 Stock Signal Analyzer
 
-Система многофакторного анализа торговых сигналов для акций с Telegram-ботом. Анализирует технические индикаторы, импульс, новости, объёмы и макроэкономический контекст для генерации торговых планов.
+**Самообучающаяся система многофакторного анализа торговых сигналов с AI.**
 
-## 🎯 Возможности
+Анализирует технические индикаторы, импульс, новости (VADER + LLM), объёмы, макро-контекст и квантовые модели. Генерирует торговые планы с точками входа, стоп-лоссами и тейк-профитами. Автоматически обучается на результатах своих сигналов через Ollama.
 
-- **Многофакторный анализ:**
-  - Технический анализ (RSI, MACD, Bollinger Bands, ADX)
-  - Анализ импульса и momentum
-  - Sentiment анализ новостей (RSS, Google News, Finnhub)
-  - Анализ объёмов и давления (CMF, OBV)
-  - Внутридневные данные (real-time через WebSocket)
-  - Макроэкономический контекст
-  - Квантовые модели (MTF momentum, trend strength, volatility regime)
+---
 
-- **Торговые планы:**
-  - Точки входа/выхода
-  - Стоп-лоссы и тейк-профиты (3 уровня)
-  - Risk/Reward соотношения
-  - Размер позиции с учётом риск-менеджмента
-  - Trailing stop рекомендации
+## ✨ Ключевые возможности
 
-- **Telegram-бот:**
-  - Котировки по запросу
-  - Полные отчёты по тикерам
-  - Дашборды по спискам (РФ голубые фишки / US / дивидендные)
-  - Автоматические уведомления о сильных сигналах
-  - Интерактивное меню на русском языке
-  - Управление автосбором через меню
+### 🧠 Самообучение (AI)
+- **LLM анализ** через Ollama (qwen2.5:1.5b, 2-3 GB RAM)
+- Автоматическое обучение на исторических outcomes каждые 6 часов
+- Числовой IC (Information Coefficient) + качественный LLM-анализ паттернов
+- Адаптивные веса компонентов — система сама определяет что работает лучше
 
-- **Поддержка рынков:**
-  - 🇺🇸 US акции (Yahoo Finance, Finnhub)
-  - 🇷🇺 Российские акции (MOEX ISS, Tinkoff Invest API)
-  - Real-time данные через WebSocket
+### 📊 Многофакторный анализ
+- **Технический**: RSI, MACD, Bollinger Bands, ADX, свечные паттерны, MACD divergence
+- **Импульс**: ROC multi-timeframe, acceleration, overextension detection
+- **Sentiment**: VADER + финансовый лексикон + LLM-анализ новостей
+- **Объём**: CMF, OBV divergence, volume spike, tape imbalance
+- **Квант-модели**: MTF momentum, z-score, volatility regime, trend strength
+- **Макро**: ЦБ заседания, инфляция, cross-asset regime (risk-on/off)
 
-- **Монетизация:**
-  - Автоматический сбор сигналов
-  - Отслеживание результатов (outcome tracker)
-  - Бэктестер для оценки прибыльности
-  - Фильтрация сигналов (3 пресета)
+### 📱 Доставка сигналов
+- **Telegram бот** — интерактивное меню, watchlist, автосбор, уведомления
+- **REST API** (FastAPI) — для масштабирования и интеграций
+- **CLI** — быстрый анализ из терминала
 
-## 📋 Требования
+### 🌍 Рынки
+- 🇺🇸 US акции (Yahoo Finance, Polygon.io, Finnhub)
+- 🇷🇺 Российские акции (MOEX ISS, T-Bank Invest API)
+- Real-time данные через WebSocket
 
-- Python 3.10+
-- Ubuntu 22.04+ или Debian 11+ (для продакшена)
-- API ключи:
-  - **Telegram Bot Token** (обязательно) — получить у [@BotFather](https://t.me/BotFather)
-  - **Tinkoff Token** (для РФ акций) — [tbank.ru/invest/settings/api](https://www.tbank.ru/invest/settings/api/)
-  - **Finnhub API Key** (для US акций) — [finnhub.io](https://finnhub.io)
-
-## 🚀 Быстрый старт на сервере
-
-### Автоматическая установка (одна команда)
-
-```bash
-git clone git@github.com:username/stock_signal_analyzer.git && \
-cd stock_signal_analyzer && \
-sudo ./install.sh
-```
-
-**Скрипт автоматически:**
-- ✅ Создаст venv и установит все зависимости
-- ✅ Запросит все ключи (Telegram, Tinkoff, Finnhub)
-- ✅ Создаст .env файл
-- ✅ Настроит systemd сервис
-- ✅ Запустит бота в фоновом режиме
-
-### Проверка работы
-
-```bash
-# Статус бота
-sudo systemctl status stock-signal-bot.service
-
-# Логи в реальном времени
-sudo journalctl -u stock-signal-bot.service -f
-
-# Отправить в Telegram
-/start
-```
-
-## 📱 Telegram команды
-
-### Аналитика
-- `/signal AAPL` — полный анализ тикера с торговым планом
-- `/price SBER.ME` — быстрая цена
-- `/dashboard` — обзор рынка (топ сигналов)
-
-### Сбор сигналов
-- `/collect` — массовый сбор сигналов (30+ тикеров)
-- `/status` — статус сбора (сколько сигналов собрано)
-- `/export` — выгрузить все сигналы в файл
-
-### Управление
-- **⚙️ Настройки** → **🤖 Настройка автосбора**
-  - Включить/выключить дефолтные 30 тикеров
-  - Добавить свои тикеры для автосбора
-  - Просмотреть текущую конфигурацию
-
-## 🎮 Управление ботом
-
-```bash
-# Перезапуск
-sudo systemctl restart stock-signal-bot.service
-
-# Остановка
-sudo systemctl stop stock-signal-bot.service
-
-# Логи
-sudo journalctl -u stock-signal-bot.service -n 50
-```
-
-## 🔄 Обновление
-
-```bash
-cd /root/stock_signal_analyzer
-sudo systemctl stop stock-signal-bot.service
-git pull origin main
-source venv/bin/activate
-pip install -r requirements.txt --upgrade
-sudo systemctl start stock-signal-bot.service
-```
-
-## 📊 Монетизация
-
-### Путь к прибыли
-
-**Неделя 1-2: Сбор данных**
-- Бот автоматически собирает сигналы каждые 4 часа
-- Цель: 50-100 сигналов
-
-**Неделя 2: Бэктест**
-```bash
-source venv/bin/activate
-python tools/backtest.py /var/lib/stock_signal_analyzer/signals.jsonl --min-tier A
-```
-
-**Целевые метрики:**
-- Win rate: >60%
-- Profit factor: >2.0
-
-**Неделя 3+: Оптимизация и paper trading**
-
-**Месяц 2: MVP подписка**
-- Запуск платной подписки ($50-100/месяц)
-
-## 📚 Документация
-
-| Файл | Описание |
-|------|---------|
-| **QUICKSTART.md** | Быстрый старт (одна команда) |
-| **INSTALLATION_COMPLETE.md** | Полное описание установки |
-| **READY_TO_RUN.md** | Инструкция по запуску |
-| **BACKGROUND_RUN_TINKOFF.md** | Фоновый запуск + Tinkoff API |
-| **TELEGRAM_AUTOCOLLECT_READY.md** | Управление автосбором |
-| **QUICK_START_MONETIZATION.md** | Путь к монетизации |
-
-## 🛠️ Разработка
-
-### Локальный запуск (macOS/Linux)
-
-```bash
-# Создать venv
-python3 -m venv venv
-source venv/bin/activate
-
-# Установить зависимости
-pip install -r requirements.txt
-
-# Создать .env
-cp .env.example .env
-# Отредактировать .env (добавить токены)
-
-# Запустить бота
-python telegram_bot.py
-```
+---
 
 ## 🏗️ Архитектура
 
 ```
-stock_signal_analyzer/
-├── engine.py              # Движок анализа
-├── signal_filter.py       # Фильтрация сигналов
-├── outcome_tracker.py     # Отслеживание результатов
-├── tinkoff_api.py         # Tinkoff API интеграция
-├── user_store.py          # Настройки пользователей
-└── ...
-
-telegram_bot.py            # Telegram бот
-
-tools/
-├── backtest.py            # Бэктестер
-├── monitor_signals.py     # Мониторинг сбора
-└── verify_monetization.py # Проверка компонентов
-
-deploy/
-├── stock-signal-bot-simple.service  # Systemd сервис
-└── ...
-
-install.sh                 # Автоматическая установка
+┌─────────────────────────────────────────────────────────────────┐
+│                        ВХОДНЫЕ ДАННЫЕ                            │
+├──────────┬──────────┬──────────┬──────────┬────────────────────┤
+│  Yahoo   │ Polygon  │ Finnhub  │ MOEX ISS │   T-Bank Invest    │
+│ Finance  │   .io    │   API    │  (free)  │     (gRPC)         │
+└────┬─────┴────┬─────┴────┬─────┴────┬─────┴────────┬───────────┘
+     │          │          │          │              │
+     ▼          ▼          ▼          ▼              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    engine.py — ЯДРО АНАЛИЗА                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
+│  │Technical │ │ Momentum │ │Sentiment │ │ Volume Pressure  │   │
+│  │RSI, MACD │ │ROC, accel│ │VADER+LLM │ │ CMF, OBV, tape   │   │
+│  │ADX, BB   │ │MTF, trend│ │Finnhub   │ │ spike detection  │   │
+│  │patterns  │ │overext.  │ │Polygon   │ │                  │   │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────────┬─────────┘   │
+│       │            │            │                 │              │
+│       ▼            ▼            ▼                 ▼              │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │         Взвешенный Score (-1…+1) + мультипликаторы        │   │
+│  │  × macro × confidence × volume_align × weekly × regime    │   │
+│  └────────────────────────────┬─────────────────────────────┘   │
+│                               │                                  │
+│       ┌───────────────────────┼───────────────────────┐         │
+│       ▼                       ▼                       ▼         │
+│  ┌─────────┐          ┌────────────┐          ┌───────────┐    │
+│  │Tier A/B/C│          │Trade Plan  │          │Quant Models│    │
+│  │classify  │          │entry/stop/ │          │MTF, zscore │    │
+│  │          │          │targets, R:R│          │vol regime  │    │
+│  └─────────┘          └────────────┘          └───────────┘    │
+│                                                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                    САМООБУЧЕНИЕ (каждые 6ч)                      │
+│  ┌────────────────┐    ┌─────────────────┐    ┌──────────────┐  │
+│  │Outcome Tracker │───▶│ Числовой IC     │───▶│ LLM Learning │  │
+│  │(проверка PnL)  │    │ (корреляции)    │    │ (Ollama)     │  │
+│  └────────────────┘    └─────────────────┘    └──────┬───────┘  │
+│                                                       │          │
+│                              ┌─────────────────────────┘         │
+│                              ▼                                   │
+│                    ┌──────────────────┐                          │
+│                    │learning_state.json│                          │
+│                    │weight adjustments │                          │
+│                    │win/loss patterns  │                          │
+│                    └──────────────────┘                          │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+     ┌──────────────┐  ┌────────────┐  ┌────────────┐
+     │ Telegram Bot │  │  REST API  │  │    CLI     │
+     │ (PTB v21)   │  │  (FastAPI) │  │ main.py    │
+     └──────────────┘  └────────────┘  └────────────┘
 ```
-
-## 📄 Лицензия
-
-MIT
-
-## 🤝 Поддержка
-
-- GitHub Issues: [github.com/username/stock_signal_analyzer/issues](https://github.com/username/stock_signal_analyzer/issues)
-- Документация: см. файлы `*.md` в корне проекта
 
 ---
 
-**Версия:** 1.4.0  
-**Дата:** 2026-05-02  
-**Статус:** ✅ Готово к использованию
+## 📂 Структура проекта
 
-# Создать виртуальное окружение
-python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# или
-venv\Scripts\activate  # Windows
+```
+stock_signal_analyzer/
+├── main.py                          # CLI: python main.py AAPL
+├── telegram_bot.py                  # Telegram бот (async, PTB v21)
+├── api/
+│   └── main.py                      # REST API (FastAPI, rate limiting)
+│
+├── stock_signal_analyzer/           # Основной пакет
+│   ├── engine.py                    # Ядро: build_report() — объединяет всё
+│   │
+│   ├── # ─── Анализ ───
+│   ├── technical.py                 # RSI, MACD, Bollinger, ADX, паттерны
+│   ├── momentum.py                  # ROC, acceleration, overextension
+│   ├── sentiment.py                 # VADER + финансовый лексикон
+│   ├── llm_sentiment.py            # LLM анализ новостей (Ollama)
+│   ├── volume_pressure.py           # CMF, OBV, volume spike, tape
+│   ├── candlestick_patterns.py      # Свечные паттерны
+│   ├── chart_patterns.py            # Графические паттерны
+│   ├── levels.py                    # Support/resistance (pivot points)
+│   ├── quant_models.py              # MTF momentum, z-score, vol regime
+│   ├── regime.py                    # Cross-asset regime (risk-on/off)
+│   │
+│   ├── # ─── Обучение ───
+│   ├── adaptive_weights.py          # IC tracking, адаптивные веса
+│   ├── llm_learning.py             # LLM обучение на outcomes (Ollama)
+│   ├── outcome_tracker.py           # Отслеживание результатов сигналов
+│   │
+│   ├── # ─── Данные ───
+│   ├── market_data.py               # Yahoo → T-Bank → MOEX → Polygon
+│   ├── polygon_data.py              # Polygon.io (котировки, свечи, новости)
+│   ├── finnhub_live.py              # Finnhub REST/WS (котировки, новости)
+│   ├── moex_iss.py                  # MOEX ISS (РФ, бесплатный)
+│   ├── tbank_invest.py              # T-Bank Invest SDK (РФ real-time)
+│   ├── news_feeds.py                # RSS / Google News
+│   ├── intraday.py                  # Real-time провайдеры (4 источника)
+│   │
+│   ├── # ─── Торговля ───
+│   ├── trade_plan.py                # Entry/stop/targets, R:R, position size
+│   ├── risk_manager.py              # Kelly sizing, drawdown, circuit breaker
+│   ├── risk_context.py              # ATR%, signal tier classification
+│   ├── signal_filter.py             # Фильтрация (3 пресета)
+│   │
+│   ├── # ─── Контекст ───
+│   ├── macro_calendar.py            # ЦБ, инфляция, заседания
+│   ├── timing_context.py            # Earnings, weekly trend, index tailwind
+│   ├── universe.py                  # Классификация инструментов
+│   │
+│   └── # ─── Инфраструктура ───
+│       ├── telegram_format.py       # HTML форматирование
+│       ├── signal_log.py            # JSONL лог сигналов
+│       ├── user_store.py            # Настройки пользователей
+│       └── retry_utils.py           # Retry + rate limiting
+│
+├── tools/
+│   ├── backtest.py                  # Бэктест v1 (по signals.jsonl)
+│   ├── backtest_v2.py               # Бэктест v2 (candle replay)
+│   ├── monitor_signals.py           # Мониторинг сбора
+│   └── summarize_signal_log.py      # Сводка по логу
+│
+├── scripts/
+│   ├── install_ubuntu.sh            # Полная установка (1 команда)
+│   └── install_ollama.sh            # Установка Ollama + модель
+│
+├── tests/                           # 82 unit-теста
+├── requirements.txt                 # Production
+├── requirements-api.txt             # FastAPI
+├── requirements-dev.txt             # Dev tools
+├── requirements-tbank.txt           # T-Bank SDK
+├── Dockerfile
+├── docker-compose.yml               # bot + api + ollama + tracker + learning
+└── manage.sh                        # Интерактивное управление (VPS)
+```
 
-# Установить зависимости
+---
+
+## 🚀 Быстрый старт
+
+### Установка на Ubuntu (одна команда)
+
+```bash
+git clone <repository-url> && cd stock_signal_analyzer
+sudo ./scripts/install_ubuntu.sh
+```
+
+Скрипт автоматически установит:
+- Python venv + все зависимости
+- Ollama + модель qwen2.5:1.5b (LLM sentiment + обучение)
+- Systemd сервисы (бот, API, tracker, learning)
+- Запросит API ключи и создаст `.env`
+
+### Локальная разработка (macOS/Linux)
+
+```bash
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # заполнить токены
 
-# Опционально: для российского рынка
-pip install -r requirements-tbank.txt
-```
-
-### 2. Настройка
-
-```bash
-# Создать .env файл
-cp .env.example .env
-
-# Отредактировать .env и добавить токены
-nano .env  # или любой редактор
-```
-
-Минимальная конфигурация `.env`:
-```bash
-# Обязательно для Telegram-бота
-TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
-
-# Опционально
-FINNHUB_API_KEY=your_finnhub_key
-TINKOFF_INVEST_TOKEN=your_tbank_token
-```
-
-### 3. Использование
-
-#### CLI - Анализ тикера
-
-```bash
-# Простой анализ
+# CLI анализ
 python main.py AAPL
+python main.py SBER.ME --fast
 
-# Российская акция
-python main.py SBER.ME
+# Telegram бот
+python telegram_bot.py
 
-# Режим мониторинга (обновление каждые 5 минут)
-python main.py AAPL --watch --interval 300
-
-# С real-time данными Finnhub (нужен API ключ)
-python main.py AAPL --finnhub-ws --ws-seconds 10
+# REST API
+pip install -r requirements-api.txt
+uvicorn api.main:app --port 8000
 ```
 
-#### Telegram-бот
+### Docker
 
 ```bash
-python telegram_bot.py
+docker compose up -d --build
 ```
 
-Команды бота:
-- `/start` — главное меню
-- `/quote AAPL` — быстрая котировка
-- `/signal AAPL` — полный анализ с торговым планом
-- `/dash` — свод по списку тикеров
-- `/add AAPL` — добавить в watchlist
-- `/list` — показать watchlist
+Запускает: бот + API (`:8000`) + Ollama (`:11434`) + outcome tracker + learning.
+
+---
+
+## 🔑 API ключи
+
+| Ключ | Для чего | Обязательный |
+|------|----------|:---:|
+| `TELEGRAM_BOT_TOKEN` | Telegram бот | ✅ |
+| `POLYGON_API_KEY` | US котировки, свечи, новости | Рекомендуется |
+| `FINNHUB_API_KEY` | US real-time, аналитика Wall St | Опционально |
+| `TINKOFF_INVEST_TOKEN` | РФ real-time котировки | Опционально |
+
+Ollama работает локально, ключи не нужны.
+
+---
+
+## 📱 Telegram команды
+
+| Команда | Описание |
+|---------|----------|
+| `/signal AAPL` | Полный анализ с торговым планом |
+| `/price SBER.ME` | Быстрая котировка |
+| `/dashboard` | Свод по watchlist |
+| `/collect` | Массовый сбор сигналов |
+| `/status` | Статус сбора |
+| `/export` | Выгрузить лог в файл |
+
+Бот также имеет интерактивное меню с кнопками для навигации.
+
+---
+
+## 🔌 REST API
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Быстрая котировка
+curl http://localhost:8000/quote/AAPL
+
+# Полный анализ
+curl http://localhost:8000/analyze/AAPL?fast=true
+
+# POST с параметрами
+curl -X POST http://localhost:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"symbol": "MSFT", "fast_mode": false}'
+```
+
+Rate limiting: 30 запросов/мин на IP (настраивается через `API_RATE_LIMIT_PER_MIN`).
+
+---
+
+## 🧠 Система самообучения
+
+### Как работает
+
+```
+Сигналы → outcomes.jsonl (реальный PnL) → анализ → корректировка весов
+```
+
+1. **Outcome Tracker** (каждый час) — проверяет, достигли ли открытые сигналы целей или стопов
+2. **Числовой IC** — ранговая корреляция каждого компонента с реальным PnL
+3. **LLM Learning** (каждые 6ч) — Ollama анализирует паттерны win/loss, рекомендует корректировки
+4. **Engine** — при каждом анализе применяет обученные веса
+
+### Три уровня (совместимые)
+
+| Уровень | Что делает | Требования |
+|---------|-----------|-----------|
+| IC (числовой) | Корреляция компонент → PnL | 30+ outcomes |
+| Паттерн-анализ | Delta wins vs losses, optimal thresholds | 20+ outcomes |
+| LLM (Ollama) | Качественный анализ комбинаций | Ollama + 20+ outcomes |
+
+Если Ollama недоступен — работают только числовые уровни. Система не ломается.
+
+### Ручной запуск
+
+```bash
+python -m stock_signal_analyzer.llm_learning --force
+```
+
+---
+
+## 📊 Бэктестирование
+
+### v1 — по сохранённым сигналам
+
+```bash
+python tools/backtest.py data/signals.jsonl --min-tier A
+```
+
+Проверяет зафиксированные торговые планы на реальных свечах.
+
+### v2 — candle replay
+
+```bash
+python tools/backtest_v2.py --symbols AAPL MSFT GOOGL --days 180 --export results.json
+```
+
+Полная эмуляция: прогон анализа день за днём, вход по Open, slippage, комиссии, trailing stop, equity curve.
+
+Метрики: Sharpe, Sortino, Calmar, max drawdown, profit factor, win rate по tier/symbol.
+
+---
 
 ## 📊 Пример вывода
 
 ```
-=== 2026-05-01 18:30:00 UTC | AAPL — Apple Inc. ===
+=== 2026-05-09 14:30:00 UTC | AAPL — Apple Inc. ===
 Инструмент: US equity, blue chip
 
   ╔══ ТОРГОВЫЙ ПЛАН ══════════════════════
-  ║  LONG AAPL @ 175.50
-  ║  Стоп: 172.30 (-1.82%)
-  ║  Цель 1: 179.20 (+2.11%)  R:R 1.2 — закрыть 50%
-  ║  Цель 2: 182.80 (+4.16%)  R:R 2.3 — остаток
+  ║  LONG AAPL @ 198.50
+  ║  Стоп: 194.80 (-1.86%)
+  ║  Цель 1: 203.20 (+2.37%)  R:R 1.3 — закрыть 50%
+  ║  Цель 2: 207.40 (+4.48%)  R:R 2.4 — остаток
   ║  Трейлинг: после +3.0% → безубыток
-  ║  Удержание: до 5 дней  |  Позиция: 15%  |  Класс: B
+  ║  Удержание: до 5 дней  |  Позиция: 12%  |  Класс: A
   ╚═══════════════════════════════════════
 
-Итоговый балл: +0.248  (-1…+1)  (до макро: +0.261)
-Согласованность: 0.72  |  ADX14≈23.5  |  Режим: trending
-Класс качества: B  |  ATR(14): 2.15%  |  стоп-ориентир ~1.5×ATR: 3.23%
-Контекст: [weekly uptrend] Недельный тренд совпадает с дневным сигналом
+Итоговый балл: +0.312  (-1…+1)
+Согласованность: 0.78  |  ADX14≈26.3  |  Режим: trending
+Класс качества: A  |  ATR(14): 1.87%
 
 Компоненты:
-  Техника:   +0.320  |  RSI14=58.2 (нейтрально), MACD бычий кроссовер
-  Импульс:   +0.280  |  5д: +2.1%, 20д: +5.8%, ускорение положительное
-  Новости:   +0.150  |  Sentiment: слабо позитивный (3 новости)
-  Объём:     +0.220  |  CMF=+0.18, объём выше среднего на 15%
+  Техника:   +0.380  |  RSI14=62.1, MACD бычий, выше SMA50
+  Импульс:   +0.290  |  5д: +1.8%, 20д: +4.2%, ускорение +
+  Новости:   +0.210  |  LLM: bullish, катализаторы: earnings beat
+  Объём:     +0.250  |  CMF=+0.22, объём +18% vs среднего
+
+Квант-модели: +0.180
+  MTF momentum: aligned across timeframes
+  Trend strength: strong (score=0.72)
 ```
-
-## 🏗️ Архитектура
-
-```
-stock_signal_analyzer/
-├── main.py                    # CLI entry point
-├── telegram_bot.py            # Telegram bot entry point
-├── stock_signal_analyzer/     # Основной пакет
-│   ├── engine.py              # Главный движок анализа
-│   ├── technical.py           # Технический анализ
-│   ├── momentum.py            # Анализ импульса
-│   ├── sentiment.py           # Sentiment анализ новостей
-│   ├── volume_pressure.py     # Анализ объёмов
-│   ├── intraday.py            # Real-time данные
-│   ├── trade_plan.py          # Генерация торговых планов
-│   ├── risk_manager.py        # Управление рисками
-│   ├── quant_models.py        # Квантовые модели
-│   ├── market_data.py         # Загрузка котировок
-│   ├── news_feeds.py          # Парсинг новостей
-│   ├── finnhub_live.py        # Finnhub API
-│   ├── moex_iss.py            # MOEX ISS API
-│   ├── tbank_invest.py        # T-Bank Invest API
-│   └── ...
-├── tests/                     # Unit-тесты (82 теста)
-├── docs/                      # Документация
-├── requirements.txt           # Python зависимости
-└── requirements-tbank.txt     # T-Bank SDK (опционально)
-```
-
-## 🧪 Тестирование
-
-```bash
-# Установить pytest
-pip install pytest
-
-# Запустить все тесты
-pytest tests/ -v
-
-# Запустить с coverage
-pytest tests/ --cov=stock_signal_analyzer
-```
-
-Все 82 теста должны проходить успешно.
-
-## 📦 Установка на VPS (Ubuntu)
-
-Для автоматической установки на чистом Ubuntu сервере:
-
-```bash
-git clone <repository-url>
-cd stock_signal_analyzer
-
-# Интерактивная установка
-bash install.sh
-
-# Автоматическая установка
-TELEGRAM_BOT_TOKEN=your_token bash install.sh --auto
-```
-
-Скрипт установит:
-- Python 3 и зависимости
-- Виртуальное окружение
-- Systemd сервис для автозапуска
-- Настроит логирование
-
-Подробнее: [docs/VPS_UBUNTU.md](docs/VPS_UBUNTU.md)
-
-## 🔧 Конфигурация
-
-Все настройки через переменные окружения в `.env`:
-
-```bash
-# Telegram-бот
-TELEGRAM_BOT_TOKEN=...
-
-# API ключи
-FINNHUB_API_KEY=...
-TINKOFF_INVEST_TOKEN=...
-
-# Пути
-STOCK_SIGNAL_DATA=/var/lib/stock_signal_analyzer
-SSA_SIGNAL_LOG=/var/lib/stock_signal_analyzer/signals.jsonl
-
-# Уведомления
-NOTIFY_INTERVAL_SEC=3600        # Интервал проверки сильных сигналов
-OUTSIDE_SCAN_MAX=120            # Сколько тикеров сканировать
-NOTIFY_MIN_TIER=A               # Минимальный класс для уведомлений
-
-# Автосбор сигналов
-COLLECT_INTERVAL_SEC=14400      # Каждые 4 часа (0 = выключен)
-
-# T-Bank дополнительно
-SSA_TBANK_VOLUME=1              # Запрашивать свечи для VWAP/POC
-```
-
-## 📈 Классификация сигналов
-
-Система присваивает каждому сигналу класс качества:
-
-- **A** — Сильный сигнал: высокая согласованность, хорошие условия, нет противоречий
-- **B** — Средний сигнал: умеренная уверенность, есть небольшие риски
-- **C** — Слабый сигнал: низкая согласованность или неблагоприятные условия
-
-Факторы, влияющие на класс:
-- Согласованность компонентов (техника, импульс, новости, объём)
-- ADX (сила тренда)
-- Макроэкономический фон
-- Окно отчётности
-- Направление индекса
-- Ликвидность
-
-## 🛠️ Разработка
-
-### Структура кода
-
-- Каждый модуль отвечает за свою область анализа
-- `engine.py` объединяет все компоненты
-- Все функции покрыты unit-тестами
-- Используется type hints (Python 3.9+)
-
-### Добавление нового индикатора
-
-1. Добавить функцию в соответствующий модуль (например, `technical.py`)
-2. Добавить тесты в `tests/test_core.py`
-3. Интегрировать в `engine.py`
-4. Обновить документацию
-
-### Code style
-
-```bash
-# Форматирование
-black stock_signal_analyzer/
-
-# Линтинг
-flake8 stock_signal_analyzer/
-
-# Type checking
-mypy stock_signal_analyzer/
-```
-
-## 📝 Лицензия
-
-[Укажите лицензию проекта]
-
-## 🤝 Вклад
-
-Pull requests приветствуются! Для крупных изменений сначала откройте issue для обсуждения.
-
-## 📞 Поддержка
-
-- Issues: [GitHub Issues](https://github.com/your-repo/issues)
-- Документация: [docs/](docs/)
-- Telegram: [ваш канал]
-
-## ⚠️ Disclaimer
-
-Этот инструмент предназначен только для информационных целей. Не является финансовой рекомендацией. Торговля на финансовых рынках сопряжена с риском потери капитала. Всегда проводите собственный анализ и консультируйтесь с финансовым советником.
 
 ---
 
-**Версия:** 1.0.0  
-**Последнее обновление:** 2026-05-01
+## ⚙️ Конфигурация
+
+Все настройки через `.env`:
+
+```bash
+# Telegram
+TELEGRAM_BOT_TOKEN=...
+
+# Данные
+FINNHUB_API_KEY=...
+POLYGON_API_KEY=...
+TINKOFF_INVEST_TOKEN=...
+
+# LLM (Ollama)
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:1.5b
+LLM_SENTIMENT=1
+
+# Автоматизация
+COLLECT_INTERVAL_SEC=14400      # автосбор каждые 4ч
+NOTIFY_INTERVAL_SEC=3600        # уведомления каждый час
+LEARN_INTERVAL_SEC=21600        # обучение каждые 6ч
+NOTIFY_MIN_TIER=A               # уведомлять только о классе A
+
+# API
+API_RATE_LIMIT_PER_MIN=30
+
+# Пути
+SSA_SIGNAL_LOG=/var/lib/stock_signal_analyzer/signals.jsonl
+STOCK_SIGNAL_DATA=/var/lib/stock_signal_analyzer
+```
+
+---
+
+## 🛠️ Разработка
+
+```bash
+# Тесты (82 теста)
+pytest tests/ -v
+
+# Форматирование
+black stock_signal_analyzer/ && isort stock_signal_analyzer/
+
+# Type checking
+mypy stock_signal_analyzer/
+
+# Coverage
+pytest tests/ --cov=stock_signal_analyzer
+```
+
+### Добавление нового индикатора
+
+1. Добавить функцию в соответствующий модуль (`technical.py`, `momentum.py`, etc.)
+2. Добавить тесты в `tests/test_core.py`
+3. Интегрировать в `engine.py` (в `_gather_inputs` или `_compute_score`)
+4. Outcome tracker автоматически начнёт отслеживать IC нового компонента
+
+---
+
+## 📈 Классификация сигналов
+
+| Класс | Условия | Действие |
+|:---:|---------|----------|
+| **A** | Высокий score + confidence > 0.6 + нет headwinds | Торговать |
+| **B** | Умеренный score или 1 headwind | С осторожностью |
+| **C** | Низкий score или противоречия | Наблюдать |
+
+Headwinds: earnings window, index против, низкая ликвидность, macro uncertainty.
+
+---
+
+## 🐳 Docker сервисы
+
+| Сервис | Порт | Описание |
+|--------|:----:|----------|
+| `bot` | — | Telegram бот |
+| `api` | 8000 | REST API (FastAPI) |
+| `ollama` | 11434 | LLM для sentiment + обучения |
+| `tracker` | — | Outcome tracker (каждый час) |
+| `learning` | — | LLM learning (каждые 6ч) |
+| `cron` | — | Планировщик для tracker/learning |
+
+---
+
+## 📋 Требования
+
+- Python 3.9+
+- RAM: 4 GB минимум (2-3 GB для Ollama + остальное)
+- Диск: ~3 GB (модель + зависимости + данные)
+- Ubuntu 22.04+ для продакшена
+
+---
+
+## ⚠️ Disclaimer
+
+Этот инструмент предназначен только для информационных целей. Не является финансовой рекомендацией. Торговля на финансовых рынках сопряжена с риском потери капитала.
+
+---
+
+**Версия:** 2.0.0  
+**Обновлено:** 2026-05-09

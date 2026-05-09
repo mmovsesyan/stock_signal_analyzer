@@ -46,7 +46,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Cron для периодического запуска tracker
+  # Cron для периодического запуска tracker и learning
   cron:
     image: alpine:latest
     container_name: stock-signal-cron
@@ -57,8 +57,106 @@ services:
       sh -c "
       apk add --no-cache docker-cli &&
       echo '0 * * * * docker start stock-signal-tracker' | crontab - &&
+      echo '30 */6 * * * docker start stock-signal-learning' >> /var/spool/cron/crontabs/root &&
       crond -f -l 2
       "
+    networks:
+      - stock-signal-net
+
+  # LLM Learning (запускается по расписанию)
+  learning:
+    build: .
+    container_name: stock-signal-learning
+    restart: "no"
+    environment:
+      - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
+      - STOCK_SIGNAL_DATA=/data
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - LLM_LEARNING=1
+      - LLM_LEARNING_MIN=20
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    command: -m stock_signal_analyzer.llm_learning
+    depends_on:
+      - ollama
+    networks:
+      - stock-signal-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # REST API (FastAPI)
+  api:
+    build: .
+    container_name: stock-signal-api
+    restart: unless-stopped
+    environment:
+      - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
+      - STOCK_SIGNAL_DATA=/data
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
+      - API_RATE_LIMIT_PER_MIN=${API_RATE_LIMIT_PER_MIN:-30}
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    command: -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
+    depends_on:
+      - ollama
+    networks:
+      - stock-signal-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Ollama LLM (sentiment analysis)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: stock-signal-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - stock-signal-net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Автоматическая загрузка модели при первом запуске
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: stock-signal-ollama-pull
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c", "sleep 10 && ollama pull ${OLLAMA_MODEL:-qwen2.5:1.5b}"]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
     networks:
       - stock-signal-net
 
@@ -69,3 +167,4 @@ networks:
 volumes:
   data:
   logs:
+  ollama_data:

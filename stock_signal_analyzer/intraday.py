@@ -150,11 +150,39 @@ class _FinnhubProvider(_IntradayProvider):
         return IntradayBundle(score=sc, detail=" | ".join(parts), source="Finnhub REST/WS")
 
 
+class _PolygonProvider(_IntradayProvider):
+    """Провайдер для US тикеров через Polygon.io (prev close / snapshot)."""
+
+    def can_handle(self, symbol: str, ctx: _IntradayCtx) -> bool:
+        sym_u = symbol.strip().upper()
+        if sym_u.endswith(".ME"):
+            return False
+        try:
+            from .polygon_data import polygon_available
+            return polygon_available()
+        except ImportError:
+            return False
+
+    def fetch(self, symbol: str, ctx: _IntradayCtx) -> IntradayBundle | None:
+        sym_u = symbol.strip().upper()
+        try:
+            from .polygon_data import fetch_snapshot
+            pq = fetch_snapshot(sym_u)
+            if pq.last_price is None:
+                return None
+            sc = _score_from_pct(pq.change_pct)
+            detail = f"{pq.detail} | score={sc:+.3f}"
+            return IntradayBundle(score=sc, detail=detail, source="Polygon.io")
+        except Exception:
+            return None
+
+
 # Упорядоченный список провайдеров
 _PROVIDERS: list[_IntradayProvider] = [
     _MoexProvider(),
     _TinkoffProvider(),
     _FinnhubProvider(),
+    _PolygonProvider(),
 ]
 
 

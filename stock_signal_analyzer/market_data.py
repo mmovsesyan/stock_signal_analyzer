@@ -1,4 +1,4 @@
-"""Загрузка исторических котировок через Yahoo Finance (yfinance) с fallback на T-Bank API."""
+"""Загрузка исторических котировок через Yahoo Finance (yfinance) с fallback на T-Bank API и Polygon.io."""
 
 from __future__ import annotations
 
@@ -14,6 +14,35 @@ import yfinance as yf
 from .universe import InstrumentProfile, classify_instrument, history_period_for_profile
 
 _log = logging.getLogger(__name__)
+
+
+def _polygon_available() -> bool:
+    """Проверить доступность Polygon.io API."""
+    try:
+        from .polygon_data import polygon_available
+        return polygon_available()
+    except Exception:
+        return False
+
+
+def _try_polygon_history(sym: str, days: int = 400) -> tuple[pd.DataFrame | None, str, str]:
+    """Fallback: дневные свечи из Polygon.io для US-тикеров."""
+    try:
+        from .polygon_data import fetch_daily_bars, fetch_ticker_details
+        df = fetch_daily_bars(sym, days=days)
+        if df is None or df.empty:
+            return None, "", ""
+        name = sym
+        currency = "USD"
+        details = fetch_ticker_details(sym)
+        if details:
+            name = details.name
+            currency = details.currency.upper() if details.currency else "USD"
+        _log.info("Polygon.io: загружено %d дневных свечей для %s", len(df), sym)
+        return df, name, currency
+    except Exception as e:
+        _log.warning("Polygon fallback failed for %s: %s", sym, e)
+        return None, "", ""
 
 # ── Кэш для котировок ────────────────────────────────────────────────────────
 _CACHE: dict[str, tuple[tuple[TickerSnapshot, dict[str, Any], InstrumentProfile], float]] = {}
@@ -204,6 +233,24 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
                 return result
         except Exception as e:
             _log.warning("MOEX ISS fallback failed for %s: %s", sym, e)
+
+    # Fallback на Polygon.io для US-тикеров
+    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and not sym.endswith(".ME"):
+        if _polygon_available():
+            _log.info("Yahoo Finance не отдал данные по %s, пробуем Polygon.io…", sym)
+            pg_hist, pg_name, pg_currency = _try_polygon_history(sym)
+            if pg_hist is not None and len(pg_hist) >= _MIN_CANDLES:
+                last = float(pg_hist["Close"].iloc[-1])
+                snap = TickerSnapshot(
+                    symbol=sym,
+                    last_close=last,
+                    currency=pg_currency or "USD",
+                    company_name=pg_name or sym,
+                    history=pg_hist,
+                )
+                result = (snap, info, profile)
+                _CACHE[sym] = (result, time.time())
+                return result
 
     if hist is None or hist.empty:
         hint = _tbank_hint(sym)

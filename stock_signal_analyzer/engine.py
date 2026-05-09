@@ -205,6 +205,8 @@ class _ScoreBundle:
 def _news_item_weight(it: NewsItem, kind: str, now: float) -> float:
     if kind == "finnhub":
         w = 1.22
+    elif kind == "polygon":
+        w = 1.15
     elif kind == "ticker":
         w = 1.0
     else:
@@ -222,11 +224,19 @@ def _merge_news_with_weights(
     ticker_news: list[NewsItem],
     macro: list[NewsItem],
     now: float,
+    polygon_news: list[NewsItem] | None = None,
 ) -> tuple[list[NewsItem], list[float]]:
     seen: set[str] = set()
     combined: list[NewsItem] = []
     weights: list[float] = []
-    for block, kind in ((fh_news, "finnhub"), (ticker_news, "ticker"), (macro, "macro")):
+    blocks: list[tuple[list[NewsItem], str]] = [
+        (fh_news, "finnhub"),
+        (ticker_news, "ticker"),
+        (macro, "macro"),
+    ]
+    if polygon_news:
+        blocks.insert(1, (polygon_news, "polygon"))
+    for block, kind in blocks:
         for it in block:
             k = it.title.strip().lower()[:200]
             if k in seen:
@@ -299,13 +309,14 @@ def _verdict_from_score(x: float, confidence: float) -> str:
 
 # ── Приватные функции-части build_report ────────────────────────────────────
 
-def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tuple[list[NewsItem], list[NewsItem], list[NewsItem]]:
+def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tuple[list[NewsItem], list[NewsItem], list[NewsItem], list[NewsItem]]:
     """Параллельная загрузка новостей из разных источников."""
     ticker_news: list[NewsItem] = []
     fh_news: list[NewsItem] = []
     macro_news: list[NewsItem] = []
+    polygon_news: list[NewsItem] = []
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {
             executor.submit(fetch_ticker_news_google, symbol, company_name): 'ticker',
             executor.submit(fetch_macro_headlines): 'macro',
@@ -315,6 +326,15 @@ def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tup
             # Finnhub не поддерживает .ME тикеры — не тратим запросы
             if not symbol.strip().upper().endswith(".ME"):
                 futures[executor.submit(fetch_company_news, symbol, api_key=key, limit=30)] = 'finnhub'
+
+        # Polygon news (US тикеры, если ключ настроен)
+        if not symbol.strip().upper().endswith(".ME"):
+            try:
+                from .polygon_data import polygon_available, fetch_ticker_news as polygon_fetch_news
+                if polygon_available():
+                    futures[executor.submit(polygon_fetch_news, symbol, limit=20)] = 'polygon'
+            except ImportError:
+                pass
 
         for future in as_completed(futures, timeout=15):
             source = futures[future]
@@ -326,11 +346,13 @@ def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tup
                     fh_news = result
                 elif source == 'macro':
                     macro_news = result
+                elif source == 'polygon':
+                    polygon_news = result
             except Exception as e:
                 # Логируем, но не падаем - продолжаем с пустым списком
                 pass
 
-    return ticker_news, fh_news, macro_news
+    return ticker_news, fh_news, macro_news, polygon_news
 
 
 def _gather_inputs(
@@ -355,16 +377,28 @@ def _gather_inputs(
         ticker_news: list[NewsItem] = []
         fh_news: list[NewsItem] = []
         macro_news: list[NewsItem] = []
+        polygon_news: list[NewsItem] = []
     else:
         # Параллельная загрузка новостей
-        ticker_news, fh_news, macro_news = _fetch_news_parallel(snap.symbol, snap.company_name, key)
+        ticker_news, fh_news, macro_news, polygon_news = _fetch_news_parallel(snap.symbol, snap.company_name, key)
 
     now_ts = time.time()
-    combined, news_weights = _merge_news_with_weights(fh_news, ticker_news, macro_news, now_ts)
+    combined, news_weights = _merge_news_with_weights(fh_news, ticker_news, macro_news, now_ts, polygon_news)
     combined = combined[:60]
     news_weights = news_weights[: len(combined)]
     sent = score_headlines(combined, news_weights)
     news_score = float(np.clip(sent.compound, -1.0, 1.0))
+
+    # LLM sentiment blending (если Ollama доступен)
+    _llm_detail = ""
+    if not fast_mode and combined:
+        try:
+            from .llm_sentiment import analyze_headlines_llm, blend_sentiment_scores
+            llm_res = analyze_headlines_llm(combined)
+            if llm_res is not None:
+                news_score, _llm_detail = blend_sentiment_scores(news_score, llm_res)
+        except Exception as exc:
+            _log.debug("LLM sentiment failed: %s", exc)
 
     # В быстром режиме пропускаем intraday данные
     if fast_mode:
@@ -454,6 +488,21 @@ def _gather_inputs(
         # intraday вес не адаптируем (нет IC для него)
         wt, wm, wn, wi = _normalize_weights(wt, wm, wn, wi)
 
+    # ── LLM Learning: корректировки весов из обучения на outcomes ──
+    # Совмещает числовой IC + LLM-анализ паттернов (если Ollama доступен).
+    # Множители мягкие (0.75–1.25), не ломают базовую логику.
+    try:
+        from .llm_learning import get_weight_adjustments
+        _learning_adj = get_weight_adjustments()
+        if _learning_adj:
+            wt *= _learning_adj.get("technical", 1.0)
+            wm *= _learning_adj.get("momentum", 1.0)
+            wn *= _learning_adj.get("news", 1.0)
+            # volume не в основных весах, но можно скорректировать news/tech
+            wt, wm, wn, wi = _normalize_weights(wt, wm, wn, wi)
+    except Exception:
+        pass
+
     # ── Актуальная цена (real-time) ──
     # Приоритет: T-Bank → MOEX ISS marketdata → Finnhub → last_close из истории
     live_price: float | None = None
@@ -484,6 +533,16 @@ def _gather_inputs(
                 fq = fetch_quote(sym_u, api_key=key)
                 if fq.current is not None and fq.current > 0:
                     live_price = fq.current
+            except Exception:
+                pass
+        # Polygon.io fallback для US
+        if live_price is None:
+            try:
+                from .polygon_data import polygon_available, fetch_snapshot as polygon_snapshot
+                if polygon_available():
+                    pq = polygon_snapshot(sym_u)
+                    if pq.last_price is not None and pq.last_price > 0:
+                        live_price = pq.last_price
             except Exception:
                 pass
 
