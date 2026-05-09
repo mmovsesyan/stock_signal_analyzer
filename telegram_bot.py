@@ -772,14 +772,68 @@ async def _send_price_for_symbol(message, sym: str) -> None:
         log.exception("price")
         await message.reply_text(_esc(f"Ошибка: {e}"), parse_mode=ParseMode.HTML)
         return
+
+    # Получить real-time цену
+    live_price = None
+    try:
+        live_price = await loop.run_in_executor(None, lambda: _fetch_live_price(snap.symbol))
+    except Exception:
+        pass
+
     body = format_quick_quote(
         snap.symbol,
         snap.company_name,
         snap.last_close,
         snap.currency,
         profile.label,
+        live_price=live_price,
     )
     await message.reply_text(body, parse_mode=ParseMode.HTML)
+
+
+def _fetch_live_price(symbol: str) -> float | None:
+    """Получить актуальную цену из real-time источников."""
+    sym = symbol.strip().upper()
+
+    # РФ тикеры: T-Bank → MOEX ISS
+    if sym.endswith(".ME"):
+        try:
+            from stock_signal_analyzer.tbank_invest import fetch_last_price_tbank
+            q = fetch_last_price_tbank(sym)
+            if q and q.last_price > 0:
+                return q.last_price
+        except Exception:
+            pass
+        try:
+            from stock_signal_analyzer.moex_iss import fetch_tqbr_quote
+            mq = fetch_tqbr_quote(sym)
+            if mq.last is not None and mq.last > 0:
+                return mq.last
+        except Exception:
+            pass
+        return None
+
+    # US тикеры: Finnhub → Polygon
+    key = os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
+    if key:
+        try:
+            from stock_signal_analyzer.finnhub_live import fetch_quote
+            fq = fetch_quote(sym, api_key=key)
+            if fq.current is not None and fq.current > 0:
+                return fq.current
+        except Exception:
+            pass
+
+    try:
+        from stock_signal_analyzer.polygon_data import polygon_available, fetch_snapshot as pg_snap
+        if polygon_available():
+            pq = pg_snap(sym)
+            if pq.last_price is not None and pq.last_price > 0:
+                return pq.last_price
+    except Exception:
+        pass
+
+    return None
 
 
 def _symbol_button_text(sym: str) -> str:

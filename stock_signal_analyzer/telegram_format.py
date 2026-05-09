@@ -18,11 +18,20 @@ def esc_html(s: str) -> str:
 _esc = esc_html
 
 
-def format_quick_quote(symbol: str, company: str, last: float, currency: str, instrument_label: str) -> str:
+def format_quick_quote(symbol: str, company: str, last: float, currency: str, instrument_label: str, live_price: float | None = None) -> str:
+    if live_price and live_price > 0:
+        change_pct = (live_price / last - 1.0) * 100 if last > 0 else 0
+        arrow = "📈" if change_pct > 0 else ("📉" if change_pct < 0 else "➡️")
+        return (
+            f"📊 <b>{_esc(symbol)}</b> — {_esc(company)}\n"
+            f"Тип: {_esc(instrument_label)}\n"
+            f"Цена: <b>{live_price:.4f}</b> {_esc(currency)} {arrow} {change_pct:+.2f}%\n"
+            f"Закрытие: {last:.4f} {_esc(currency)}"
+        )
     return (
         f"📊 <b>{_esc(symbol)}</b> — {_esc(company)}\n"
         f"Тип: {_esc(instrument_label)}\n"
-        f"Цена (посл. закрытие в истории): <b>{last:.4f}</b> {_esc(currency)}"
+        f"Цена: <b>{last:.4f}</b> {_esc(currency)}"
     )
 
 
