@@ -796,6 +796,9 @@ def _symbol_button_text(sym: str) -> str:
 async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
+    if not _is_approved(_uid(update)):
+        await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
+        return
     args = context.args or []
     sym, _, _, bad = sanitize_command_args(args)
     if bad or not sym:
@@ -951,6 +954,9 @@ def _pick_actions_markup(sym: str, group_id: str, page: int) -> InlineKeyboardMa
 
 async def cmd_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
+        return
+    if not _is_approved(_uid(update)):
+        await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
         return
     await update.message.reply_text(
         "Выберите категорию тикеров.\n"
@@ -1171,6 +1177,10 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
 
 
 async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_approved(_uid(update)):
+        if update.message:
+            await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
+        return
     # /dashboard без аргументов работает по watchlist, поэтому pending не включаем.
     _clear_pending_action(context)
     await _cmd_dashboard_message_with_args(update.message, _uid(update), context.args or [])
@@ -1710,6 +1720,10 @@ async def _cmd_collect_with_args(update: Update, args: list[str]) -> None:
 
 
 async def cmd_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_approved(_uid(update)):
+        if update.message:
+            await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
+        return
     await _cmd_collect_with_args(update, context.args or [])
 
 
