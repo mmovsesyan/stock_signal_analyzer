@@ -169,14 +169,14 @@ do_configure() {
     if [ -n "$new_admin" ]; then cur_admin="$new_admin"; fi
     echo ""
 
-    # ── 2. Polygon.io (рекомендуется) ──
-    echo -e "  ${BOLD}2. Polygon.io API Key${NC} ${YELLOW}(рекомендуется)${NC}"
+    # ── 2. Massive (ex-Polygon.io) (рекомендуется) ──
+    echo -e "  ${BOLD}2. Massive (Polygon) API Key${NC} ${YELLOW}(рекомендуется)${NC}"
     echo "     Что даёт: котировки US, исторические свечи, новости"
     echo "     Free tier: 5 запросов/мин (достаточно для старта)"
     echo "     Как получить:"
-    echo "       1) Зарегистрируйтесь: https://polygon.io/dashboard/signup"
+    echo "       1) Зарегистрируйтесь: https://massive.com/dashboard/signup"
     echo "       2) После входа: Dashboard → API Keys → скопируйте ключ"
-    echo "     Ссылка: https://polygon.io"
+    echo "     Ссылка: https://massive.com"
     echo ""
     local mask_pg=""
     if [ -n "$cur_pg" ]; then mask_pg="${cur_pg:0:8}..."; fi

@@ -1,7 +1,7 @@
-"""Polygon.io: котировки, исторические свечи, новости и real-time данные (REST API v2/v3).
+"""Massive (ex-Polygon.io): котировки, исторические свечи, новости и real-time данные (REST API v2/v3).
 
 Переменные окружения:
-  POLYGON_API_KEY — ключ Polygon.io (обязательно для этого модуля)
+  POLYGON_API_KEY — ключ Massive/Polygon (обязательно для этого модуля)
 
 Free tier: 5 запросов/мин, задержка 15 мин для котировок.
 Paid tier: без задержки, больше лимитов.
@@ -27,6 +27,10 @@ _log = logging.getLogger(__name__)
 POLYGON_BASE_V2 = "https://api.polygon.io/v2"
 POLYGON_BASE_V3 = "https://api.polygon.io/v3"
 
+# Fallback если polygon.io не отвечает
+_MASSIVE_BASE_V2 = "https://api.massive.com/v2"
+_MASSIVE_BASE_V3 = "https://api.massive.com/v3"
+
 # Free tier: 5 req/min. Оставляем запас.
 _polygon_limiter = RateLimiter(max_calls=4, period=60.0)
 
@@ -42,6 +46,47 @@ def polygon_available() -> bool:
 
 def _headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
+
+
+def _request_with_fallback(
+    method: str,
+    path_v2: str | None = None,
+    path_v3: str | None = None,
+    api_key: str | None = None,
+    params: dict | None = None,
+    timeout: float = 10.0,
+) -> requests.Response:
+    """
+    Запрос с fallback: сначала polygon.io, если не отвечает — massive.com.
+    """
+    key = api_key or _api_key()
+    if not key:
+        raise ValueError("No API key")
+
+    _polygon_limiter.wait_if_needed()
+    headers = _headers(key)
+
+    # Определяем URL
+    if path_v3:
+        primary_url = f"{POLYGON_BASE_V3}{path_v3}"
+        fallback_url = f"{_MASSIVE_BASE_V3}{path_v3}"
+    elif path_v2:
+        primary_url = f"{POLYGON_BASE_V2}{path_v2}"
+        fallback_url = f"{_MASSIVE_BASE_V2}{path_v2}"
+    else:
+        raise ValueError("path_v2 or path_v3 required")
+
+    # Попытка 1: polygon.io
+    try:
+        r = requests.get(primary_url, headers=headers, params=params, timeout=timeout)
+        if r.status_code < 500:  # 4xx — ошибка клиента, не пробуем fallback
+            return r
+    except requests.RequestException:
+        pass
+
+    # Попытка 2: massive.com (fallback)
+    r = requests.get(fallback_url, headers=headers, params=params, timeout=timeout)
+    return r
 
 
 # ── Котировки ────────────────────────────────────────────────────────────────
@@ -69,10 +114,10 @@ def fetch_prev_close(symbol: str, api_key: str | None = None, timeout: float = 1
         return PolygonQuote(symbol=symbol, last_price=None, prev_close=None,
                            change_pct=None, volume=None, detail="Нет POLYGON_API_KEY.")
     sym = symbol.strip().upper()
-    _polygon_limiter.wait_if_needed()
-    r = requests.get(
-        f"{POLYGON_BASE_V2}/aggs/ticker/{sym}/prev",
-        headers=_headers(key),
+    r = _request_with_fallback(
+        method="GET",
+        path_v2=f"/aggs/ticker/{sym}/prev",
+        api_key=key,
         params={"adjusted": "true"},
         timeout=timeout,
     )
@@ -103,25 +148,22 @@ def fetch_prev_close(symbol: str, api_key: str | None = None, timeout: float = 1
 @retry_with_backoff(max_retries=2, initial_delay=2.0, retry_on=(requests.RequestException,))
 def fetch_snapshot(symbol: str, api_key: str | None = None, timeout: float = 10.0) -> PolygonQuote:
     """
-    Snapshot тикера через /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}.
-    Требует paid plan для real-time. На free tier может вернуть 403.
-    Fallback: fetch_prev_close.
+    Snapshot тикера. Требует paid plan для real-time. На free tier — fallback на prev_close.
     """
     key = api_key or _api_key()
     if not key:
         return PolygonQuote(symbol=symbol, last_price=None, prev_close=None,
                            change_pct=None, volume=None, detail="Нет POLYGON_API_KEY.")
     sym = symbol.strip().upper()
-    _polygon_limiter.wait_if_needed()
     try:
-        r = requests.get(
-            f"{POLYGON_BASE_V2}/snapshot/locale/us/markets/stocks/tickers/{sym}",
-            headers=_headers(key),
+        r = _request_with_fallback(
+            method="GET",
+            path_v2=f"/snapshot/locale/us/markets/stocks/tickers/{sym}",
+            api_key=key,
             timeout=timeout,
         )
         if r.status_code == 403:
-            # Free tier — snapshot недоступен, fallback
-            _log.debug("Polygon snapshot 403 for %s, falling back to prev_close", sym)
+            _log.debug("Snapshot 403 for %s, falling back to prev_close", sym)
             return fetch_prev_close(sym, api_key=key)
         r.raise_for_status()
         data = r.json()
@@ -168,10 +210,10 @@ def fetch_daily_bars(
     sym = symbol.strip().upper()
     to_d = date.today()
     from_d = to_d - timedelta(days=days)
-    _polygon_limiter.wait_if_needed()
-    r = requests.get(
-        f"{POLYGON_BASE_V2}/aggs/ticker/{sym}/range/1/day/{from_d.isoformat()}/{to_d.isoformat()}",
-        headers=_headers(key),
+    r = _request_with_fallback(
+        method="GET",
+        path_v2=f"/aggs/ticker/{sym}/range/1/day/{from_d.isoformat()}/{to_d.isoformat()}",
+        api_key=key,
         params={"adjusted": "true", "sort": "asc", "limit": "5000"},
         timeout=timeout,
     )
@@ -220,10 +262,10 @@ def fetch_intraday_bars(
     sym = symbol.strip().upper()
     to_d = date.today()
     from_d = to_d - timedelta(days=days_back)
-    _polygon_limiter.wait_if_needed()
-    r = requests.get(
-        f"{POLYGON_BASE_V2}/aggs/ticker/{sym}/range/{multiplier}/{timespan}/{from_d.isoformat()}/{to_d.isoformat()}",
-        headers=_headers(key),
+    r = _request_with_fallback(
+        method="GET",
+        path_v2=f"/aggs/ticker/{sym}/range/{multiplier}/{timespan}/{from_d.isoformat()}/{to_d.isoformat()}",
+        api_key=key,
         params={"adjusted": "true", "sort": "asc", "limit": "5000"},
         timeout=timeout,
     )
@@ -264,19 +306,17 @@ def fetch_ticker_news(
 ) -> list[NewsItem]:
     """
     Новости по тикеру через /v3/reference/news.
-    Polygon news API — бесплатный, хорошее покрытие US.
     """
     key = api_key or _api_key()
     if not key:
         return []
     sym = symbol.strip().upper()
-    # Polygon не поддерживает .ME тикеры
     if sym.endswith(".ME"):
         return []
-    _polygon_limiter.wait_if_needed()
-    r = requests.get(
-        f"{POLYGON_BASE_V3}/reference/news",
-        headers=_headers(key),
+    r = _request_with_fallback(
+        method="GET",
+        path_v3="/reference/news",
+        api_key=key,
         params={
             "ticker": sym,
             "limit": str(min(limit, 50)),
@@ -335,11 +375,11 @@ def fetch_ticker_details(
     sym = symbol.strip().upper()
     if sym.endswith(".ME"):
         return None
-    _polygon_limiter.wait_if_needed()
     try:
-        r = requests.get(
-            f"{POLYGON_BASE_V3}/reference/tickers/{sym}",
-            headers=_headers(key),
+        r = _request_with_fallback(
+            method="GET",
+            path_v3=f"/reference/tickers/{sym}",
+            api_key=key,
             timeout=timeout,
         )
         r.raise_for_status()

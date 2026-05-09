@@ -151,7 +151,7 @@ class _FinnhubProvider(_IntradayProvider):
 
 
 class _PolygonProvider(_IntradayProvider):
-    """Провайдер для US тикеров через Polygon.io (prev close / snapshot)."""
+    """Провайдер для US тикеров через Massive/Polygon (prev close / snapshot)."""
 
     def can_handle(self, symbol: str, ctx: _IntradayCtx) -> bool:
         sym_u = symbol.strip().upper()
@@ -172,7 +172,7 @@ class _PolygonProvider(_IntradayProvider):
                 return None
             sc = _score_from_pct(pq.change_pct)
             detail = f"{pq.detail} | score={sc:+.3f}"
-            return IntradayBundle(score=sc, detail=detail, source="Polygon.io")
+            return IntradayBundle(score=sc, detail=detail, source="Massive")
         except Exception:
             return None
 

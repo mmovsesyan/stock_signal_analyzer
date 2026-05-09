@@ -188,7 +188,7 @@ nano .env
 | Переменная | Что даёт | Где получить |
 |-----------|----------|:---:|
 | `TELEGRAM_BOT_TOKEN` | Telegram бот | [t.me/BotFather](https://t.me/BotFather) |
-| `POLYGON_API_KEY` | US котировки, свечи, новости | [polygon.io](https://polygon.io/dashboard/signup) |
+| `POLYGON_API_KEY` | US котировки, свечи, новости | [massive.com](https://massive.com/dashboard/signup) |
 | `FINNHUB_API_KEY` | US real-time, аналитика | [finnhub.io](https://finnhub.io/register) |
 | `TINKOFF_INVEST_TOKEN` | РФ real-time | [tbank.ru/invest/settings/api](https://www.tbank.ru/invest/settings/api/) |
 
@@ -346,7 +346,7 @@ docker compose exec api python tools/backtest_v2.py \
 │   ├── llm_learning.py             # Самообучение (IC + LLM)
 │   ├── volume_pressure.py           # CMF, OBV, tape
 │   ├── quant_models.py              # MTF momentum, z-score, vol regime
-│   ├── polygon_data.py              # Polygon.io API
+│   ├── polygon_data.py              # Massive (ex-Polygon.io) API
 │   ├── finnhub_live.py              # Finnhub API
 │   ├── trade_plan.py                # Торговые планы
 │   ├── risk_manager.py              # Position sizing
@@ -456,7 +456,7 @@ docker compose exec api python tools/backtest_v2.py \
 | Сервис | Ссылка | Free tier |
 |--------|--------|-----------|
 | Telegram Bot | [t.me/BotFather](https://t.me/BotFather) | Бесплатно |
-| Polygon.io | [polygon.io/dashboard/signup](https://polygon.io/dashboard/signup) | 5 req/min |
+| Massive (ex-Polygon) | [massive.com/dashboard/signup](https://massive.com/dashboard/signup) | 5 req/min |
 | Finnhub | [finnhub.io/register](https://finnhub.io/register) | 60 req/min |
 | T-Bank Invest | [tbank.ru/invest/settings/api](https://www.tbank.ru/invest/settings/api/) | Бесплатно |
 | Ollama | Устанавливается автоматически | Локально, бесплатно |
