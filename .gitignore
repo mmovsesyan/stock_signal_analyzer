@@ -185,3 +185,6 @@ cython_debug/
 
 # Kiro AI steering files
 .kiro/
+
+# Marketing materials
+docs/reddit_post.md

@@ -88,6 +88,45 @@ cd stock_signal_analyzer
 | Добавить свои тикеры в автосбор | ⚙️ Настройки → ➕ Добавить тикеры |
 | Включить дефолтные 30 тикеров | ⚙️ Настройки → ✅ Дефолтные тикеры |
 
+### Админ-команды (только для владельца)
+
+| Команда | Описание |
+|---------|----------|
+| `/approve 123456789` | Одобрить пользователя (план Free) |
+| `/approve 123456789 pro` | Одобрить с планом Pro |
+| `/approve 123456789 premium` | Одобрить с планом Premium |
+| `/deny 123456789` | Отклонить / заблокировать |
+| `/users` | Список всех одобренных пользователей |
+
+---
+
+## 🔐 Система доступов
+
+Бот работает по модели **admin-approval**: новые пользователи не получают доступ автоматически.
+
+**Как это работает:**
+
+1. Новый пользователь отправляет `/start`
+2. Видит приветствие и выбирает план (Free / Pro / Premium)
+3. Админу приходит уведомление с кнопками одобрения
+4. Админ нажимает кнопку — пользователь получает доступ
+
+**Что видит админ:**
+```
+🆕 Новый пользователь запрашивает доступ
+
+👤 Имя: Иван Петров
+📛 Username: @ivanpetrov
+🆔 ID: 123456789
+🌐 Язык: ru
+📋 Выбранный план: ⭐ Pro
+
+[✅ Одобрить (Pro)] [❌ Отклонить]
+[🆓 Дать Free] [⭐ Дать Pro] [💎 Дать Premium]
+```
+
+Если `ADMIN_CHAT_ID` не задан — доступ открыт всем (без модерации).
+
 ---
 
 ## 🔌 REST API
@@ -188,9 +227,20 @@ nano .env
 | Переменная | Что даёт | Где получить |
 |-----------|----------|:---:|
 | `TELEGRAM_BOT_TOKEN` | Telegram бот | [t.me/BotFather](https://t.me/BotFather) |
+| `ADMIN_CHAT_ID` | Управление доступом (ваш Telegram ID) | [t.me/userinfobot](https://t.me/userinfobot) |
 | `POLYGON_API_KEY` | US котировки, свечи, новости | [massive.com](https://massive.com/dashboard/signup) |
 | `FINNHUB_API_KEY` | US real-time, аналитика | [finnhub.io](https://finnhub.io/register) |
 | `TINKOFF_INVEST_TOKEN` | РФ real-time | [tbank.ru/invest/settings/api](https://www.tbank.ru/invest/settings/api/) |
+
+### Уведомления в MAX (опционально)
+
+| Переменная | Описание |
+|-----------|----------|
+| `MAX_BOT_TOKEN` | Токен бота MAX (получить у @MasterBot в MAX) |
+| `MAX_CHAT_ID` | ID чата для уведомлений |
+| `MAX_NOTIFY` | `1` = включить, `0` = выключить |
+
+Сильные сигналы и заявки новых пользователей дублируются в MAX параллельно с Telegram. Если MAX не настроен — всё работает только через Telegram.
 
 ### Автоматизация (интервалы)
 
@@ -456,9 +506,11 @@ docker compose exec api python tools/backtest_v2.py \
 | Сервис | Ссылка | Free tier |
 |--------|--------|-----------|
 | Telegram Bot | [t.me/BotFather](https://t.me/BotFather) | Бесплатно |
+| Ваш Telegram ID | [t.me/userinfobot](https://t.me/userinfobot) | Бесплатно |
 | Massive (ex-Polygon) | [massive.com/dashboard/signup](https://massive.com/dashboard/signup) | 5 req/min |
 | Finnhub | [finnhub.io/register](https://finnhub.io/register) | 60 req/min |
 | T-Bank Invest | [tbank.ru/invest/settings/api](https://www.tbank.ru/invest/settings/api/) | Бесплатно |
+| MAX мессенджер | @MasterBot в MAX → /newbot | Бесплатно |
 | Ollama | Устанавливается автоматически | Локально, бесплатно |
 
 ---
@@ -481,5 +533,5 @@ docker compose exec api python tools/backtest_v2.py \
 ---
 
 <p align="center">
-  <strong>Version 2.0.0</strong> • Updated 2026-05-09
+  <strong>Version 2.1.0</strong> • Updated 2026-05-09
 </p>
