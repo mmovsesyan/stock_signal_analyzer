@@ -16,10 +16,14 @@ WORKDIR /app
 
 # Копировать requirements
 COPY requirements.txt .
+COPY requirements-api.txt .
+COPY requirements-scale.txt .
 
 # Установить Python зависимости
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-api.txt && \
+    pip install --no-cache-dir -r requirements-scale.txt
 
 # Копировать код приложения
 COPY . .
