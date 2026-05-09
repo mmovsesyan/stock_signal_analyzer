@@ -67,11 +67,18 @@ def check_system_health() -> HealthStatus:
 
     # 2. Database
     try:
-        from .db import _engine
-        with _engine.connect() as conn:
-            from sqlalchemy import text
-            conn.execute(text("SELECT 1"))
-        components["database"] = True
+        import os as _os
+        from sqlalchemy import create_engine, text
+        _db_url = _os.environ.get("DATABASE_URL", "")
+        if _db_url:
+            _eng = create_engine(_db_url)
+            with _eng.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            _eng.dispose()
+            components["database"] = True
+        else:
+            components["database"] = False
+            issues.append("DATABASE_URL не задан")
     except Exception:
         components["database"] = False
         issues.append("PostgreSQL недоступен")
