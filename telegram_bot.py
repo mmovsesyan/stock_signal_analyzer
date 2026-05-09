@@ -575,6 +575,19 @@ async def _on_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as e:
             log.warning("Failed to notify admin: %s", e)
 
+    # Дублируем уведомление в MAX
+    try:
+        from stock_signal_analyzer.max_notify import send_new_user_alert_max, max_available
+        if max_available():
+            await send_new_user_alert_max(
+                full_name=full_name,
+                username=username,
+                user_id=user.id,
+                plan=plan_label,
+            )
+    except Exception:
+        pass
+
 
 async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка кнопок одобрения/отклонения от админа."""
@@ -2098,6 +2111,19 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     )
                 mark_notified(prefs, sym)
                 changed = True
+                # Дублируем сильный сигнал в MAX
+                try:
+                    from stock_signal_analyzer.max_notify import send_signal_to_max, max_available
+                    if max_available():
+                        await send_signal_to_max(
+                            symbol=sym,
+                            tier=getattr(rep, "signal_tier", "?"),
+                            score=rep.score,
+                            direction=rep.trade_plan.direction if rep.trade_plan else "neutral",
+                            summary=rep.verdict,
+                        )
+                except Exception:
+                    pass
             except Exception:
                 log.exception("send notify uid=%s sym=%s", uid, sym)
         if changed:

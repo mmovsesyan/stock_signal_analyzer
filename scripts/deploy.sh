@@ -219,6 +219,30 @@ do_configure() {
     if [[ "$new_tk" != "$mask_tk" ]] && [ -n "$new_tk" ]; then cur_tk="$new_tk"; fi
     echo ""
 
+    # ── 4b. MAX мессенджер (опционально) ──
+    echo -e "  ${BOLD}4b. MAX мессенджер${NC} (дублирование уведомлений)"
+    echo "     Что даёт: сильные сигналы приходят и в MAX параллельно с Telegram"
+    echo "     Как получить токен:"
+    echo "       1) Откройте MAX, найдите @MasterBot"
+    echo "       2) Отправьте /newbot, следуйте инструкциям"
+    echo "       3) Скопируйте токен"
+    echo "     Как узнать chat_id: отправьте /chatid боту в нужном чате"
+    echo ""
+    local cur_max_token="" cur_max_chat=""
+    if [ -f "$ENV_FILE" ]; then
+        cur_max_token=$(grep -oP '(?<=^MAX_BOT_TOKEN=).+' "$ENV_FILE" 2>/dev/null || true)
+        cur_max_chat=$(grep -oP '(?<=^MAX_CHAT_ID=).+' "$ENV_FILE" 2>/dev/null || true)
+    fi
+    local mask_max=""
+    if [ -n "$cur_max_token" ]; then mask_max="${cur_max_token:0:8}..."; fi
+    local new_max_token
+    new_max_token=$(ask_input "MAX Bot Token (Enter = пропустить)" "$mask_max")
+    if [[ "$new_max_token" != "$mask_max" ]] && [ -n "$new_max_token" ]; then cur_max_token="$new_max_token"; fi
+    local new_max_chat
+    new_max_chat=$(ask_input "MAX Chat ID (Enter = пропустить)" "$cur_max_chat")
+    if [ -n "$new_max_chat" ]; then cur_max_chat="$new_max_chat"; fi
+    echo ""
+
     # ── 5. PostgreSQL password ──
     echo -e "  ${BOLD}5. Пароль PostgreSQL${NC}"
     echo "     Используется для внутренней БД (не нужна регистрация)."
@@ -275,6 +299,11 @@ ADMIN_CHAT_ID=${cur_admin}
 POLYGON_API_KEY=${cur_pg}
 FINNHUB_API_KEY=${cur_fh}
 TINKOFF_INVEST_TOKEN=${cur_tk}
+
+# ── MAX мессенджер ────────────────────────────
+MAX_BOT_TOKEN=${cur_max_token}
+MAX_CHAT_ID=${cur_max_chat}
+MAX_NOTIFY=1
 
 # ── LLM (Ollama) ─────────────────────────────
 OLLAMA_HOST=http://ollama:11434
