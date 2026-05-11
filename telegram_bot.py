@@ -2233,6 +2233,26 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def post_init(application: Application) -> None:
+    # Регистрация команд в меню Telegram (появляются при нажатии /)
+    from telegram import BotCommand
+    commands = [
+        BotCommand("start", "Главное меню"),
+        BotCommand("signal", "Полный анализ тикера — /signal AAPL"),
+        BotCommand("price", "Актуальная цена — /price SBER.ME"),
+        BotCommand("dashboard", "Свод по watchlist"),
+        BotCommand("watchlist", "Управление watchlist"),
+        BotCommand("pick", "Подбор тикеров по категориям"),
+        BotCommand("collect", "Запустить сбор сигналов"),
+        BotCommand("status", "Статус сбора"),
+        BotCommand("export", "Выгрузить лог сигналов"),
+        BotCommand("help", "Помощь"),
+    ]
+    try:
+        await application.bot.set_my_commands(commands)
+        log.info("Команды бота зарегистрированы (%d шт.)", len(commands))
+    except Exception as e:
+        log.warning("set_my_commands failed: %s", e)
+
     jq = application.job_queue
     if jq is None:
         log.warning(
