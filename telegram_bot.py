@@ -2147,13 +2147,57 @@ async def on_menu_back_to_settings(update: Update, context: ContextTypes.DEFAULT
 
 
 async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Периодически: сильный сигнал по бумаге не из списка пользователя."""
+    """Периодически: сильные сигналы по watchlist + вне списка."""
     bot = context.application.bot
     loop = asyncio.get_running_loop()
+    min_tier = (os.environ.get("NOTIFY_MIN_TIER") or "").strip().upper()
+
     for uid in all_user_ids():
         prefs = load_prefs(uid)
-        if not prefs.notify_strong_outside or not prefs.watchlist:
+        if not prefs.notify_strong_outside:
             continue
+        if not prefs.watchlist:
+            continue
+
+        changed = False
+
+        # ── 1. Уведомления по WATCHLIST (сильные сигналы по вашим тикерам) ──
+        for sym in list(prefs.watchlist):
+            if not can_notify_again(prefs, sym):
+                continue
+            try:
+                rep = await loop.run_in_executor(
+                    None,
+                    lambda s=sym: build_report(s, fast_mode=True),
+                )
+            except Exception:
+                continue
+            tier = getattr(rep, "signal_tier", "C")
+            if tier != "A":
+                continue
+            if abs(rep.score) < prefs.strong_threshold:
+                continue
+            # Отправить уведомление
+            text = (
+                f"⭐ <b>Сигнал по вашему watchlist</b>\n"
+                f"{_esc(sym)} — класс <b>A</b> | score {rep.score:+.3f}\n\n"
+            ) + format_signal_report(rep)
+            try:
+                for chunk in split_telegram_html(text):
+                    await bot.send_message(chat_id=uid, text=chunk, parse_mode=ParseMode.HTML)
+                mark_notified(prefs, sym)
+                changed = True
+                try:
+                    from stock_signal_analyzer.max_notify import send_signal_to_max, max_available
+                    if max_available():
+                        await send_signal_to_max(sym, tier, rep.score,
+                            rep.trade_plan.direction if rep.trade_plan else "neutral", rep.verdict)
+                except Exception:
+                    pass
+            except Exception:
+                log.exception("watchlist notify uid=%s sym=%s", uid, sym)
+
+        # ── 2. Уведомления ВНЕ watchlist (как раньше) ──
         try:
             strong = await loop.run_in_executor(
                 None,
@@ -2161,9 +2205,8 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             )
         except Exception:
             log.exception("scan outside uid=%s", uid)
-            continue
-        changed = False
-        min_tier = (os.environ.get("NOTIFY_MIN_TIER") or "").strip().upper()
+            strong = []
+
         for sym, rep in strong:
             if not can_notify_again(prefs, sym):
                 continue
@@ -2172,28 +2215,19 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             text = format_outside_notification(sym, rep)
             try:
                 for chunk in split_telegram_html(text):
-                    await bot.send_message(
-                        chat_id=uid,
-                        text=chunk,
-                        parse_mode=ParseMode.HTML,
-                    )
+                    await bot.send_message(chat_id=uid, text=chunk, parse_mode=ParseMode.HTML)
                 mark_notified(prefs, sym)
                 changed = True
-                # Дублируем сильный сигнал в MAX
                 try:
                     from stock_signal_analyzer.max_notify import send_signal_to_max, max_available
                     if max_available():
-                        await send_signal_to_max(
-                            symbol=sym,
-                            tier=getattr(rep, "signal_tier", "?"),
-                            score=rep.score,
-                            direction=rep.trade_plan.direction if rep.trade_plan else "neutral",
-                            summary=rep.verdict,
-                        )
+                        await send_signal_to_max(sym, getattr(rep, "signal_tier", "?"), rep.score,
+                            rep.trade_plan.direction if rep.trade_plan else "neutral", rep.verdict)
                 except Exception:
                     pass
             except Exception:
                 log.exception("send notify uid=%s sym=%s", uid, sym)
+
         if changed:
             save_prefs(uid, prefs)
 

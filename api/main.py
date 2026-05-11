@@ -96,6 +96,8 @@ class QuoteResponse(BaseModel):
     symbol: str
     company: str
     last_close: float
+    live_price: Optional[float] = None
+    change_pct: Optional[float] = None
     currency: str
     instrument_type: str
 
@@ -126,6 +128,45 @@ class HealthResponse(BaseModel):
 
 
 _start_time = time.time()
+
+
+def _get_live_price(symbol: str) -> float | None:
+    """Получить актуальную цену из real-time источников."""
+    sym = symbol.strip().upper()
+    if sym.endswith(".ME"):
+        try:
+            from stock_signal_analyzer.tbank_invest import fetch_last_price_tbank
+            q = fetch_last_price_tbank(sym)
+            if q and q.last_price > 0:
+                return q.last_price
+        except Exception:
+            pass
+        try:
+            from stock_signal_analyzer.moex_iss import fetch_tqbr_quote
+            mq = fetch_tqbr_quote(sym)
+            if mq.last is not None and mq.last > 0:
+                return mq.last
+        except Exception:
+            pass
+        return None
+    key = os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
+    if key:
+        try:
+            from stock_signal_analyzer.finnhub_live import fetch_quote
+            fq = fetch_quote(sym, api_key=key)
+            if fq.current is not None and fq.current > 0:
+                return fq.current
+        except Exception:
+            pass
+    try:
+        from stock_signal_analyzer.polygon_data import polygon_available, fetch_snapshot as pg_snap
+        if polygon_available():
+            pq = pg_snap(sym)
+            if pq.last_price is not None and pq.last_price > 0:
+                return pq.last_price
+    except Exception:
+        pass
+    return None
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -167,10 +208,23 @@ async def get_quote(symbol: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal error fetching quote")
 
+    # Real-time price
+    live_price = None
+    try:
+        live_price = await loop.run_in_executor(None, lambda: _get_live_price(snap.symbol))
+    except Exception:
+        pass
+
+    change_pct = None
+    if live_price and snap.last_close > 0:
+        change_pct = round((live_price / snap.last_close - 1.0) * 100, 3)
+
     return QuoteResponse(
         symbol=snap.symbol,
         company=snap.company_name,
         last_close=snap.last_close,
+        live_price=live_price,
+        change_pct=change_pct,
         currency=snap.currency,
         instrument_type=profile.label,
     )
