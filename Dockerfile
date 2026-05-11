@@ -24,8 +24,21 @@ COPY requirements-tbank.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir -r requirements-api.txt && \
-    pip install --no-cache-dir -r requirements-scale.txt && \
-    pip install --no-cache-dir -r requirements-tbank.txt || true
+    pip install --no-cache-dir -r requirements-scale.txt
+
+# T-Bank SDK (отдельно, может быть недоступен при сборке)
+RUN pip install --no-cache-dir tinkoff-investments 2>/dev/null || \
+    pip install --no-cache-dir --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments 2>/dev/null || \
+    echo "T-Bank SDK not available at build time - will retry at startup"
+
+# Скрипт автоустановки SDK при старте (если не установился при сборке)
+RUN echo '#!/bin/bash\n\
+if ! python -c "import tinkoff.invest" 2>/dev/null; then\n\
+  echo "Installing T-Bank SDK..."\n\
+  pip install -q tinkoff-investments 2>/dev/null || \\\n\
+  pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments 2>/dev/null || true\n\
+fi\n\
+exec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Копировать код приложения
 COPY . .
@@ -46,8 +59,8 @@ VOLUME ["/data", "/app/logs"]
 HEALTHCHECK --interval=5m --timeout=3s \
     CMD python -c "import os; exit(0 if os.path.exists('/data/signals/signals.jsonl') else 1)"
 
-# Точка входа
-ENTRYPOINT ["python"]
+# Точка входа (автоустановка SDK + запуск)
+ENTRYPOINT ["/app/entrypoint.sh", "python"]
 
 # По умолчанию запускать Telegram бота
 CMD ["telegram_bot.py"]

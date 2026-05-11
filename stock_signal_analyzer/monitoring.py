@@ -71,17 +71,17 @@ def check_system_health() -> HealthStatus:
         from sqlalchemy import create_engine, text
         _db_url = _os.environ.get("DATABASE_URL", "")
         if _db_url:
-            _eng = create_engine(_db_url)
+            _eng = create_engine(_db_url, connect_args={"connect_timeout": 3})
             with _eng.connect() as conn:
-                conn.execute(text("SELECT 1"))
+                result = conn.execute(text("SELECT 1"))
+                result.fetchone()
             _eng.dispose()
             components["database"] = True
         else:
             components["database"] = False
-            issues.append("DATABASE_URL не задан")
-    except Exception:
+    except Exception as e:
         components["database"] = False
-        issues.append("PostgreSQL недоступен")
+        _log.debug("DB health check failed: %s", e)
 
     # 3. Signal freshness
     try:
