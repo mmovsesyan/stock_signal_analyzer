@@ -42,6 +42,10 @@ class UserPrefs:
     autocollect_tickers: list[str] = field(default_factory=list)
     """Использовать дефолтные тикеры в автосборе."""
     use_default_tickers: bool = True
+    """Выбранный план подписки: free, pro, premium."""
+    tier: str = "free"
+    """Получать learning report (1 = да, 0 = нет)."""
+    receive_learning_report: bool = False
 
 
 def _empty_store() -> dict[str, Any]:
@@ -95,6 +99,8 @@ def _prefs_from_dict(d: dict[str, Any]) -> UserPrefs:
         last_notify_ts={str(k): float(v) for k, v in (d.get("last_notify_ts") or {}).items()},
         autocollect_tickers=list(d.get("autocollect_tickers") or []),
         use_default_tickers=bool(d.get("use_default_tickers", True)),
+        tier=str(d.get("tier", "free")),
+        receive_learning_report=bool(d.get("receive_learning_report", False)),
     )
 
 
@@ -117,7 +123,11 @@ def save_prefs(user_id: int, prefs: UserPrefs, path: Path | None = None) -> None
 
 
 def normalize_symbol(sym: str) -> str:
-    return sym.strip().upper().replace(" ", "")
+    """Нормализовать тикер: trim + upper.
+    НЕ удаляем точки — они нужны для .ME, BRK.B и т.д.
+    Конвертация BRK.B → BRK-B делается в _symbol_for_yahoo (market_data.py).
+    """
+    return sym.strip().upper()
 
 
 def all_user_ids(path: Path | None = None) -> list[int]:

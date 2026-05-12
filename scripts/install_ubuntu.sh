@@ -165,16 +165,51 @@ else
     TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
     FH_KEY="${FINNHUB_API_KEY:-}"
     PG_KEY="${POLYGON_API_KEY:-}"
+    ADMIN_ID="${ADMIN_CHAT_ID:-}"
+    ADMIN_UID="${ADMIN_USER_ID:-}"
+    API_KEY="${API_SECRET_KEY:-}"
 
     if [ "$AUTO_MODE" != "--auto" ]; then
-        if [ -z "$TG_TOKEN" ]; then
-            read -r -p "  Telegram Bot Token: " TG_TOKEN
-        fi
+        # Telegram Token — обязательно (бот без токена не работает)
+        while [ -z "$TG_TOKEN" ]; do
+            read -r -p "  Telegram Bot Token (обязательно, от @BotFather): " TG_TOKEN
+            if [ -z "$TG_TOKEN" ]; then
+                echo -e "${RED}  ⚠ Токен бота обязателен! Получите у @BotFather.${NC}"
+            fi
+        done
         if [ -z "$PG_KEY" ]; then
             read -r -p "  Polygon API Key (Enter = пропустить): " PG_KEY
         fi
         if [ -z "$FH_KEY" ]; then
             read -r -p "  Finnhub API Key (Enter = пропустить): " FH_KEY
+        fi
+        # Admin ID — обязательно, повторяет пока не введёшь
+        while [ -z "$ADMIN_ID" ]; do
+            read -r -p "  Admin Chat ID (обязательно, узнать через @userinfobot): " ADMIN_ID
+            if [ -z "$ADMIN_ID" ]; then
+                echo -e "${RED}  ⚠ Admin Chat ID обязателен для безопасности бота!${NC}"
+            fi
+        done
+        # Admin User ID — обязательно, повторяет пока не введёшь
+        while [ -z "$ADMIN_UID" ]; do
+            read -r -p "  Admin User ID (обязательно, ваш Telegram ID): " ADMIN_UID
+            if [ -z "$ADMIN_UID" ]; then
+                echo -e "${RED}  ⚠ Admin User ID обязателен для доступа к боту!${NC}"
+            fi
+        done
+        if [ -z "$API_KEY" ]; then
+            read -r -p "  API Secret Key (Enter = пропустить, API будет закрыт): " API_KEY
+        fi
+    else
+        # Автоматический режим — проверяем обязательные поля, падаем если нет
+        if [ -z "$TG_TOKEN" ]; then
+            fail "TELEGRAM_BOT_TOKEN обязателен в автоматическом режиме."
+        fi
+        if [ -z "$ADMIN_ID" ]; then
+            fail "ADMIN_CHAT_ID обязателен в автоматическом режиме."
+        fi
+        if [ -z "$ADMIN_UID" ]; then
+            fail "ADMIN_USER_ID обязателен в автоматическом режиме."
         fi
     fi
 
@@ -185,9 +220,16 @@ else
 # ── Telegram ──────────────────────────────────
 TELEGRAM_BOT_TOKEN=${TG_TOKEN}
 
+# ── Admin (обязательно) ───────────────────────
+ADMIN_CHAT_ID=${ADMIN_ID}
+ADMIN_USER_ID=${ADMIN_UID}
+
 # ── API ключи ─────────────────────────────────
 FINNHUB_API_KEY=${FH_KEY}
 POLYGON_API_KEY=${PG_KEY}
+
+# ── API security ──────────────────────────────
+API_SECRET_KEY=${API_KEY}
 
 # ── LLM Sentiment (Ollama) ────────────────────
 OLLAMA_HOST=http://localhost:11434

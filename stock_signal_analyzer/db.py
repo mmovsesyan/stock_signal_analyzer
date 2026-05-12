@@ -35,6 +35,7 @@ from sqlalchemy import (
     Text,
     create_engine,
     Index,
+    text,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -229,7 +230,7 @@ def db_available() -> bool:
     """Проверить доступность БД."""
     try:
         with _engine.connect() as conn:
-            conn.execute(type(conn).execute.__func__.__code__ and conn.exec_driver_sql("SELECT 1"))
+            conn.execute(text("SELECT 1"))
         return True
     except Exception:
         return False

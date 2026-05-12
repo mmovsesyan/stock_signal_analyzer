@@ -53,6 +53,8 @@ from stock_signal_analyzer.market_segments import DIVIDEND_UNIVERSE
 from stock_signal_analyzer.outside_signals import scan_strong_outside_watchlist
 from stock_signal_analyzer.signal_log import log_path_from_env
 from stock_signal_analyzer.outcome_tracker import OutcomeTracker
+from stock_signal_analyzer.live_price import fetch_live_price
+from stock_signal_analyzer.config_validator import validate_telegram_config
 from stock_signal_analyzer.adaptive_weights import compute_adaptive_weights
 from stock_signal_analyzer.telegram_format import (
     esc_html as _esc,
@@ -85,6 +87,8 @@ _PENDING_ACTION_KEY = "pending_action"
 # ADMIN_CHAT_ID — Telegram ID администратора. Получает уведомления о новых юзерах,
 # управляет доступом. Задать в .env.
 _ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
+# ALLOW_ALL_USERS — если "1" или "true", доступ всем (для дебага/локальной разработки)
+_ALLOW_ALL = os.environ.get("ALLOW_ALL_USERS", "").strip().lower() in ("1", "true", "yes")
 # Множество одобренных user_id (загружается из файла)
 _APPROVED_USERS_FILE = os.path.join(
     os.environ.get("STOCK_SIGNAL_DATA", "data"), "approved_users.json"
@@ -119,8 +123,10 @@ def _is_admin(user_id: int) -> bool:
 
 def _is_approved(user_id: int) -> bool:
     """Проверить, одобрен ли пользователь (или он админ)."""
+    if _ALLOW_ALL:
+        return True
     if not _ADMIN_CHAT_ID:
-        return True  # Если админ не задан — доступ всем
+        return False  # Без ADMIN_CHAT_ID доступ закрыт
     if _is_admin(user_id):
         return True
     approved = _load_approved_users()
@@ -270,8 +276,27 @@ def _settings_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton("🤖 Настройка автосбора"), KeyboardButton("🔔 Уведомления")],
+            [KeyboardButton("🧠 Обучение")],
             [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
         ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
+def _learning_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
+    prefs = load_prefs(uid)
+    report_status = "✅" if prefs.receive_learning_report else "❌"
+    kb = [
+        [KeyboardButton("📊 Показать отчёт"), KeyboardButton("📈 Статистика исходов")],
+        [KeyboardButton(f"{report_status} Получать learning report")],
+    ]
+    if _is_admin(uid):
+        kb.append([KeyboardButton("🔄 Принудительное обучение")])
+    kb.append([KeyboardButton("⬅️ Назад в настройки"), KeyboardButton("🏠 Главное меню")])
+    return ReplyKeyboardMarkup(
+        keyboard=kb,
         resize_keyboard=True,
         one_time_keyboard=False,
         selective=False,
@@ -359,9 +384,30 @@ async def _show_settings_menu(message, uid: int) -> None:
     await message.reply_text(
         "⚙️ <b>Настройки</b>\n"
         "• Настройка автосбора сигналов\n"
-        "• Управление уведомлениями",
+        "• Управление уведомлениями\n"
+        "• 🧠 Обучение и статистика",
         parse_mode=ParseMode.HTML,
         reply_markup=_settings_menu_keyboard(),
+    )
+
+
+async def _show_learning_menu(message, uid: int) -> None:
+    if not message:
+        return
+    prefs = load_prefs(uid)
+    report_status = "включены" if prefs.receive_learning_report else "выключены"
+    text = (
+        "🧠 <b>Обучение и статистика</b>\n\n"
+        "Система анализирует результаты сигналов:\n"
+        "• Числовой IC — корреляция компонентов с PnL\n"
+        "• LLM-анализ паттернов через Ollama\n"
+        "• Адаптивные веса корректируются автоматически\n\n"
+        f"Learning report: <b>{report_status}</b>"
+    )
+    await message.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=_learning_menu_keyboard(uid),
     )
 
 
@@ -428,11 +474,13 @@ def _section_for_action(action: str) -> str:
         return "notify"
     if action in ("autocollect", "toggle_default", "add_custom", "show_custom", "clear_custom"):
         return "autocollect"
+    if action in ("learning", "show_learning", "show_report", "show_stats", "toggle_learn_report", "force_learn"):
+        return "learning"
     return "root"
 
 
-def _reply_markup_for_action(action: str) -> ReplyKeyboardMarkup:
-    return _keyboard_for_section(_section_for_action(action))
+def _reply_markup_for_action(action: str, uid: int = 0) -> ReplyKeyboardMarkup:
+    return _keyboard_for_section(_section_for_action(action), uid)
 
 
 def _set_pending_action(context: ContextTypes.DEFAULT_TYPE, action: str) -> None:
@@ -793,47 +841,8 @@ async def _send_price_for_symbol(message, sym: str) -> None:
 
 def _fetch_live_price(symbol: str) -> float | None:
     """Получить актуальную цену из real-time источников."""
-    sym = symbol.strip().upper()
-
-    # РФ тикеры: T-Bank → MOEX ISS
-    if sym.endswith(".ME"):
-        try:
-            from stock_signal_analyzer.tbank_invest import fetch_last_price_tbank
-            q = fetch_last_price_tbank(sym)
-            if q and q.last_price > 0:
-                return q.last_price
-        except Exception:
-            pass
-        try:
-            from stock_signal_analyzer.moex_iss import fetch_tqbr_quote
-            mq = fetch_tqbr_quote(sym)
-            if mq.last is not None and mq.last > 0:
-                return mq.last
-        except Exception:
-            pass
-        return None
-
-    # US тикеры: Finnhub → Polygon
-    key = os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
-    if key:
-        try:
-            from stock_signal_analyzer.finnhub_live import fetch_quote
-            fq = fetch_quote(sym, api_key=key)
-            if fq.current is not None and fq.current > 0:
-                return fq.current
-        except Exception:
-            pass
-
-    try:
-        from stock_signal_analyzer.polygon_data import polygon_available, fetch_snapshot as pg_snap
-        if polygon_available():
-            pq = pg_snap(sym)
-            if pq.last_price is not None and pq.last_price > 0:
-                return pq.last_price
-    except Exception:
-        pass
-
-    return None
+    from stock_signal_analyzer.live_price import fetch_live_price
+    return fetch_live_price(symbol)
 
 
 def _symbol_button_text(sym: str) -> str:
@@ -1618,61 +1627,71 @@ _signal_cache_lock = _thr.Lock()
 _SCORE_CHANGE_THRESHOLD = 0.08   # записать если score изменился на ±0.08
 _TIER_CHANGE_ALWAYS = True       # всегда записать при смене класса
 
+# Множество уже увиденных алертов для дедупликации уведомлений
+_seen_alerts: set[str] = set()
 
-def _should_record_signal(sym: str, score: float, tier: str, direction: str) -> bool:
-    """Проверить, стоит ли записывать сигнал (дедупликация)."""
+
+def _check_alert_and_record(sym: str, score: float, tier: str, direction: str) -> tuple[bool, str | None]:
+    """
+    Атомарная проверка алерта И запись в кэш под одним локом.
+    Возвращает (should_record, alert_text_or_None).
+    Устраняет TOCTOU race condition между _detect_alert и _should_record_signal.
+    """
     import time
     with _signal_cache_lock:
         prev = _signal_cache.get(sym)
         now = time.time()
+        alert = None
+
+        if prev is not None:
+            tier_rank = {"C": 0, "B": 1, "A": 2}
+            old_rank = tier_rank.get(prev.tier, 0)
+            new_rank = tier_rank.get(tier, 0)
+            if new_rank > old_rank:
+                alert_text = f"⬆️ {sym}: класс {prev.tier} → {tier} (score {prev.score:+.2f} → {score:+.2f})"
+                alert_key = f"upgrade:{sym}:{tier}"
+                if alert_key not in _seen_alerts:
+                    _seen_alerts.add(alert_key)
+                    alert = alert_text
+            elif new_rank < old_rank:
+                alert_text = f"⬇️ {sym}: класс {prev.tier} → {tier} (score {prev.score:+.2f} → {score:+.2f})"
+                alert_key = f"downgrade:{sym}:{tier}"
+                if alert_key not in _seen_alerts:
+                    _seen_alerts.add(alert_key)
+                    alert = alert_text
+            else:
+                delta = score - prev.score
+                if abs(delta) >= 0.15:
+                    arrow = "📈" if delta > 0 else "📉"
+                    alert_text = f"{arrow} {sym}: score {prev.score:+.2f} → {score:+.2f} (Δ{delta:+.2f})"
+                    alert_key = f"delta:{sym}:{score:.2f}"
+                    if alert_key not in _seen_alerts:
+                        _seen_alerts.add(alert_key)
+                        alert = alert_text
+
+        # Решаем, нужно ли записать сигнал
+        should_record = False
         if prev is None:
-            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
-            return True
-        # Смена класса — всегда записать
-        if _TIER_CHANGE_ALWAYS and prev.tier != tier:
-            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
-            return True
-        # Смена направления — всегда записать
-        if prev.direction != direction:
-            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
-            return True
-        # Значимое изменение score
-        if abs(score - prev.score) >= _SCORE_CHANGE_THRESHOLD:
-            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
-            return True
-        # Прошло больше 4 часов — записать в любом случае (для истории)
-        if now - prev.ts > 14400:
-            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
-            return True
-        return False
+            should_record = True
+        elif _TIER_CHANGE_ALWAYS and prev.tier != tier:
+            should_record = True
+        elif prev.direction != direction:
+            should_record = True
+        elif abs(score - prev.score) >= _SCORE_CHANGE_THRESHOLD:
+            should_record = True
+        elif now - prev.ts > 14400:
+            should_record = True
 
+        if should_record:
+            _signal_cache[sym] = _CachedSignal(score=score, tier=tier, direction=direction, ts=now)
 
-def _detect_alert(sym: str, score: float, tier: str) -> str | None:
-    """Вернуть текст алерта если произошло значимое событие, иначе None."""
-    with _signal_cache_lock:
-        prev = _signal_cache.get(sym)
-    if prev is None:
-        return None
-    # Апгрейд класса
-    tier_rank = {"C": 0, "B": 1, "A": 2}
-    old_rank = tier_rank.get(prev.tier, 0)
-    new_rank = tier_rank.get(tier, 0)
-    if new_rank > old_rank:
-        return f"⬆️ {sym}: класс {prev.tier} → {tier} (score {prev.score:+.2f} → {score:+.2f})"
-    # Даунгрейд
-    if new_rank < old_rank:
-        return f"⬇️ {sym}: класс {prev.tier} → {tier} (score {prev.score:+.2f} → {score:+.2f})"
-    # Резкое изменение score
-    delta = score - prev.score
-    if abs(delta) >= 0.15:
-        arrow = "📈" if delta > 0 else "📉"
-        return f"{arrow} {sym}: score {prev.score:+.2f} → {score:+.2f} (Δ{delta:+.2f})"
-    return None
+        return should_record, alert
 
 
 def _collect_signals_smart(tickers: list[str]) -> tuple[int, int, list[str], list[str]]:
     """
     Умный сбор: анализирует тикеры, записывает только при значимых изменениях.
+    Атомарная проверка алерта + запись под одним локом (без TOCTOU race).
     Возвращает (ok_count, err_count, errors, alerts).
     """
     ok = 0
@@ -1682,31 +1701,36 @@ def _collect_signals_smart(tickers: list[str]) -> tuple[int, int, list[str], lis
         try:
             report = build_report(sym, fast_mode=True)
             direction = "long" if report.score > 0.05 else ("short" if report.score < -0.05 else "neutral")
-            # Проверить алерт ДО обновления кэша
-            alert = _detect_alert(sym, report.score, report.signal_tier)
+            should_record, alert = _check_alert_and_record(sym, report.score, report.signal_tier, direction)
             if alert:
                 alerts.append(alert)
-            # Записать в лог только если есть значимое изменение
-            if _should_record_signal(sym, report.score, report.signal_tier, direction):
+            if should_record:
                 ok += 1
-            # build_report уже пишет в лог — нужно контролировать это
-            # (лог пишется внутри build_report, поэтому ok считаем все успешные)
         except Exception as e:
             errors.append(f"{sym}: {e}")
     return ok, len(errors), errors, alerts
 
 
+_SIGNAL_COLLECT_TIMEOUT_SEC = int(os.environ.get("SIGNAL_COLLECT_TIMEOUT_SEC", "60"))
+
+
 def _collect_signals_sync(tickers: list[str]) -> tuple[int, int, list[str]]:
     """
     Анализирует каждый тикер через build_report (который сам пишет в SSA_SIGNAL_LOG).
+    Каждый тикер имеет таймаут — зависший не блокирует остальные.
     Возвращает (ok_count, err_count, errors_list).
     """
+    import concurrent.futures
     ok = 0
     errors: list[str] = []
     for sym in tickers:
         try:
-            build_report(sym)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(build_report, sym)
+                future.result(timeout=_SIGNAL_COLLECT_TIMEOUT_SEC)
             ok += 1
+        except concurrent.futures.TimeoutError:
+            errors.append(f"{sym}: timeout ({_SIGNAL_COLLECT_TIMEOUT_SEC}s)")
         except Exception as e:
             errors.append(f"{sym}: {e}")
     return ok, len(errors), errors
@@ -1879,6 +1903,124 @@ async def cmd_collect_status_ru(update: Update, context: ContextTypes.DEFAULT_TY
     await cmd_collect_status(update, context)
 
 
+async def cmd_learning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/learning — показать отчёт обучения."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    try:
+        from stock_signal_analyzer.llm_learning import load_learning_state, format_learning_report
+        state = load_learning_state()
+        if not state:
+            await update.message.reply_text(
+                "🧠 <b>Обучение</b>\n\n"
+                "Обучение ещё не проводилось или недостаточно данных.\n"
+                "Система начнёт обучение после 20+ сигналов с результатами.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_learning_menu_keyboard(uid),
+            )
+            return
+        report = format_learning_report(state)
+        for chunk in report:
+            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/stats — статистика исходов сигналов."""
+    if not update.message:
+        return
+    try:
+        from stock_signal_analyzer.outcome_tracker import OutcomeTracker
+        tracker = OutcomeTracker()
+        stats = tracker.get_statistics()
+        if not stats:
+            await update.message.reply_text(
+                "📈 <b>Статистика исходов</b>\n\n"
+                "Нет данных. Результаты появятся после проверки сигналов outcome tracker'ом.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        wr = stats['win_rate'] * 100
+        pf = stats['profit_factor']
+        aw = stats['avg_win_pct']
+        al = stats['avg_loss_pct']
+        tpnl = stats['total_pnl_pct']
+        total = stats['total_signals']
+        wins = stats['winning_trades']
+        losses = stats['losing_trades']
+        body = (
+            f"📈 <b>Статистика исходов</b>\n\n"
+            f"Всего исходов: <b>{total}</b>\n"
+            f"Выигрыши: {wins} | Проигрыши: {losses}\n"
+            f"Win rate: <b>{wr:.1f}%</b>\n"
+            f"Profit factor: <b>{pf:.2f}</b>\n"
+            f"Avg win: {aw:+.2f}% | Avg loss: {al:+.2f}%\n"
+            f"Total PnL: <b>{tpnl:+.2f}%</b>"
+        )
+        await update.message.reply_text(body, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/force_learn — запустить обучение сейчас (только админ)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not _is_admin(uid):
+        await update.message.reply_text("⛔ Только для администратора.")
+        return
+    try:
+        msg = await update.message.reply_text("🔄 Запускаю обучение…", parse_mode=ParseMode.HTML)
+        from stock_signal_analyzer.outcome_tracker import OutcomeTracker
+        from stock_signal_analyzer.llm_learning import run_learning_cycle, format_learning_report
+        tracker = OutcomeTracker()
+        tracker.check_all_outcomes()
+        state = run_learning_cycle(force=True)
+        if state:
+            report = format_learning_report(state)
+            await msg.edit_text(report[0] if report else "✅ Обучение завершено.", parse_mode=ParseMode.HTML)
+        else:
+            await msg.edit_text("✅ Обучение завершено (недостаточно данных).", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def on_menu_learning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = _uid(update)
+    if update.message:
+        await _show_learning_menu(update.message, uid)
+
+
+async def on_menu_show_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_learning(update, context)
+
+
+async def on_menu_show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_stats(update, context)
+
+
+async def on_menu_toggle_learn_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    uid = _uid(update)
+    prefs = load_prefs(uid)
+    prefs.receive_learning_report = not prefs.receive_learning_report
+    save_prefs(uid, prefs)
+    status = "включены" if prefs.receive_learning_report else "выключены"
+    await update.message.reply_text(
+        f"🧠 Learning report: <b>{status}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_learning_menu_keyboard(uid),
+    )
+
+
+async def on_menu_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_force_learn(update, context)
+
+
 async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Автоматический сбор сигналов с дедупликацией и алертами при изменениях."""
     log_p = log_path_from_env()
@@ -2017,15 +2159,21 @@ async def learning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     report_text = "\n".join(lines)
 
-    # 4. Отправить всем пользователям
+    # 4. Отправить только пользователям с opt-in
     bot = context.application.bot
+    sent_count = 0
     for uid in all_user_ids():
+        prefs = load_prefs(uid)
+        if not prefs.receive_learning_report:
+            continue
         try:
             await bot.send_message(chat_id=uid, text=report_text, parse_mode=ParseMode.HTML)
+            sent_count += 1
         except Exception:
             pass
 
-    log.info("learning_job: отчёт отправлен, closed=%d, total=%d, wr=%.1f%%", closed_count, total, wr * 100)
+    log.info("learning_job: отчёт отправлен %d пользователям (из %d), closed=%d, total=%d, wr=%.1f%%",
+             sent_count, len(all_user_ids()), closed_count, total, wr * 100)
 
 
 async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2146,6 +2294,14 @@ async def on_menu_back_to_settings(update: Update, context: ContextTypes.DEFAULT
     await _show_settings_menu(update.message, uid)
 
 
+async def on_menu_back_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки '⬅️ Назад в обучение'."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    await _show_learning_menu(update.message, uid)
+
+
 async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Периодически: сильные сигналы по watchlist + вне списка."""
     bot = context.application.bot
@@ -2245,6 +2401,8 @@ async def post_init(application: Application) -> None:
         BotCommand("collect", "Запустить сбор сигналов"),
         BotCommand("status", "Статус сбора"),
         BotCommand("export", "Выгрузить лог сигналов"),
+        BotCommand("learning", "Отчёт обучения и LLM"),
+        BotCommand("stats", "Статистика исходов"),
         BotCommand("help", "Помощь"),
     ]
     try:
@@ -2278,6 +2436,8 @@ async def post_init(application: Application) -> None:
 
 def main() -> int:
     import signal as _sig
+
+    validate_telegram_config()
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
     if not token:
@@ -2320,6 +2480,9 @@ def main() -> int:
     app.add_handler(CommandHandler("collect", cmd_collect))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("status", cmd_collect_status))
+    app.add_handler(CommandHandler("learning", cmd_learning))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("force_learn", cmd_force_learn))
     app.add_handler(
         MessageHandler(filters.Regex(r"^/анализ(?:@\w+)?(?:\s+.*)?$"), cmd_signal_ru)
     )
@@ -2344,6 +2507,12 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройки$"), on_menu_section_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления$"), on_menu_section_notify))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройка автосбора$"), on_menu_autocollect))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Обучение$"), on_menu_learning))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Показать отчёт$"), on_menu_show_report))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Статистика исходов$"), on_menu_show_stats))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Получать learning report$"), on_menu_toggle_learn_report))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Принудительное обучение$"), on_menu_force_learn))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в обучение$"), on_menu_back_to_learning))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в разделы$"), on_menu_back_sections))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в настройки$"), on_menu_back_to_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Главное меню$"), cmd_start))

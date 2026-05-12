@@ -28,7 +28,12 @@ def append_signal_record(path: str | None, record: dict[str, Any]) -> None:
             # Открываем с ограниченными правами (owner-only read/write)
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             try:
-                os.write(fd, line.encode("utf-8"))
+                data = line.encode("utf-8")
+                offset = 0
+                total = len(data)
+                while offset < total:
+                    written = os.write(fd, data[offset:])
+                    offset += written
             finally:
                 os.close(fd)
     except OSError as e:

@@ -38,6 +38,8 @@ from pydantic import BaseModel, Field
 from stock_signal_analyzer.engine import build_report, SignalReport
 from stock_signal_analyzer.market_data import fetch_snapshot_with_meta
 from stock_signal_analyzer.trade_plan import trade_plan_to_dict
+from stock_signal_analyzer.live_price import fetch_live_price
+from stock_signal_analyzer.config_validator import validate_telegram_config, validate_api_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
@@ -48,12 +50,31 @@ app = FastAPI(
     description="Multi-factor stock signal analysis API",
 )
 
+_allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if not _allowed_origins:
+    _allowed_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_API_SECRET_KEY = os.environ.get("API_SECRET_KEY", "").strip()
+
+if _API_SECRET_KEY:
+    @app.middleware("http")
+    async def api_key_middleware(request: Request, call_next):
+        if request.url.path in ("/health", "/health/detailed", "/docs", "/openapi.json", "/redoc"):
+            return await call_next(request)
+        auth_header = request.headers.get("X-API-Key", "")
+        if not auth_header or auth_header != _API_SECRET_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Invalid or missing API key", "header": "X-API-Key"},
+            )
+        return await call_next(request)
 
 
 # ── Rate Limiting ────────────────────────────────────────────────────────────
@@ -132,41 +153,7 @@ _start_time = time.time()
 
 def _get_live_price(symbol: str) -> float | None:
     """Получить актуальную цену из real-time источников."""
-    sym = symbol.strip().upper()
-    if sym.endswith(".ME"):
-        try:
-            from stock_signal_analyzer.tbank_invest import fetch_last_price_tbank
-            q = fetch_last_price_tbank(sym)
-            if q and q.last_price > 0:
-                return q.last_price
-        except Exception:
-            pass
-        try:
-            from stock_signal_analyzer.moex_iss import fetch_tqbr_quote
-            mq = fetch_tqbr_quote(sym)
-            if mq.last is not None and mq.last > 0:
-                return mq.last
-        except Exception:
-            pass
-        return None
-    key = os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
-    if key:
-        try:
-            from stock_signal_analyzer.finnhub_live import fetch_quote
-            fq = fetch_quote(sym, api_key=key)
-            if fq.current is not None and fq.current > 0:
-                return fq.current
-        except Exception:
-            pass
-    try:
-        from stock_signal_analyzer.polygon_data import polygon_available, fetch_snapshot as pg_snap
-        if polygon_available():
-            pq = pg_snap(sym)
-            if pq.last_price is not None and pq.last_price > 0:
-                return pq.last_price
-    except Exception:
-        pass
-    return None
+    return fetch_live_price(symbol)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -361,6 +348,7 @@ async def learning_report():
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при старте API."""
+    validate_api_config()
     # Создать таблицы если БД доступна
     try:
         from stock_signal_analyzer.db import init_db

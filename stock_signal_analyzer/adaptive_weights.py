@@ -111,15 +111,16 @@ def _compute_ic(
     records: list[dict[str, Any]],
     component_key: str,
     outcome_key: str = "score",
-) -> float:
+) -> float | None:
     """
     Information Coefficient: ранговая корреляция Спирмена между
     значением компонента и реальным исходом.
 
     Приоритет outcome_key:
     1. 'outcome_pnl' — реальный PnL из outcome_tracker (если есть)
-    2. 'score' — итоговый score (fallback)
+    2. 'score' — итоговый score (fallback, но НЕ рекомендуется)
 
+    Возвращает None, если нет реального PnL — IC без PnL бессмыслен.
     IC > 0.05 = информативный; IC > 0.10 = сильный.
     """
     vals = []
@@ -128,10 +129,8 @@ def _compute_ic(
         v = r.get(component_key)
         if v is None:
             continue
-        # Предпочитаем реальный PnL, если outcome_tracker его записал
+        # Используем ТОЛЬКО реальный PnL — корреляция с final_score циркулярна
         o = r.get("outcome_pnl")
-        if o is None:
-            o = r.get(outcome_key)
         if o is None:
             continue
         try:
@@ -141,7 +140,7 @@ def _compute_ic(
             continue
 
     if len(vals) < _MIN_RECORDS:
-        return 0.0
+        return None
 
     v_arr = np.array(vals)
     o_arr = np.array(outcomes)
@@ -158,7 +157,7 @@ def _compute_ic(
 def compute_adaptive_weights() -> AdaptiveWeightsResult:
     """
     Вычисляет адаптивные веса на основе IC каждого компонента.
-    Если данных мало, возвращает базовые веса.
+    Если данных мало или нет реального PnL, возвращает базовые веса.
     """
     records = _load_signal_history()
 
@@ -178,8 +177,20 @@ def compute_adaptive_weights() -> AdaptiveWeightsResult:
     }
 
     ic_scores: dict[str, float] = {}
+    has_any_ic = False
     for name, key in component_map.items():
-        ic_scores[name] = _compute_ic(records, key)
+        ic = _compute_ic(records, key)
+        if ic is not None:
+            ic_scores[name] = ic
+            has_any_ic = True
+
+    if not has_any_ic:
+        return AdaptiveWeightsResult(
+            weights=dict(_BASE_WEIGHTS),
+            ic_scores={},
+            adapted=False,
+            detail="Адаптивные веса: нет записей с реальным PnL, используются базовые.",
+        )
 
     weights = dict(_BASE_WEIGHTS)
 

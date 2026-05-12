@@ -6,6 +6,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 import pandas as pd
@@ -14,6 +15,9 @@ import yfinance as yf
 from .universe import InstrumentProfile, classify_instrument, history_period_for_profile
 
 _log = logging.getLogger(__name__)
+_CACHE_MAX_SIZE = 200
+_CACHE: dict[str, tuple[tuple[Any, Any, Any], float]] = {}
+_CACHE_TTL = 300  # 5 минут
 
 
 def _polygon_available() -> bool:
@@ -44,9 +48,22 @@ def _try_polygon_history(sym: str, days: int = 400) -> tuple[pd.DataFrame | None
         _log.warning("Polygon fallback failed for %s: %s", sym, e)
         return None, "", ""
 
-# ── Кэш для котировок ────────────────────────────────────────────────────────
-_CACHE: dict[str, tuple[tuple[TickerSnapshot, dict[str, Any], InstrumentProfile], float]] = {}
-_CACHE_TTL = 300  # 5 минут
+def _evict_expired_cache() -> None:
+    """Удалить просроченные записи из кэша."""
+    now = time.time()
+    expired = [sym for sym, (_, ts) in _CACHE.items() if now - ts >= _CACHE_TTL]
+    for sym in expired:
+        del _CACHE[sym]
+
+
+def _ensure_cache_capacity() -> None:
+    """Если кэш превысил maxsize, удалить самые старые записи."""
+    if len(_CACHE) <= _CACHE_MAX_SIZE:
+        return
+    sorted_items = sorted(_CACHE.items(), key=lambda x: x[1][1])
+    to_remove = len(_CACHE) - _CACHE_MAX_SIZE
+    for sym, _ in sorted_items[:to_remove]:
+        del _CACHE[sym]
 
 
 @dataclass
@@ -153,6 +170,10 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
         force_refresh: Если True, игнорировать кэш и загрузить свежие данные
     """
     sym = symbol.strip().upper()
+
+    # Очистка кэша от просроченных и превышающих maxsize
+    _evict_expired_cache()
+    _ensure_cache_capacity()
 
     # Проверка кэша
     if not force_refresh and sym in _CACHE:

@@ -18,6 +18,7 @@ from .finnhub_live import fetch_company_news, fetch_recommendation_trends, fetch
 from .intraday import IntradayBundle, build_intraday
 from .levels import KeyLevels, compute_key_levels
 from .macro_calendar import MacroContext, build_macro_context
+from .live_price import fetch_live_price
 from .market_data import TickerSnapshot, fetch_snapshot_with_meta
 from .momentum import MomentumScore, analyze_momentum
 from .news_feeds import NewsItem, fetch_macro_headlines, fetch_ticker_news_google
@@ -504,47 +505,7 @@ def _gather_inputs(
         pass
 
     # ── Актуальная цена (real-time) ──
-    # Приоритет: T-Bank → MOEX ISS marketdata → Finnhub → last_close из истории
-    live_price: float | None = None
-    sym_u = snap.symbol.strip().upper()
-    if sym_u.endswith(".ME"):
-        # T-Bank real-time
-        try:
-            from .tbank_invest import fetch_last_price_tbank
-            tq = fetch_last_price_tbank(sym_u)
-            if tq and tq.last_price > 0:
-                live_price = tq.last_price
-        except Exception:
-            pass
-        # MOEX ISS fallback
-        if live_price is None:
-            try:
-                from .moex_iss import fetch_tqbr_quote
-                mq = fetch_tqbr_quote(sym_u)
-                if mq.last is not None and mq.last > 0:
-                    live_price = mq.last
-            except Exception:
-                pass
-    else:
-        # Finnhub для US
-        if key:
-            try:
-                from .finnhub_live import fetch_quote
-                fq = fetch_quote(sym_u, api_key=key)
-                if fq.current is not None and fq.current > 0:
-                    live_price = fq.current
-            except Exception:
-                pass
-        # Polygon.io fallback для US
-        if live_price is None:
-            try:
-                from .polygon_data import polygon_available, fetch_snapshot as polygon_snapshot
-                if polygon_available():
-                    pq = polygon_snapshot(sym_u)
-                    if pq.last_price is not None and pq.last_price > 0:
-                        live_price = pq.last_price
-            except Exception:
-                pass
+    live_price = fetch_live_price(snap.symbol)
 
     return _RawInputs(
         snap=snap,

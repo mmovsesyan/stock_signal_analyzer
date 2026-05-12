@@ -31,6 +31,8 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from sqlalchemy import text
+
 _log = logging.getLogger(__name__)
 
 SCHEDULER_MODE = os.environ.get("SCHEDULER_MODE", "apscheduler")
@@ -185,7 +187,7 @@ def run_health_check() -> dict[str, Any]:
     try:
         from .db import get_session
         with get_session() as session:
-            session.execute(type(session).execute.__func__ and True)
+            session.execute(text("SELECT 1"))
         status["database"] = True
     except Exception:
         status["database"] = False
