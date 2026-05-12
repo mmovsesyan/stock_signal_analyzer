@@ -1920,9 +1920,8 @@ async def cmd_learning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 reply_markup=_learning_menu_keyboard(uid),
             )
             return
-        report = format_learning_report(state)
-        for chunk in report:
-            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+        report = format_learning_report()
+        await update.message.reply_text(report, parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
 
@@ -1980,8 +1979,8 @@ async def cmd_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         tracker.check_all_outcomes()
         state = run_learning_cycle(force=True)
         if state:
-            report = format_learning_report(state)
-            await msg.edit_text(report[0] if report else "✅ Обучение завершено.", parse_mode=ParseMode.HTML)
+            report = format_learning_report()
+            await msg.edit_text(report if report else "✅ Обучение завершено.", parse_mode=ParseMode.HTML)
         else:
             await msg.edit_text("✅ Обучение завершено (недостаточно данных).", parse_mode=ParseMode.HTML)
     except Exception as e:
@@ -2477,7 +2476,7 @@ def main() -> int:
     # Поддержка Cloudflare Workers прокси для обхода блокировки Telegram API
     base_url = os.environ.get("TELEGRAM_BASE_URL")
     proxy_url = os.environ.get("TELEGRAM_PROXY")
-    builder = Application.builder().token(token).post_init(post_init).concurrent_updates(True)
+    builder = Application.builder().token(token).post_init(post_init).concurrent_updates(4)
     if base_url:
         base_url = base_url.rstrip("/")
         builder = builder.base_url(base_url).base_file_url(base_url + "/file/bot")
