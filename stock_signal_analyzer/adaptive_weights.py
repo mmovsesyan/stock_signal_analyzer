@@ -20,6 +20,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -46,8 +47,11 @@ _SIGNAL_HALFLIFE = {
     "trend": 15.0,
 }
 
-# Минимальное количество записей для адаптации
-_MIN_RECORDS = 30
+# Минимальное количество записей для адаптации (повышено с 30 для статистической значимости)
+_MIN_RECORDS = 50
+
+# Время жизни записей для IC (дни) — только последние 90 дней учитываются
+_IC_LOOKBACK_DAYS = 90
 
 
 @dataclass
@@ -120,11 +124,22 @@ def _compute_ic(
     1. 'outcome_pnl' — реальный PnL из outcome_tracker (если есть)
     2. 'score' — итоговый score (fallback, но НЕ рекомендуется)
 
+    Экспоненциальный decay: недавние IC важнее старых (halflife=30 дней).
+
     Возвращает None, если нет реального PnL — IC без PnL бессмыслен.
     IC > 0.05 = информативный; IC > 0.10 = сильный.
     """
+    from datetime import datetime, timezone
+    import time
+
+    now = time.time()
+    halflife_days = 30.0
+    decay_factor = np.log(2) / halflife_days
+
     vals = []
     outcomes = []
+    weights = []
+
     for r in records:
         v = r.get(component_key)
         if v is None:
@@ -133,25 +148,59 @@ def _compute_ic(
         o = r.get("outcome_pnl")
         if o is None:
             continue
+
+        # Time decay: недавние записи важнее
+        ts_str = r.get("ts_utc") or r.get("exit_date") or r.get("checked_at")
+        if ts_str:
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
+                # Только последние _IC_LOOKBACK_DAYS дней
+                if age_days > _IC_LOOKBACK_DAYS:
+                    continue
+                w = float(np.exp(-decay_factor * age_days))
+            except (ValueError, TypeError):
+                w = 0.5  # Не можем распарсить дату — средний вес
+        else:
+            w = 0.5  # Нет даты — средний вес
+
         try:
             vals.append(float(v))
             outcomes.append(float(o))
+            weights.append(w)
         except (ValueError, TypeError):
             continue
 
     if len(vals) < _MIN_RECORDS:
         return None
 
+    # Weighted Spearman IC
     v_arr = np.array(vals)
     o_arr = np.array(outcomes)
+    w_arr = np.array(weights)
 
+    # Weighted ranks
     v_rank = v_arr.argsort().argsort().astype(float)
     o_rank = o_arr.argsort().argsort().astype(float)
 
+    # Weighted correlation
     n = len(v_rank)
-    d = v_rank - o_rank
-    rho = 1.0 - 6.0 * np.sum(d ** 2) / (n * (n ** 2 - 1))
-    return float(rho)
+    w_sum = np.sum(w_arr)
+    if w_sum <= 0:
+        return 0.0
+
+    v_mean = np.sum(w_arr * v_rank) / w_sum
+    o_mean = np.sum(w_arr * o_rank) / w_sum
+
+    cov = np.sum(w_arr * (v_rank - v_mean) * (o_rank - o_mean)) / w_sum
+    v_std = np.sqrt(np.sum(w_arr * (v_rank - v_mean) ** 2) / w_sum)
+    o_std = np.sqrt(np.sum(w_arr * (o_rank - o_mean) ** 2) / w_sum)
+
+    if v_std <= 0 or o_std <= 0:
+        return 0.0
+
+    rho = cov / (v_std * o_std)
+    return float(np.clip(rho, -1.0, 1.0))
 
 
 def compute_adaptive_weights() -> AdaptiveWeightsResult:

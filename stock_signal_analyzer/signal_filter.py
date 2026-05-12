@@ -156,20 +156,22 @@ class SignalFilter:
         )
 
     def _check_weekly_alignment(self, report: SignalReport) -> bool:
-        """Проверить совпадение с недельным трендом."""
-        # Проверяем через weekly_regime
+        """Проверить совпадение с недельным трендом.
+
+        weekly_regime значения: 'up', 'down', 'flat', 'unknown' (из timing_context.py).
+        """
         if not report.weekly_regime:
-            return True  # Нет данных - не штрафуем
+            return True  # Нет данных — не штрафуем
 
         weekly_lower = report.weekly_regime.lower()
 
-        # Если сигнал положительный
+        # Если сигнал положительный — нужен uptrend или flat
         if report.score > 0:
-            return 'uptrend' in weekly_lower or 'бычий' in weekly_lower or 'рост' in weekly_lower
+            return weekly_lower in ("up", "flat", "unknown")
 
-        # Если сигнал отрицательный
+        # Если сигнал отрицательный — нужен downtrend или flat
         if report.score < 0:
-            return 'downtrend' in weekly_lower or 'медвежий' in weekly_lower or 'падение' in weekly_lower
+            return weekly_lower in ("down", "flat", "unknown")
 
         return True
 

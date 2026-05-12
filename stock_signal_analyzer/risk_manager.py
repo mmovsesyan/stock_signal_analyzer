@@ -89,6 +89,59 @@ def kelly_from_confidence(confidence: float, signal_strength: float) -> KellyRes
     return kelly_criterion(est_wr, est_rr, 1.0)
 
 
+def kelly_from_outcomes(outcomes_path: str | None = None, min_trades: int = 30) -> KellyResult | None:
+    """
+    Рассчитать Kelly из реальной статистики сделок.
+
+    Читает outcomes.jsonl и вычисляет:
+    - Реальный win rate
+    - Средний выигрыш / средний проигрыш
+    - Kelly fraction
+
+    Возвращает None, если недостаточно сделок (< min_trades).
+    """
+    path = outcomes_path or os.path.join(
+        os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer"),
+        "outcomes.jsonl"
+    )
+
+    if not os.path.exists(path):
+        return None
+
+    pnl_values = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                    outcome = r.get("outcome", "")
+                    pnl = r.get("pnl_pct")
+                    if outcome in ("win_t1", "win_t2", "loss") and pnl is not None:
+                        pnl_values.append(float(pnl))
+                except (json.JSONDecodeError, ValueError):
+                    continue
+    except OSError:
+        return None
+
+    if len(pnl_values) < min_trades:
+        return None
+
+    wins = [p for p in pnl_values if p > 0]
+    losses = [abs(p) for p in pnl_values if p < 0]
+
+    if not wins or not losses:
+        return None
+
+    win_rate = len(wins) / len(pnl_values)
+    avg_win = sum(wins) / len(wins)
+    avg_loss = sum(losses) / len(losses)
+
+    return kelly_criterion(win_rate, avg_win, avg_loss)
+
+
 # ── 2. Volatility Targeting ──────────────────────────────────────────────────
 
 _TARGET_VOL_ANNUAL = 0.15  # 15% target annualized vol (institutional standard)
@@ -313,8 +366,18 @@ def compute_position_size(
 ) -> PositionSizeResult:
     """
     Институциональный sizing: Kelly × vol_target × circuit_breaker × regime.
+    Использует реальный Kelly из outcomes.jsonl если есть ≥30 сделок.
     """
-    kelly = kelly_from_confidence(confidence, signal_strength)
+    # Пробуем реальный Kelly из статистики сделок
+    real_kelly = kelly_from_outcomes()
+    if real_kelly is not None:
+        kelly = real_kelly
+        kelly_note = "real"
+    else:
+        # Fallback на confidence-based proxy
+        kelly = kelly_from_confidence(confidence, signal_strength)
+        kelly_note = "proxy"
+
     kelly_pct = kelly.half_kelly * 100.0
 
     vol_pct = vol_target_position_pct(current_vol_annual) if current_vol_annual > 0 else 100.0
@@ -327,7 +390,7 @@ def compute_position_size(
     final = float(np.clip(combined, 5.0, 100.0))
 
     detail = (
-        f"Size: base={base:.0f}%, Kelly½={kelly_pct:.0f}%, "
+        f"Size: base={base:.0f}%, Kelly½={kelly_pct:.0f}% ({kelly_note}), "
         f"vol_target={vol_pct:.0f}%, DD×{dd_mult:.2f}, "
         f"regime×{regime_risk_mult:.2f} → {final:.0f}%"
     )

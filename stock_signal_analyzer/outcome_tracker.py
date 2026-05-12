@@ -40,12 +40,25 @@ class SignalOutcome:
     hold_days: int | None
 
 
+# Конфигурация расходов на торговлю
+_SLIPPAGE_PCT = 0.001  # 0.1% slippage на вход/выход
+_COMMISSION_PCT = 0.0015  # 0.15% комиссия (типично для российских брокеров)
+
+
 class OutcomeTracker:
     """Отслеживание исходов открытых торговых сигналов."""
 
-    def __init__(self, signals_log_path: str | None = None, outcomes_path: str | None = None):
+    def __init__(
+        self,
+        signals_log_path: str | None = None,
+        outcomes_path: str | None = None,
+        slippage_pct: float = _SLIPPAGE_PCT,
+        commission_pct: float = _COMMISSION_PCT,
+    ):
         self.signals_log_path = signals_log_path or self._get_signals_log_path()
         self.outcomes_path = outcomes_path or self._get_outcomes_path()
+        self.slippage_pct = slippage_pct
+        self.commission_pct = commission_pct
 
         if not self.signals_log_path:
             raise ValueError("SSA_SIGNAL_LOG не задан. Установите переменную окружения.")
@@ -137,10 +150,10 @@ class OutcomeTracker:
         return f"{signal['symbol']}_{signal['ts_utc']}"
 
     def _get_current_price(self, symbol: str) -> float | None:
-        """Получить текущую цену."""
+        """Получить текущую цену через yfinance с fallback."""
         try:
             ticker = yf.Ticker(symbol)
-            data = ticker.history(period='1d', interval='1m')
+            data = ticker.history(period='5d', interval='1d')
 
             if data.empty:
                 _log.warning(f"Нет данных для {symbol}")
@@ -209,7 +222,7 @@ class OutcomeTracker:
                     hold_days=days_since
                 )
 
-            # Проверить каждый день
+            # Проверить каждый день — правильное определение порядка выходов
             for i, (date, row) in enumerate(hist.iterrows()):
                 if i == 0:
                     continue  # Пропустить день входа
@@ -218,8 +231,14 @@ class OutcomeTracker:
                 low = float(row['Low'])
 
                 if direction == 'long':
-                    # Проверить стоп
-                    if low <= stop_price:
+                    # Для long: сначала проверяем стоп (low), потом TP2/TP1 (high)
+                    # Если low <= stop, стоп сработал — но нужно проверить, не был ли TP достигнут раньше
+                    stop_hit = low <= stop_price
+                    tp2_hit = high >= target2_price
+                    tp1_hit = high >= target1_price
+
+                    if stop_hit and not tp2_hit and not tp1_hit:
+                        # Только стоп — loss
                         pnl_pct = self._calculate_pnl(entry_price, stop_price, direction)
                         return SignalOutcome(
                             signal_id=signal_id,
@@ -230,9 +249,8 @@ class OutcomeTracker:
                             pnl_pct=pnl_pct,
                             hold_days=i
                         )
-
-                    # Проверить target2
-                    if high >= target2_price:
+                    elif tp2_hit and not stop_hit:
+                        # TP2 достигнут, стоп не задет — win_t2
                         pnl_pct = self._calculate_pnl(entry_price, target2_price, direction)
                         return SignalOutcome(
                             signal_id=signal_id,
@@ -243,23 +261,46 @@ class OutcomeTracker:
                             pnl_pct=pnl_pct,
                             hold_days=i
                         )
-
-                    # Проверить target1
-                    if high >= target1_price:
+                    elif tp1_hit and not stop_hit:
+                        # TP1 достигнут, стоп не задет — win_t1
                         pnl_pct = self._calculate_pnl(entry_price, target1_price, direction)
                         return SignalOutcome(
                             signal_id=signal_id,
                             symbol=symbol,
                             outcome='win_t1',
                             exit_price=target1_price,
+                            exit_date=date,
+                            pnl_pct=pnl_pct,
+                            hold_days=i
+                        )
+                    elif stop_hit and (tp1_hit or tp2_hit):
+                        # И стоп, и TP задеты в один день — считаем TP (gap up через TP к стопу невозможен)
+                        # В реальности: если high >= TP2, то TP2 первый; если high >= TP1, то TP1 первый
+                        if tp2_hit:
+                            pnl_pct = self._calculate_pnl(entry_price, target2_price, direction)
+                            outcome = 'win_t2'
+                            exit_px = target2_price
+                        else:
+                            pnl_pct = self._calculate_pnl(entry_price, target1_price, direction)
+                            outcome = 'win_t1'
+                            exit_px = target1_price
+                        return SignalOutcome(
+                            signal_id=signal_id,
+                            symbol=symbol,
+                            outcome=outcome,
+                            exit_price=exit_px,
                             exit_date=date,
                             pnl_pct=pnl_pct,
                             hold_days=i
                         )
 
                 elif direction == 'short':
-                    # Проверить стоп
-                    if high >= stop_price:
+                    # Для short: сначала проверяем стоп (high), потом TP2/TP1 (low)
+                    stop_hit = high >= stop_price
+                    tp2_hit = low <= target2_price
+                    tp1_hit = low <= target1_price
+
+                    if stop_hit and not tp2_hit and not tp1_hit:
                         pnl_pct = self._calculate_pnl(entry_price, stop_price, direction)
                         return SignalOutcome(
                             signal_id=signal_id,
@@ -270,9 +311,7 @@ class OutcomeTracker:
                             pnl_pct=pnl_pct,
                             hold_days=i
                         )
-
-                    # Проверить target2
-                    if low <= target2_price:
+                    elif tp2_hit and not stop_hit:
                         pnl_pct = self._calculate_pnl(entry_price, target2_price, direction)
                         return SignalOutcome(
                             signal_id=signal_id,
@@ -283,15 +322,31 @@ class OutcomeTracker:
                             pnl_pct=pnl_pct,
                             hold_days=i
                         )
-
-                    # Проверить target1
-                    if low <= target1_price:
+                    elif tp1_hit and not stop_hit:
                         pnl_pct = self._calculate_pnl(entry_price, target1_price, direction)
                         return SignalOutcome(
                             signal_id=signal_id,
                             symbol=symbol,
                             outcome='win_t1',
                             exit_price=target1_price,
+                            exit_date=date,
+                            pnl_pct=pnl_pct,
+                            hold_days=i
+                        )
+                    elif stop_hit and (tp1_hit or tp2_hit):
+                        if tp2_hit:
+                            pnl_pct = self._calculate_pnl(entry_price, target2_price, direction)
+                            outcome = 'win_t2'
+                            exit_px = target2_price
+                        else:
+                            pnl_pct = self._calculate_pnl(entry_price, target1_price, direction)
+                            outcome = 'win_t1'
+                            exit_px = target1_price
+                        return SignalOutcome(
+                            signal_id=signal_id,
+                            symbol=symbol,
+                            outcome=outcome,
+                            exit_price=exit_px,
                             exit_date=date,
                             pnl_pct=pnl_pct,
                             hold_days=i
@@ -321,11 +376,24 @@ class OutcomeTracker:
             )
 
     def _calculate_pnl(self, entry: float, exit: float, direction: str) -> float:
-        """Рассчитать PnL в процентах."""
+        """Рассчитать PnL в процентах с учётом slippage и комиссии.
+
+        Slippage: цена входа хуже на slippage_pct, цена выхода хуже на slippage_pct
+        Commission: комиссия на вход + комиссия на выход (commission_pct каждый)
+        """
+        if entry <= 0 or exit <= 0:
+            return 0.0
+
+        # Gross PnL
         if direction == 'long':
-            return (exit - entry) / entry * 100
+            gross_pct = (exit - entry) / entry * 100
         else:
-            return (entry - exit) / entry * 100
+            gross_pct = (entry - exit) / entry * 100
+
+        # Costs: slippage on entry + exit (2x), commission on entry + exit (2x)
+        total_cost_pct = (self.slippage_pct * 2 + self.commission_pct * 2) * 100
+
+        return gross_pct - total_cost_pct
 
     def _save_outcome(self, outcome: SignalOutcome, signal: dict[str, Any]):
         """Сохранить результат в файл и обогатить signal log для IC."""

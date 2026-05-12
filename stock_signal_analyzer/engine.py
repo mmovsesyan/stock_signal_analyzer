@@ -613,40 +613,57 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
 
     vol_al = _volume_alignment(raw_total, vol_res.score)
     liq = _liquidity_mult(hist["Volume"]) if "Volume" in hist.columns else 1.0
+
+    # Confidence multiplier: additive blend, не компрессия
+    # При confidence=1.0 → 100% score; при 0.22 → 55% score
+    conf_mult = _CONF_BASE + _CONF_SCALE * confidence
+
+    # Применяем volume + liquidity + confidence ОДНИМ шагом
+    # вместо каскада — это предотвращает чрезмерную компрессию
     raw_total = float(
-        np.clip(
-            raw_total * vol_al * liq * (_CONF_BASE + _CONF_SCALE * confidence),
-            -1.0,
-            1.0,
-        )
+        np.clip(raw_total * vol_al * liq * conf_mult, -1.0, 1.0)
     )
 
     # raw_total здесь — score после vol_al*liq*confidence, но ДО макро
     score_pre_macro = raw_total
 
-    total = float(np.clip(raw_total * macro_ctx.dampening, -1.0, 1.0))
+    # ── Context modifiers (additive, не multiplicative) ──
+    # Вместо каскада мультипликаторов, собираем все влияния и применяем ОДИН раз
+    context_mult = 1.0
+
+    # Macro dampening
+    context_mult *= macro_ctx.dampening
 
     # Cross-asset regime (Bridgewater): в risk-off / crisis сжимаем сигнал
-    total = float(np.clip(total * ca_risk_mult, -1.0, 1.0))
+    context_mult *= ca_risk_mult
 
-    total = float(np.clip(total * inputs.e_mult, -1.0, 1.0))
+    # Earnings window
+    context_mult *= inputs.e_mult
 
-    # index_tailwind_mult needs the actual total at this point
-    idx_mult, idx_note, idx_hw = index_tailwind_mult(inputs.snap.symbol, total)
-    total = float(np.clip(total * idx_mult, -1.0, 1.0))
+    # Index tailwind
+    idx_mult, idx_note, idx_hw = index_tailwind_mult(inputs.snap.symbol, raw_total)
+    context_mult *= idx_mult
 
+    # Weekly misalignment — мягкий штраф
     wk_reg = inputs.wk_reg
     wk_note = inputs.wk_note
-    weekly_ok = weekly_aligns_direction(total, wk_reg)
+    weekly_ok = weekly_aligns_direction(raw_total, wk_reg)
     if not weekly_ok:
-        total = float(np.clip(total * _WEEKLY_MISALIGN_MULT, -1.0, 1.0))
+        context_mult *= _WEEKLY_MISALIGN_MULT
 
+    # Intraday conflict
     online_note = ""
     if has_intra and intra is not None:
-        if abs(total) > _INTRADAY_CONFLICT_SCORE_THR and abs(intra.score) > _INTRADAY_CONFLICT_INTRA_THR:
-            if np.sign(intra.score) != np.sign(total) and np.sign(intra.score) != 0:
-                total = float(np.clip(total * _INTRADAY_CONFLICT_MULT, -1.0, 1.0))
+        if abs(raw_total) > _INTRADAY_CONFLICT_SCORE_THR and abs(intra.score) > _INTRADAY_CONFLICT_INTRA_THR:
+            if np.sign(intra.score) != np.sign(raw_total) and np.sign(intra.score) != 0:
+                context_mult *= _INTRADAY_CONFLICT_MULT
                 online_note = "онлайн против дневного знака — снижение"
+
+    # Ограничиваем контекстный множитель: минимум 0.3, максимум 1.0
+    # Это предотвращает чрезмерную компрессию от каскада модификаторов
+    context_mult = float(np.clip(context_mult, 0.3, 1.0))
+
+    total = float(np.clip(raw_total * context_mult, -1.0, 1.0))
 
     ca_note = ""
     if inputs.cross_asset and inputs.cross_asset.risk_regime != "neutral":
