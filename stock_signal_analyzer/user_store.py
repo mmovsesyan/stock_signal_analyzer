@@ -81,7 +81,12 @@ def _save_raw(path: Path, data: dict[str, Any]) -> None:
     # Атомарная запись с ограниченными правами (0o600 — только владелец)
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        os.write(fd, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+        data = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        offset = 0
+        total = len(data)
+        while offset < total:
+            written = os.write(fd, data[offset:])
+            offset += written
     finally:
         os.close(fd)
     tmp.replace(path)

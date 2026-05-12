@@ -121,7 +121,8 @@ def run_signal_collection() -> dict[str, Any]:
         for sym in symbols:
             try:
                 report = build_report(sym, fast_mode=True)
-                record = build_record_from_report(report, report.ref_price, "USD")
+                currency = "RUB" if sym.endswith(".ME") else "USD"
+                record = build_record_from_report(report, report.ref_price, currency)
                 append_signal_record(log_path_from_env(), record)
                 collected += 1
             except Exception:

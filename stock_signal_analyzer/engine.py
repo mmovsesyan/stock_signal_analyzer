@@ -354,7 +354,7 @@ def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tup
                     polygon_news = result
             except Exception as e:
                 # Логируем, но не падаем - продолжаем с пустым списком
-                pass
+                _log.warning("News fetch failed for source '%s': %s", source, e)
 
     return ticker_news, fh_news, macro_news, polygon_news
 

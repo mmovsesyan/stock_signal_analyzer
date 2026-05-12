@@ -46,13 +46,15 @@ from sqlalchemy.orm import (
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///data/stock_signals.db")
 
-_engine = create_engine(
-    _DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-    echo=False,
-)
+_engine_kwargs = {
+    "pool_pre_ping": True,
+    "echo": False,
+}
+if not _DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs["pool_size"] = 5
+    _engine_kwargs["max_overflow"] = 10
+
+_engine = create_engine(_DATABASE_URL, **_engine_kwargs)
 
 _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False)
 

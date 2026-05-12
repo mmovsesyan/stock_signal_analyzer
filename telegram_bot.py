@@ -111,7 +111,9 @@ def _load_approved_users() -> set[int]:
 def _save_approved_users(approved: set[int]) -> None:
     """Сохранить список одобренных пользователей."""
     import json as _json
-    os.makedirs(os.path.dirname(_APPROVED_USERS_FILE), exist_ok=True)
+    dirn = os.path.dirname(_APPROVED_USERS_FILE)
+    if dirn:
+        os.makedirs(dirn, exist_ok=True)
     with open(_APPROVED_USERS_FILE, "w", encoding="utf-8") as f:
         _json.dump({"approved": list(approved)}, f)
 
@@ -664,6 +666,7 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         # Сохранить тариф
         prefs = load_prefs(target_uid)
+        prefs.tier = plan
         save_prefs(target_uid, prefs)
 
         plan_names = {"free": "🆓 Free", "pro": "⭐ Pro", "premium": "💎 Premium"}
@@ -732,6 +735,11 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     approved = _load_approved_users()
     approved.add(target_uid)
     _save_approved_users(approved)
+
+    # Сохранить тариф
+    prefs = load_prefs(target_uid)
+    prefs.tier = plan
+    save_prefs(target_uid, prefs)
 
     # Уведомить пользователя
     plan_names = {"free": "🆓 Free", "pro": "⭐ Pro", "premium": "💎 Premium"}
@@ -1665,9 +1673,12 @@ def _check_alert_and_record(sym: str, score: float, tier: str, direction: str) -
                     arrow = "📈" if delta > 0 else "📉"
                     alert_text = f"{arrow} {sym}: score {prev.score:+.2f} → {score:+.2f} (Δ{delta:+.2f})"
                     alert_key = f"delta:{sym}:{score:.2f}"
-                    if alert_key not in _seen_alerts:
-                        _seen_alerts.add(alert_key)
-                        alert = alert_text
+                if alert_key not in _seen_alerts:
+                    _seen_alerts.add(alert_key)
+                    # Prune old entries to prevent memory leak
+                    if len(_seen_alerts) > 1000:
+                        _seen_alerts.clear()
+                    alert = alert_text
 
         # Решаем, нужно ли записать сигнал
         should_record = False

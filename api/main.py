@@ -87,6 +87,9 @@ def _check_rate_limit(client_id: str) -> bool:
     now = time.time()
     calls = _rate_store[client_id]
     _rate_store[client_id] = [t for t in calls if now - t < 60]
+    if not _rate_store[client_id]:
+        del _rate_store[client_id]
+        return True
     if len(_rate_store[client_id]) >= _RATE_LIMIT:
         return False
     _rate_store[client_id].append(now)
