@@ -290,7 +290,7 @@ def _learning_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
     report_status = "✅" if prefs.receive_learning_report else "❌"
     kb = [
         [KeyboardButton("📊 Показать отчёт"), KeyboardButton("📈 Статистика исходов")],
-        [KeyboardButton(f"{report_status} Получать learning report")],
+        [KeyboardButton("🧪 Бэктест"), KeyboardButton(f"{report_status} Получать learning report")],
     ]
     if _is_admin(uid):
         kb.append([KeyboardButton("🔄 Принудительное обучение")])
@@ -1988,6 +1988,35 @@ async def cmd_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
 
 
+async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/backtest — показать отчёт бэктеста и валидацию сигналов."""
+    if not update.message:
+        return
+    try:
+        from stock_signal_analyzer.backtest_validator import (
+            BacktestValidator, format_backtest_report, format_validation_result, get_validator
+        )
+        validator = BacktestValidator()
+        report = validator.generate_report()
+        if not report:
+            await update.message.reply_text(
+                "🧪 <b>Бэктест</b>\n\n"
+                "Недостаточно данных. Бэктест появится после 15+ закрытых сигналов.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        body = format_backtest_report(report)
+        for chunk in body:
+            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def on_menu_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_backtest(update, context)
+
+
 async def on_menu_learning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = _uid(update)
     if update.message:
@@ -2403,6 +2432,7 @@ async def post_init(application: Application) -> None:
         BotCommand("export", "Выгрузить лог сигналов"),
         BotCommand("learning", "Отчёт обучения и LLM"),
         BotCommand("stats", "Статистика исходов"),
+        BotCommand("backtest", "Бэктест и валидация сигналов"),
         BotCommand("help", "Помощь"),
     ]
     try:
@@ -2483,6 +2513,7 @@ def main() -> int:
     app.add_handler(CommandHandler("learning", cmd_learning))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("force_learn", cmd_force_learn))
+    app.add_handler(CommandHandler("backtest", cmd_backtest))
     app.add_handler(
         MessageHandler(filters.Regex(r"^/анализ(?:@\w+)?(?:\s+.*)?$"), cmd_signal_ru)
     )
@@ -2512,6 +2543,7 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Статистика исходов$"), on_menu_show_stats))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Получать learning report$"), on_menu_toggle_learn_report))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Принудительное обучение$"), on_menu_force_learn))
+    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Бэктест$"), on_menu_backtest))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в обучение$"), on_menu_back_to_learning))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в разделы$"), on_menu_back_sections))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в настройки$"), on_menu_back_to_settings))

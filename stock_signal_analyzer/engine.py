@@ -138,6 +138,9 @@ class SignalReport:
     # Аналитика Wall Street (Finnhub, только US)
     analyst_detail: str = ""
     earnings_detail: str = ""
+    # Backtest validation
+    validation_advice: str = ""  # "✅ Advisable" / "⚠️ Not validated" / "ℹ️ Insufficient data"
+    validation_confidence: float = 0.0  # 0-1, confidence based on historical performance
 
 
 # ── Приватные датаклассы для промежуточных результатов ───────────────────────
@@ -963,4 +966,17 @@ def build_report(
         rec["cross_asset_mult"] = ca_rm
         rec["position_size_final"] = pos_size_res.final_pct
         append_signal_record(log_p, rec)
+
+    # ── Backtest validation: проверить историческую прибыльность ──
+    try:
+        from .backtest_validator import validate_signal as _validate
+        direction = "long" if rep.score > 0.05 else ("short" if rep.score < -0.05 else "neutral")
+        market = "ru" if inputs.snap.symbol.endswith(".ME") else "us"
+        vr = _validate(tier=rep.signal_tier, direction=direction, market=market)
+        rep.validation_advice = "✅ Advisable" if vr.should_advice else ("⚠️ Not validated" if vr.confidence > 0 else "ℹ️ Insufficient data")
+        rep.validation_confidence = vr.confidence
+    except Exception:
+        rep.validation_advice = "ℹ️ Validation unavailable"
+        rep.validation_confidence = 0.0
+
     return rep
