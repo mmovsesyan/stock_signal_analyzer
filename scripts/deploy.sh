@@ -830,14 +830,33 @@ do_update_deps() {
     if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
         # Docker mode
         info "Обновляю pip пакеты в контейнерах..."
-        docker compose exec -T api pip install --upgrade pip -q
+
+        # Проверяю что контейнер api запущен
+        if ! docker compose ps api 2>/dev/null | grep -q "Up"; then
+            fail "Контейнер api не запущен. Сначала запустите сервисы."
+            return 1
+        fi
+
+        info "Обновляю pip..."
+        local pip_out
+        if pip_out=$(docker compose exec -T api pip install --upgrade pip 2>&1); then
+            ok "pip обновлён"
+        else
+            warn "pip не обновился: $pip_out"
+        fi
+
         for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-dev.txt; do
             if [ -f "$PROJECT_DIR/$reqfile" ]; then
                 info "Обновляю $reqfile..."
-                docker compose exec -T api pip install --upgrade -r "/app/$reqfile" \
-                    && ok "$reqfile обновлён" || warn "$reqfile не обновился"
+                local out
+                if out=$(docker compose exec -T api pip install --upgrade -r "/app/$reqfile" 2>&1); then
+                    ok "$reqfile обновлён"
+                else
+                    warn "$reqfile: $out"
+                fi
             fi
         done
+
         info "Перезапускаю контейнеры..."
         docker compose restart
         ok "Docker-зависимости обновлены"
