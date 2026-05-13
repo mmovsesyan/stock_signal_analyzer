@@ -2353,8 +2353,8 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         prefs = load_prefs(uid)
         if not prefs.notify_strong_outside:
             continue
-        if not prefs.watchlist:
-            continue
+        # Не пропускаем пользователя если watchlist пуст —
+        # уведомления вне watchlist всё равно должны работать.
 
         changed = False
 
@@ -2370,14 +2370,15 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 continue
             tier = getattr(rep, "signal_tier", "C")
-            if tier != "A":
+            # Уведомляем по tier A и B (не только A)
+            if tier not in ("A", "B"):
                 continue
             if abs(rep.score) < prefs.strong_threshold:
                 continue
             # Отправить уведомление
             text = (
                 f"⭐ <b>Сигнал по вашему watchlist</b>\n"
-                f"{_esc(sym)} — класс <b>A</b> | score {rep.score:+.3f}\n\n"
+                f"{_esc(sym)} — класс <b>{tier}</b> | score {rep.score:+.3f}\n\n"
             ) + format_signal_report(rep)
             try:
                 for chunk in split_telegram_html(text):
