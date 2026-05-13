@@ -71,8 +71,12 @@ def classify_signal_tier(
         reasons_a.append("тонкий объём (ликвидность)")
     if vol_align_mult < 0.99:
         reasons_a.append("объём не подтверждает направление")
-    if adx14 < 18.5 and not has_chart_pattern:
-        reasons_a.append("ADX низкий и нет паттерна на графике")
+    if adx14 < 20.0 and not has_chart_pattern:
+        # Повышен порог: ADX < 20 без паттерна = боковик, не даём A
+        reasons_a.append(f"ADX={adx14:.1f}<20 и нет паттерна на графике")
+    if adx14 < 18.5:
+        # ADX совсем низкий — не A даже с паттерном
+        reasons_a.append(f"ADX={adx14:.1f}<18.5 — выраженный боковик")
     if not _news_aligned(total, news_score):
         reasons_a.append("новости против итога")
     if not weekly_aligned:
@@ -88,7 +92,8 @@ def classify_signal_tier(
             "Высокое качество по внутренним правилам (согласованность, макро, ликвидность, контекст).",
         )
 
-    if abs_t >= 0.32 and confidence >= 0.42 and macro_dampening >= 0.85:
+    # Tier B: confidence >= 0.50 (повышен с 0.42), abs_t >= 0.32, ADX >= 20 (обязателен)
+    if abs_t >= 0.32 and confidence >= 0.50 and macro_dampening >= 0.85 and adx14 >= 20.0:
         return (
             "B",
             "Среднее качество. До класса A не хватает: " + "; ".join(reasons_a[:4])

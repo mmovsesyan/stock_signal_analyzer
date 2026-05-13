@@ -720,3 +720,191 @@ def test_macd_divergence_returns_tuple():
     adj, note = _macd_histogram_divergence(close)
     assert isinstance(adj, float)
     assert isinstance(note, str)
+
+
+# ===========================================================================
+# trade_plan.py — R:R и пороги (FIXES 2026-05-13)
+# ===========================================================================
+
+from stock_signal_analyzer.trade_plan import build_trade_plan
+
+
+def test_trade_plan_tier_a_rr_above_1_5():
+    """Tier A, ADX >= 25 → R:R1 >= 1.5."""
+    tp = build_trade_plan(
+        score=0.5, ref_price=100.0, atr_pct=2.0,
+        signal_tier='A', adx14=25.0, confidence=0.8
+    )
+    assert tp.direction != 'none', "Ожидался торговый план"
+    assert tp.risk_reward_1 >= 1.5, f"R:R1={tp.risk_reward_1:.2f} < 1.5"
+
+
+def test_trade_plan_tier_b_rr_above_1_5():
+    """Tier B, ADX >= 25 → R:R1 >= 1.5."""
+    tp = build_trade_plan(
+        score=0.5, ref_price=100.0, atr_pct=2.0,
+        signal_tier='B', adx14=25.0, confidence=0.8
+    )
+    assert tp.direction != 'none', "Ожидался торговый план"
+    assert tp.risk_reward_1 >= 1.5, f"R:R1={tp.risk_reward_1:.2f} < 1.5"
+
+
+def test_trade_plan_low_adx_no_plan():
+    """ADX < 20 → нет торгового плана (R:R ниже минимума)."""
+    tp = build_trade_plan(
+        score=0.5, ref_price=100.0, atr_pct=2.0,
+        signal_tier='A', adx14=17.0, confidence=0.8, has_pattern=False
+    )
+    assert tp.direction == 'none', "ADX < 20 без паттерна должен блокировать план"
+
+
+def test_trade_plan_low_score_no_plan():
+    """|score| < 0.30 → нет торгового плана."""
+    tp = build_trade_plan(
+        score=0.25, ref_price=100.0, atr_pct=2.0,
+        signal_tier='A', adx14=25.0
+    )
+    assert tp.direction == 'none', "|score|=0.25 должен блокировать план"
+
+
+def test_trade_plan_zero_risk_no_plan():
+    """Нулевой ATR → нет торгового плана."""
+    tp = build_trade_plan(
+        score=0.5, ref_price=100.0, atr_pct=0.0,
+        signal_tier='A', adx14=25.0
+    )
+    assert tp.direction == 'none'
+
+
+def test_trade_plan_stop_below_entry_long():
+    """Long: стоп всегда ниже цены входа."""
+    tp = build_trade_plan(
+        score=0.5, ref_price=100.0, atr_pct=2.0,
+        signal_tier='A', adx14=25.0, confidence=0.8
+    )
+    if tp.direction == 'long':
+        assert tp.stop_price < tp.entry_price
+
+
+def test_trade_plan_target_above_entry_long():
+    """Long: цели выше цены входа."""
+    tp = build_trade_plan(
+        score=0.5, ref_price=100.0, atr_pct=2.0,
+        signal_tier='A', adx14=25.0, confidence=0.8
+    )
+    if tp.direction == 'long':
+        assert tp.target1_price > tp.entry_price
+        assert tp.target2_price > tp.target1_price
+
+
+# ===========================================================================
+# signal_filter.py — ADX hard block и score thresholds (FIXES 2026-05-13)
+# ===========================================================================
+
+from stock_signal_analyzer.signal_filter import (
+    SignalFilter, get_balanced_filter, get_conservative_filter, get_aggressive_filter
+)
+
+
+def _make_mock_report(**kwargs):
+    """Создать минимальный mock SignalReport для тестирования фильтра."""
+    from types import SimpleNamespace
+    defaults = dict(
+        signal_tier='A',
+        score=0.5,
+        confidence=0.7,
+        adx14=25.0,
+        volume_score=0.3,
+        macro_dampening=0.95,
+        weekly_regime='up',
+        timing_detail='',
+    )
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+def test_signal_filter_adx_hard_block():
+    """ADX < 20 при adx_hard_block=True → блокировка."""
+    sf = get_balanced_filter()
+    report = _make_mock_report(adx14=18.0)
+    result = sf.filter(report)
+    assert result.should_trade is False
+    assert 'ADX' in result.reason or 'боковик' in result.reason.lower()
+
+
+def test_signal_filter_score_below_030_blocked():
+    """|score| < 0.30 → всегда блокировка."""
+    sf = get_balanced_filter()
+    report = _make_mock_report(score=0.25)
+    result = sf.filter(report)
+    assert result.should_trade is False
+
+
+def test_signal_filter_tier_c_blocked():
+    """Tier C → блокировка для всех фильтров."""
+    for sf in [get_conservative_filter(), get_balanced_filter()]:
+        report = _make_mock_report(signal_tier='C')
+        result = sf.filter(report)
+        assert result.should_trade is False
+
+
+def test_signal_filter_balanced_allows_tier_b():
+    """Balanced фильтр разрешает tier B при хороших условиях."""
+    sf = get_balanced_filter()
+    report = _make_mock_report(signal_tier='B', adx14=25.0, confidence=0.6, volume_score=0.3)
+    result = sf.filter(report)
+    # Не обязательно should_trade=True (зависит от quality_score),
+    # но tier B должен пройти первоначальную проверку класса
+    assert 'Класс B' not in result.reason
+
+
+def test_signal_filter_volume_below_avg_reduces_quality():
+    """volume_score <= 0 снижает качество сигнала."""
+    sf = get_balanced_filter()
+    report_good = _make_mock_report(volume_score=0.5)
+    report_bad = _make_mock_report(volume_score=-0.1)
+    result_good = sf.filter(report_good)
+    result_bad = sf.filter(report_bad)
+    assert result_good.score >= result_bad.score
+
+
+# ===========================================================================
+# risk_context.py — ADX threshold in tier B (FIXES 2026-05-13)
+# ===========================================================================
+
+def test_classify_tier_b_requires_adx_20():
+    """ADX < 20 без паттерна → не tier B (должен быть C)."""
+    tier, _ = classify_signal_tier(
+        total=0.45, confidence=0.6, macro_dampening=0.90,
+        adx14=19.0, news_score=0.2, liq_mult=1.0,
+        vol_align_mult=1.0, has_chart_pattern=False,
+        weekly_aligned=True, earnings_window=False, index_headwind=False
+    )
+    assert tier == 'C', f"ADX=19 без паттерна должен дать C, получили {tier}"
+
+
+def test_classify_tier_b_confidence_50():
+    """Tier B требует confidence >= 0.50."""
+    tier, rationale = classify_signal_tier(
+        total=0.45, confidence=0.48, macro_dampening=0.90,
+        adx14=22.0, news_score=0.2, liq_mult=1.0,
+        vol_align_mult=1.0, has_chart_pattern=False,
+        weekly_aligned=True, earnings_window=False, index_headwind=False
+    )
+    # Confidence < 0.50 → не tier B  
+    assert tier == 'C', f"confidence=0.48 < 0.50 должен дать C, получили {tier}"
+
+
+# ===========================================================================
+# volume_pressure.py — ZeroDivisionError guard (FIXES 2026-05-13)
+# ===========================================================================
+
+from stock_signal_analyzer.volume_pressure import _volume_activity_score
+
+
+def test_volume_activity_zero_volume_returns_zero():
+    """Нулевой объём → score = 0.0 (нет ZeroDivisionError)."""
+    close = pd.Series([100.0 + i * 0.5 for i in range(25)], dtype=float)
+    vol = pd.Series([0.0] * 25, dtype=float)
+    result = _volume_activity_score(close, vol)
+    assert result == pytest.approx(0.0), f"Ожидали 0.0, получили {result}"

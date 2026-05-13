@@ -32,19 +32,28 @@ class TradePlan:
     plan_text: str
 
 
-_DIR_THRESHOLD = 0.15
+# Порог для генерации торгового плана: |score| < 0.30 = недостаточная чёткость сигнала
+_DIR_THRESHOLD = 0.30
 _SLIPPAGE_ATR_MULT = 0.3
 
 # (stop_mult, target1_mult, target2_mult, hold_days_base, hold_days_trend)
+# Цели скорректированы для обеспечения минимального R:R >= 1.5 ПОСЛЕ учёта slippage:
+# Slippage = _SLIPPAGE_ATR_MULT * atr_abs добавляется к расстоянию стопа (risk увеличивается)
+# Tier A: stop=1.2, t1=2.4 -> R:R = (2.4) / (1.2 + 0.3) = 1.60 >= 1.5 ✓
+# Tier B: stop=1.5, t1=2.8 -> R:R = (2.8) / (1.5 + 0.3) = 1.56 >= 1.5 ✓
 _TIER_PARAMS: dict[str, tuple[float, float, float, int, int]] = {
-    "A": (1.2, 2.0, 3.0, 5, 10),
-    "B": (1.5, 2.0, 2.8, 5, 7),
+    "A": (1.2, 2.4, 3.6, 5, 10),
+    "B": (1.5, 2.8, 4.0, 5, 7),
 }
-_DEFAULT_PARAMS = (1.5, 2.0, 2.5, 5, 5)
+_DEFAULT_PARAMS = (1.5, 2.8, 4.0, 5, 5)
 
-# ADX 16-20: стопы шире, цели уже (боковик опасен, R:R хуже)
-_SIDEWAYS_STOP_SCALE = 1.3
-_SIDEWAYS_TARGET_SCALE = 0.75
+# ADX 16-20: стопы шире, цели уже (боковик опасен)
+# Минимальное масштабирование цели 0.90 чтобы R:R не упал ниже 1.0
+_SIDEWAYS_STOP_SCALE = 1.2
+_SIDEWAYS_TARGET_SCALE = 0.90
+
+# Минимальный R:R для генерации торгового плана
+_MIN_RR = 1.5
 
 
 def _position_size(confidence: float) -> float:
@@ -174,8 +183,17 @@ def build_trade_plan(
     target2_pct = (target2_price / ref_price - 1.0) * 100.0
 
     risk = abs(ref_price - stop_price)
-    rr1 = abs(target1_price - ref_price) / risk if risk > 0 else 0.0
-    rr2 = abs(target2_price - ref_price) / risk if risk > 0 else 0.0
+    if risk <= 0:
+        return _none_plan(ref_price, "Нет торгового плана (нулевой риск, стоп совпадает с ценой входа).")
+    rr1 = abs(target1_price - ref_price) / risk
+    rr2 = abs(target2_price - ref_price) / risk
+
+    # Проверяем минимальный R:R — если не достигается, план не генерируем
+    if rr1 < _MIN_RR:
+        return _none_plan(
+            ref_price,
+            f"Нет торгового плана (R:R={rr1:.2f} < {_MIN_RR:.1f} — риск/доходность неприемлемы).",
+        )
 
     max_hold = hold_trend if adx14 > 25.0 else hold_base
 

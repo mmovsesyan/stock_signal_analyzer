@@ -42,24 +42,28 @@ class SignalFilter:
     def __init__(
         self,
         min_tier: str = 'A',
-        min_confidence: float = 0.7,
+        min_confidence: float = 0.50,
         min_adx: float = 20.0,
-        min_volume_score: float = 0.2,
+        min_volume_score: float = 0.0,
         min_macro_dampening: float = 0.85,
-        min_score: float = 0.35,
+        min_score: float = 0.30,
         require_weekly_alignment: bool = True,
-        avoid_earnings_window: bool = True
+        avoid_earnings_window: bool = True,
+        require_volume_above_avg: bool = True,
+        adx_hard_block: bool = True,
     ):
         """
         Args:
             min_tier: Минимальный класс сигнала ('A', 'B', 'C')
             min_confidence: Минимальная согласованность компонентов
             min_adx: Минимальный ADX (сила тренда)
-            min_volume_score: Минимальный score объёма
+            min_volume_score: Минимальный score объёма (дополнительный порог)
             min_macro_dampening: Минимальный макро-коэффициент
-            min_score: Минимальный общий score
+            min_score: Минимальный общий score (>= 0.30 по заданию)
             require_weekly_alignment: Требовать совпадение с недельным трендом
             avoid_earnings_window: Избегать окна отчётности
+            require_volume_above_avg: Объём должен быть выше 20дней средней (volume_score > 0)
+            adx_hard_block: Жёстко блокировать сигналы при ADX < min_adx (False = мягкий штраф)
         """
         self.min_tier = min_tier
         self.min_confidence = min_confidence
@@ -69,6 +73,8 @@ class SignalFilter:
         self.min_score = min_score
         self.require_weekly_alignment = require_weekly_alignment
         self.avoid_earnings_window = avoid_earnings_window
+        self.require_volume_above_avg = require_volume_above_avg
+        self.adx_hard_block = adx_hard_block
 
         # Порядок классов
         self.tier_order = {'A': 3, 'B': 2, 'C': 1}
@@ -83,7 +89,7 @@ class SignalFilter:
         reasons = []
         quality_score = 100.0
 
-        # 1. Проверка класса сигнала
+        # 1. Проверка класса сигнала (жёсткая: C всегда блок)
         if self.tier_order.get(report.signal_tier, 0) < self.tier_order.get(self.min_tier, 0):
             return FilterResult(
                 should_trade=False,
@@ -91,30 +97,40 @@ class SignalFilter:
                 score=0.0
             )
 
-        # 2. Проверка общего score
-        if abs(report.score) < self.min_score:
+        # 2. Проверка общего score (жёсткая: >= 0.30 обязательно)
+        if abs(report.score) < max(self.min_score, 0.30):
             return FilterResult(
                 should_trade=False,
-                reason=f"Score {report.score:.3f} ниже минимального {self.min_score}",
+                reason=f"Score {report.score:.3f} ниже минимального {max(self.min_score, 0.30):.2f}",
                 score=20.0
             )
 
-        # 3. Проверка confidence
+        # 3. Проверка ADX (сила тренда)
+        # adx_hard_block=True: жёсткий блок без тренда — ADX > 20 обязателен для входа
+        if report.adx14 < self.min_adx:
+            if self.adx_hard_block:
+                return FilterResult(
+                    should_trade=False,
+                    reason=f"Боковик: ADX {report.adx14:.1f} < {self.min_adx:.0f} — сигналы в боковике запрещены",
+                    score=0.0
+                )
+            quality_score -= 20
+            reasons.append(f"Слабый тренд: ADX {report.adx14:.1f} < {self.min_adx}")
+
+        # 4. Проверка confidence
         if report.confidence < self.min_confidence:
             quality_score -= 20
             reasons.append(f"Низкая согласованность: {report.confidence:.2f} < {self.min_confidence}")
 
-        # 4. Проверка ADX (сила тренда)
-        if report.adx14 < self.min_adx:
+        # 5. Проверка объёма (volume_score > 0 = объём выше среднего)
+        if self.require_volume_above_avg and report.volume_score <= 0.0:
             quality_score -= 15
-            reasons.append(f"Слабый тренд: ADX {report.adx14:.1f} < {self.min_adx}")
-
-        # 5. Проверка объёма
-        if abs(report.volume_score) < self.min_volume_score:
-            quality_score -= 15
+            reasons.append(f"Объём ниже 20дн средней: volume_score={report.volume_score:.3f}")
+        elif self.min_volume_score > 0 and abs(report.volume_score) < self.min_volume_score:
+            quality_score -= 10
             reasons.append(f"Слабый объём: {report.volume_score:.3f} < {self.min_volume_score}")
 
-        # 6. Проверка макро-фона
+        # 6. Проверка макро-фона (мягкая: снижает quality)
         if report.macro_dampening < self.min_macro_dampening:
             quality_score -= 10
             reasons.append(f"Плохой макро-фон: {report.macro_dampening:.2f} < {self.min_macro_dampening}")
@@ -180,64 +196,73 @@ class SignalFilter:
 
 def get_conservative_filter() -> SignalFilter:
     """
-    Консервативный фильтр - только лучшие сигналы.
+    Консервативный фильтр - только лучшие сигналы (tier A).
 
     Ожидаемые метрики:
     - Win rate: 65-75%
     - Profit factor: 2.5-3.5
     - Сигналов в месяц: 10-20
+    Пороги: confidence >= 0.45 (требование для tier A), ADX > 25
     """
     return SignalFilter(
         min_tier='A',
-        min_confidence=0.75,
+        min_confidence=0.45,  # Мин. порог для tier A
         min_adx=25.0,
-        min_volume_score=0.25,
+        min_volume_score=0.0,
         min_macro_dampening=0.90,
         min_score=0.40,
         require_weekly_alignment=True,
-        avoid_earnings_window=True
+        avoid_earnings_window=True,
+        require_volume_above_avg=True,
+        adx_hard_block=True,
     )
 
 
 def get_balanced_filter() -> SignalFilter:
     """
-    Сбалансированный фильтр - хорошее соотношение качества и количества.
+    Сбалансированный фильтр - tier A/B, ADX > 20 (жёстко).
 
     Ожидаемые метрики:
     - Win rate: 60-70%
     - Profit factor: 2.0-2.5
     - Сигналов в месяц: 30-50
+    Пороги: confidence >= 0.50 (для tier B), ADX > 20 (жёсткий блок)
     """
     return SignalFilter(
-        min_tier='A',
-        min_confidence=0.70,
+        min_tier='B',
+        min_confidence=0.50,  # Мин. порог для tier B
         min_adx=20.0,
-        min_volume_score=0.20,
+        min_volume_score=0.0,
         min_macro_dampening=0.85,
-        min_score=0.35,
+        min_score=0.30,
         require_weekly_alignment=True,
-        avoid_earnings_window=True
+        avoid_earnings_window=True,
+        require_volume_above_avg=True,
+        adx_hard_block=True,
     )
 
 
 def get_aggressive_filter() -> SignalFilter:
     """
-    Агрессивный фильтр - больше сигналов, но ниже качество.
+    Агрессивный фильтр - tier A/B, ADX > 20 (жёстко), больше сигналов.
 
     Ожидаемые метрики:
     - Win rate: 55-65%
     - Profit factor: 1.5-2.0
     - Сигналов в месяц: 50-100
+    Пороги: confidence >= 0.45, ADX > 20 (жёсткий блок)
     """
     return SignalFilter(
         min_tier='B',
-        min_confidence=0.60,
-        min_adx=18.0,
-        min_volume_score=0.15,
+        min_confidence=0.45,
+        min_adx=20.0,
+        min_volume_score=0.0,
         min_macro_dampening=0.80,
         min_score=0.30,
         require_weekly_alignment=False,
-        avoid_earnings_window=True
+        avoid_earnings_window=True,
+        require_volume_above_avg=True,
+        adx_hard_block=True,
     )
 
 

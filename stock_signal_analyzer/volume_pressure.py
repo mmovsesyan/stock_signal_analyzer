@@ -52,8 +52,18 @@ def _volume_activity_score(close: pd.Series, vol: pd.Series, period: int = 20) -
     if len(c) < max(period, 6) + 1:
         return 0.0
     sma_v = v.rolling(period).mean()
-    ratio = float(v.iloc[-1] / (sma_v.iloc[-1] + 1e-9))
-    ret5 = float(c.iloc[-1] / c.iloc[-6] - 1.0)
+    sma_last = float(sma_v.iloc[-1])
+    vol_last = float(v.iloc[-1])
+    # Защита от ZeroDivisionError и log(0)
+    if sma_last <= 0 or vol_last <= 0:
+        return 0.0
+    ratio = vol_last / (sma_last + 1e-9)
+    # ratio >= 0 гарантировано проверкой vol_last > 0
+    c_last = float(c.iloc[-1])
+    c_prev = float(c.iloc[-6])
+    if c_prev <= 0:
+        return 0.0
+    ret5 = c_last / c_prev - 1.0
     vol_skew = math.tanh(math.log(max(ratio, 1e-6)) * 1.0)
     direction = math.tanh(ret5 * 25.0)
     return float(max(-1.0, min(1.0, direction * abs(vol_skew))))
