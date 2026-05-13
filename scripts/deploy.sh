@@ -834,7 +834,7 @@ do_update_deps() {
         for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-dev.txt; do
             if [ -f "$PROJECT_DIR/$reqfile" ]; then
                 info "Обновляю $reqfile..."
-                docker compose exec -T api pip install --upgrade -r "$PROJECT_DIR/$reqfile" -q 2>/dev/null \
+                docker compose exec -T api pip install --upgrade -r "/app/$reqfile" -q 2>/dev/null \
                     && ok "$reqfile обновлён" || warn "$reqfile не обновился"
             fi
         done
