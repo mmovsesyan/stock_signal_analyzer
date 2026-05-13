@@ -107,7 +107,12 @@ check_docker() {
 }
 
 is_running() {
-    docker compose ps --status running 2>/dev/null | grep -q "stock-signal" 2>/dev/null
+    source "$ENV_FILE" 2>/dev/null || true
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        docker compose ps --status running 2>/dev/null | grep -q "stock-signal" 2>/dev/null
+    else
+        systemctl is-active --quiet "stock-signal-bot" 2>/dev/null || pgrep -f "telegram_bot.py" &>/dev/null
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -167,6 +172,10 @@ do_configure() {
     local new_admin
     new_admin=$(ask_input_required "Ваш Telegram ID (число)" "$cur_admin")
     if [ -n "$new_admin" ]; then cur_admin="$new_admin"; fi
+    if [ -z "$cur_admin" ]; then
+        fail "Admin Chat ID обязателен!"
+        return 1
+    fi
     echo ""
 
     # ── 2. Massive (ex-Polygon.io) (рекомендуется) ──
@@ -243,8 +252,18 @@ do_configure() {
     if [ -n "$new_max_chat" ]; then cur_max_chat="$new_max_chat"; fi
     echo ""
 
-    # ── 5. PostgreSQL password ──
-    echo -e "  ${BOLD}5. Пароль PostgreSQL${NC}"
+    # ── 5. Режим деплоя ──
+    echo -e "  ${BOLD}5. Режим установки${NC}"
+    echo ""
+    ask_choice "Как установить?" \
+        "Docker (рекомендуется: всё в контейнерах)" \
+        "systemd (напрямую, как сервис)" \
+        "Тестовый запуск (без сервиса)"
+    local deploy_choice=$?
+    echo ""
+
+    # ── 5b. PostgreSQL password ──
+    echo -e "  ${BOLD}5b. Пароль PostgreSQL${NC}"
     echo "     Используется для внутренней БД (не нужна регистрация)."
     echo "     Будет сгенерирован автоматически если оставить пустым."
     echo ""
@@ -278,6 +297,31 @@ do_configure() {
     local collect_values=("14400" "3600" "28800" "0")
     local collect_sec="${collect_values[$collect_choice]}"
 
+    # Хосты для разных режимов
+    case $deploy_choice in
+        0)  # Docker
+            DB_HOST="postgres"
+            REDIS_HOST="redis"
+            OLLAMA_HOST="http://ollama:11434"
+            SIGNAL_LOG="/data/signals/signals.jsonl"
+            DATA_DIR="/data"
+            ;;
+        1)  # systemd
+            DB_HOST="localhost"
+            REDIS_HOST="localhost"
+            OLLAMA_HOST="http://localhost:11434"
+            SIGNAL_LOG="/var/lib/stock_signal_analyzer/signals.jsonl"
+            DATA_DIR="/var/lib/stock_signal_analyzer"
+            ;;
+        *)  # test mode
+            DB_HOST="localhost"
+            REDIS_HOST="localhost"
+            OLLAMA_HOST="http://localhost:11434"
+            SIGNAL_LOG="$PROJECT_DIR/data/signals.jsonl"
+            DATA_DIR="$PROJECT_DIR/data"
+            ;;
+    esac
+
     # Записать .env
     cat > "$ENV_FILE" << ENVEOF
 # Stock Signal Analyzer — конфигурация
@@ -298,17 +342,17 @@ MAX_CHAT_ID=${cur_max_chat}
 MAX_NOTIFY=1
 
 # ── LLM (Ollama) ─────────────────────────────
-OLLAMA_HOST=http://ollama:11434
+OLLAMA_HOST=${OLLAMA_HOST}
 OLLAMA_MODEL=${ollama_model}
 LLM_SENTIMENT=${llm_enabled}
 
 # ── Database ──────────────────────────────────
 POSTGRES_PASSWORD=${cur_pgpass}
-DATABASE_URL=postgresql://ssa:${cur_pgpass}@postgres:5432/stock_signals
+DATABASE_URL=postgresql://ssa:${cur_pgpass}@${DB_HOST}:5432/stock_signals
 
 # ── Redis ─────────────────────────────────────
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/1
+CELERY_BROKER_URL=redis://${REDIS_HOST}:6379/0
+CELERY_RESULT_BACKEND=redis://${REDIS_HOST}:6379/1
 
 # ── Автоматизация ─────────────────────────────
 COLLECT_INTERVAL_SEC=${collect_sec}
@@ -318,8 +362,8 @@ NOTIFY_MIN_TIER=A
 API_RATE_LIMIT_PER_MIN=30
 
 # ── Пути ──────────────────────────────────────
-SSA_SIGNAL_LOG=/data/signals/signals.jsonl
-STOCK_SIGNAL_DATA=/data
+SSA_SIGNAL_LOG=${SIGNAL_LOG}
+STOCK_SIGNAL_DATA=${DATA_DIR}
 ENVEOF
 
     chmod 600 "$ENV_FILE"
@@ -333,25 +377,6 @@ ENVEOF
 do_install() {
     header "Полная установка"
 
-    # Проверка Docker
-    if ! check_docker; then
-        fail "Docker не установлен"
-        echo ""
-        echo "  Установите Docker:"
-        echo "    curl -fsSL https://get.docker.com | sh"
-        echo "    sudo usermod -aG docker \$USER"
-        echo "    # перелогиньтесь"
-        echo ""
-        if ask_yes_no "Установить Docker автоматически?" "y"; then
-            curl -fsSL https://get.docker.com | sh
-            sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
-            ok "Docker установлен. Перелогиньтесь и запустите скрипт снова."
-            return
-        fi
-        return 1
-    fi
-    ok "Docker $(docker --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1)"
-
     # Настройка ключей
     if [ ! -f "$ENV_FILE" ]; then
         do_configure
@@ -363,68 +388,224 @@ do_install() {
         fi
     fi
 
-    # Сборка
-    header "Сборка образов"
-    info "Собираю Docker образы (первый раз ~2-3 мин)..."
-    docker compose build --quiet 2>/dev/null || docker compose build
-    ok "Образы собраны"
-
-    # Запуск
-    do_start
-
-    # Инициализация
-    header "Инициализация"
-    sleep 5
-
-    # Ollama модель
     source "$ENV_FILE" 2>/dev/null || true
-    local model="${OLLAMA_MODEL:-qwen2.5:1.5b}"
-    local llm="${LLM_SENTIMENT:-1}"
+    local db_host=""
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        db_host="docker"
+    elif echo "${DATABASE_URL:-}" | grep -q "localhost"; then
+        db_host="local"
+    fi
 
-    if [ "$llm" = "1" ]; then
-        info "Загружаю LLM модель $model (1-3 мин)..."
-        # Ждём Ollama
-        for i in $(seq 1 20); do
-            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then break; fi
+    if [ "$db_host" = "docker" ]; then
+        # ── Docker режим ──
+        if ! check_docker; then
+            fail "Docker не установлен"
+            echo ""
+            echo "  Установите Docker:"
+            echo "    curl -fsSL https://get.docker.com | sh"
+            echo "    sudo usermod -aG docker \$USER"
+            echo "    # перелогиньтесь"
+            echo ""
+            if ask_yes_no "Установить Docker автоматически?" "y"; then
+                curl -fsSL https://get.docker.com | sh
+                sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
+                ok "Docker установлен. Перелогиньтесь и запустите скрипт снова."
+                return
+            fi
+            return 1
+        fi
+        ok "Docker $(docker --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1)"
+
+        header "Сборка образов"
+        info "Собираю Docker образы (первый раз ~2-3 мин)..."
+        docker compose build --quiet 2>/dev/null || docker compose build
+        ok "Образы собраны"
+
+        do_start_docker
+
+        # Инициализация
+        header "Инициализация"
+        sleep 5
+
+        local model="${OLLAMA_MODEL:-qwen2.5:1.5b}"
+        local llm="${LLM_SENTIMENT:-1}"
+
+        if [ "$llm" = "1" ]; then
+            info "Загружаю LLM модель $model (1-3 мин)..."
+            for i in $(seq 1 20); do
+                if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then break; fi
+                sleep 3
+            done
+            docker compose exec -T ollama ollama pull "$model" 2>/dev/null && \
+                ok "Модель $model загружена" || warn "Модель не загрузилась (можно позже)"
+        fi
+
+        info "Инициализирую базу данных..."
+        for i in $(seq 1 10); do
+            if docker compose exec -T api python -c "from stock_signal_analyzer.db import init_db; init_db(); print('ok')" 2>/dev/null | grep -q "ok"; then
+                ok "База данных готова"
+                break
+            fi
             sleep 3
         done
-        docker compose exec -T ollama ollama pull "$model" 2>/dev/null && \
-            ok "Модель $model загружена" || warn "Модель не загрузилась (можно позже)"
+
+    elif [ "$db_host" = "local" ]; then
+        # ── Local/systemd режим ──
+        check_python || { fail "Python 3 не найден"; return 1; }
+        ok "Python $(python3 -V 2>&1 | awk '{print $2}')"
+
+        # venv
+        local venv_dir="$PROJECT_DIR/venv"
+        local venv_python="$venv_dir/bin/python"
+        if [ ! -f "$venv_python" ]; then
+            info "Создаю venv..."
+            python3 -m venv "$venv_dir"
+            ok "venv создан: $venv_dir"
+        fi
+
+        info "Устанавливаю зависимости..."
+        "$venv_dir/bin/pip" install --upgrade pip setuptools wheel -q
+        "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
+        ok "Основные зависимости установлены"
+
+        if [ -f "$PROJECT_DIR/requirements-scale.txt" ]; then
+            if ask_yes_no "Установить scale-зависимости (PostgreSQL, Redis, Celery)?" "y"; then
+                "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements-scale.txt" -q \
+                    && ok "Scale-зависимости установлены" || warn "Scale-зависимости не установились"
+            fi
+        fi
+
+        if [ -f "$PROJECT_DIR/requirements-api.txt" ]; then
+            "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements-api.txt" -q \
+                && ok "API-зависимости установлены" || warn "API-зависимости не установились"
+        fi
+
+        if [ -f "$PROJECT_DIR/requirements-tbank.txt" ]; then
+            if ask_yes_no "Установить SDK Т-Банка?" "y"; then
+                "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements-tbank.txt" -q \
+                    && ok "T-Bank SDK установлен" || warn "T-Bank SDK не установился"
+            fi
+        fi
+
+        # Данные
+        local data_dir="${STOCK_SIGNAL_DATA:-/var/lib/stock_signal_analyzer}"
+        mkdir -p "$data_dir" 2>/dev/null || true
+        ok "Директория данных: $data_dir"
+
+        # systemd
+        if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
+            if ask_yes_no "Установить systemd сервис?" "y"; then
+                do_install_systemd "$venv_python"
+            fi
+        fi
+
+        # Smoke test
+        info "Проверка импортов..."
+        if "$venv_python" -c "from stock_signal_analyzer.engine import build_report; print('OK')" 2>/dev/null; then
+            ok "Импорты работают"
+        else
+            warn "Ошибка импорта — проверьте зависимости"
+        fi
+
+    else
+        # ── Test mode ──
+        check_python || { fail "Python 3 не найден"; return 1; }
+        local venv_dir="$PROJECT_DIR/venv"
+        local venv_python="$venv_dir/bin/python"
+        if [ ! -f "$venv_python" ]; then
+            python3 -m venv "$venv_dir"
+            "$venv_dir/bin/pip" install --upgrade pip setuptools wheel -q
+            "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
+        fi
+        ok "Зависимости готовы для тестового запуска"
+        info "Запустите бота вручную: $venv_python telegram_bot.py"
     fi
 
-    # БД
-    info "Инициализирую базу данных..."
-    for i in $(seq 1 10); do
-        if docker compose exec -T api python -c "from stock_signal_analyzer.db import init_db; init_db(); print('ok')" 2>/dev/null | grep -q "ok"; then
-            ok "База данных готова"
-            break
-        fi
-        sleep 3
-    done
-
-    # Миграция
-    if [ -f "$PROJECT_DIR/data/signals.jsonl" ]; then
-        if ask_yes_no "Мигрировать существующие данные в PostgreSQL?" "y"; then
-            docker compose exec -T api python scripts/migrate_to_db.py 2>/dev/null && \
-                ok "Данные мигрированы" || warn "Миграция пропущена"
-        fi
-    fi
-
-    # Итог
     header "Установка завершена!"
-    do_status_short
+    if [ "$db_host" = "docker" ]; then
+        do_status_short
+    else
+        do_status_short
+    fi
 }
 
-# ═══════════════════════════════════════════════════════════════════════
-#  ЗАПУСК / ОСТАНОВКА
-# ═══════════════════════════════════════════════════════════════════════
+do_install_systemd() {
+    local bot_python="$1"
+    header "Systemd сервис"
 
-do_start() {
+    local svc_name="stock-signal-bot"
+    local svc_file="/etc/systemd/system/${svc_name}.service"
+    local data_dir="${STOCK_SIGNAL_DATA:-/var/lib/stock_signal_analyzer}"
+
+    cat > "$svc_file" << SVCEOF
+[Unit]
+Description=Stock Signal Analyzer Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$PROJECT_DIR
+EnvironmentFile=$ENV_FILE
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=$bot_python telegram_bot.py
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+    systemctl daemon-reload
+    systemctl enable "$svc_name" 2>/dev/null
+    ok "Сервис $svc_name установлен"
+
+    # Outcome tracker timer
+    local tracker_svc="/etc/systemd/system/stock-signal-tracker.service"
+    local tracker_timer="/etc/systemd/system/stock-signal-tracker.timer"
+
+    cat > "$tracker_svc" << TRKEOF
+[Unit]
+Description=Stock Signal Analyzer — Outcome Tracker
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$PROJECT_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=$bot_python -m stock_signal_analyzer.outcome_tracker
+TRKEOF
+
+    cat > "$tracker_timer" << TMREOF
+[Unit]
+Description=Stock Signal Analyzer — Outcome Tracker Timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Unit=stock-signal-tracker.service
+
+[Install]
+WantedBy=timers.target
+TMREOF
+
+    systemctl daemon-reload
+    systemctl enable stock-signal-tracker.timer 2>/dev/null
+    ok "Таймер outcome-tracker установлен (каждый час)"
+}
+
+check_python() {
+    command -v python3 &>/dev/null || return 1
+    return 0
+}
+
+do_start_docker() {
     header "Запуск сервисов"
     docker compose up -d
     sleep 3
 
-    # Ждём API
     info "Жду готовности API..."
     for i in $(seq 1 20); do
         if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
@@ -436,17 +617,69 @@ do_start() {
     ok "Все сервисы запущены"
 }
 
+# ═══════════════════════════════════════════════════════════════════════
+#  ЗАПУСК / ОСТАНОВКА
+# ═══════════════════════════════════════════════════════════════════════
+
+do_start() {
+    source "$ENV_FILE" 2>/dev/null || true
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        do_start_docker
+    else
+        header "Запуск бота"
+        local venv_python="$PROJECT_DIR/venv/bin/python"
+        if [ ! -f "$venv_python" ]; then
+            fail "venv не найден. Запустите установку (пункт 1)."
+            return 1
+        fi
+        local svc_name="stock-signal-bot"
+        if systemctl is-enabled "$svc_name" &>/dev/null; then
+            systemctl start "$svc_name"
+            sleep 2
+            if systemctl is-active --quiet "$svc_name"; then
+                ok "Бот запущен (systemd)"
+            else
+                fail "Бот не запустился. journalctl -u $svc_name -e"
+            fi
+        else
+            info "Systemd сервис не установлен. Запускаю вручную..."
+            set -a; source "$ENV_FILE" 2>/dev/null; set +a
+            nohup "$venv_python" telegram_bot.py > /tmp/stock-signal-bot.log 2>&1 &
+            ok "Бот запущен в фоне (PID $!)"
+        fi
+    fi
+}
+
 do_stop() {
-    header "Остановка"
-    docker compose down
-    ok "Все сервисы остановлены"
+    source "$ENV_FILE" 2>/dev/null || true
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        header "Остановка"
+        docker compose down
+        ok "Все сервисы остановлены"
+    else
+        header "Остановка бота"
+        local svc_name="stock-signal-bot"
+        if systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+            systemctl stop "$svc_name"
+            ok "Бот остановлен (systemd)"
+        else
+            pkill -f "telegram_bot.py" 2>/dev/null && ok "Бот остановлен" || warn "Бот не запущен"
+        fi
+    fi
 }
 
 do_restart() {
-    header "Перезапуск"
-    docker compose restart
-    sleep 3
-    ok "Перезапущено"
+    source "$ENV_FILE" 2>/dev/null || true
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        header "Перезапуск"
+        docker compose restart
+        sleep 3
+        ok "Перезапущено"
+    else
+        do_stop
+        sleep 2
+        do_start
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -473,33 +706,65 @@ do_status() {
 }
 
 do_status_short() {
+    source "$ENV_FILE" 2>/dev/null || true
     echo ""
-    echo -e "  ${BOLD}Сервисы:${NC}"
-    docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || docker compose ps
-    echo ""
-    echo "  API:     http://localhost:8000"
-    echo "  Ollama:  http://localhost:11434"
-    echo "  PgSQL:   localhost:5432"
-    echo "  Redis:   localhost:6379"
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        # Docker mode
+        echo -e "  ${BOLD}Сервисы (Docker):${NC}"
+        docker compose ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || docker compose ps
+        echo ""
+        echo "  API:     http://localhost:8000"
+        echo "  Ollama:  http://localhost:11434"
+        echo "  PgSQL:   localhost:5432"
+        echo "  Redis:   localhost:6379"
+    else
+        # systemd/local mode
+        echo -e "  ${BOLD}Сервисы (local/systemd):${NC}"
+        local svc_name="stock-signal-bot"
+        if systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+            ok "Бот $svc_name: активен"
+        elif pgrep -f "telegram_bot.py" &>/dev/null; then
+            warn "Бот запущен вручную (PID: $(pgrep -f telegram_bot.py))"
+        else
+            fail "Бот остановлен"
+        fi
+        echo ""
+        echo "  Python:  $PROJECT_DIR/venv/bin/python"
+        echo "  Данные:  ${STOCK_SIGNAL_DATA:-$PROJECT_DIR/data}"
+    fi
 }
 
 do_logs() {
-    ask_choice "Логи какого сервиса?" \
-        "Telegram бот" \
-        "REST API" \
-        "Celery Worker" \
-        "Ollama LLM" \
-        "Все сервисы" \
-        "Назад"
-    local choice=$?
-    case $choice in
-        0) docker compose logs -f --tail 50 bot ;;
-        1) docker compose logs -f --tail 50 api ;;
-        2) docker compose logs -f --tail 50 worker ;;
-        3) docker compose logs -f --tail 50 ollama ;;
-        4) docker compose logs -f --tail 30 ;;
-        5) return ;;
-    esac
+    source "$ENV_FILE" 2>/dev/null || true
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        # Docker mode
+        ask_choice "Логи какого сервиса?" \
+            "Telegram бот" \
+            "REST API" \
+            "Celery Worker" \
+            "Ollama LLM" \
+            "Все сервисы" \
+            "Назад"
+        local choice=$?
+        case $choice in
+            0) docker compose logs -f --tail 50 bot ;;
+            1) docker compose logs -f --tail 50 api ;;
+            2) docker compose logs -f --tail 50 worker ;;
+            3) docker compose logs -f --tail 50 ollama ;;
+            4) docker compose logs -f --tail 30 ;;
+            5) return ;;
+        esac
+    else
+        # systemd/local mode
+        local svc_name="stock-signal-bot"
+        if systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+            journalctl -u "$svc_name" -f --no-pager
+        elif [ -f /tmp/stock-signal-bot.log ]; then
+            tail -f /tmp/stock-signal-bot.log
+        else
+            warn "Бот не запущен, логов нет"
+        fi
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -525,17 +790,31 @@ do_scale() {
 do_update() {
     header "Обновление"
 
+    source "$ENV_FILE" 2>/dev/null || true
+
     info "Получаю обновления..."
     git pull origin main 2>/dev/null || git pull 2>/dev/null || warn "git pull не удался"
 
-    info "Пересобираю образы..."
-    docker compose build --quiet 2>/dev/null || docker compose build
-
-    info "Перезапускаю с новым кодом..."
-    docker compose up -d
-    sleep 3
-
-    ok "Обновление завершено"
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        # Docker mode
+        info "Пересобираю образы..."
+        docker compose build --quiet 2>/dev/null || docker compose build
+        info "Перезапускаю с новым кодом..."
+        docker compose up -d
+        sleep 3
+        ok "Обновление завершено (Docker)"
+    else
+        # systemd/local mode
+        local venv_python="$PROJECT_DIR/venv/bin/python"
+        if [ -f "$venv_python" ]; then
+            info "Обновляю зависимости..."
+            "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements.txt" -q
+            ok "Зависимости обновлены"
+        fi
+        info "Перезапускаю бота..."
+        do_restart
+        ok "Обновление завершено (systemd/local)"
+    fi
     do_status_short
 }
 
