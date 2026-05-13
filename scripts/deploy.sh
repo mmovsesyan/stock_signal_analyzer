@@ -819,6 +819,77 @@ do_update() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════
+#  ОБНОВЛЕНИЕ ЗАВИСИМОСТЕЙ
+# ═══════════════════════════════════════════════════════════════════════
+
+do_update_deps() {
+    header "Обновление зависимостей"
+
+    source "$ENV_FILE" 2>/dev/null || true
+
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        # Docker mode
+        info "Обновляю pip пакеты в контейнерах..."
+        docker compose exec -T api pip install --upgrade pip -q 2>/dev/null || true
+        for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-dev.txt; do
+            if [ -f "$PROJECT_DIR/$reqfile" ]; then
+                info "Обновляю $reqfile..."
+                docker compose exec -T api pip install --upgrade -r "$PROJECT_DIR/$reqfile" -q 2>/dev/null \
+                    && ok "$reqfile обновлён" || warn "$reqfile не обновился"
+            fi
+        done
+        info "Перезапускаю контейнеры..."
+        docker compose restart
+        ok "Docker-зависимости обновлены"
+    else
+        # systemd/local mode
+        local venv_python="$PROJECT_DIR/venv/bin/python"
+        if [ ! -f "$venv_python" ]; then
+            fail "venv не найден. Сначала выполните установку."
+            return 1
+        fi
+
+        "$venv_python" -m pip install --upgrade pip setuptools wheel -q
+
+        info "Обновляю основные зависимости..."
+        "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements.txt" -q \
+            && ok "Основные зависимости обновлены" || warn "Не обновились"
+
+        if [ -f "$PROJECT_DIR/requirements-scale.txt" ]; then
+            if ask_yes_no "Обновить scale-зависимости (PostgreSQL, Redis, Celery)?" "n"; then
+                "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements-scale.txt" -q \
+                    && ok "Scale обновлены" || warn "Scale не обновились"
+            fi
+        fi
+
+        if [ -f "$PROJECT_DIR/requirements-api.txt" ]; then
+            if ask_yes_no "Обновить API-зависимости (FastAPI, uvicorn)?" "n"; then
+                "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements-api.txt" -q \
+                    && ok "API обновлены" || warn "API не обновились"
+            fi
+        fi
+
+        if [ -f "$PROJECT_DIR/requirements-tbank.txt" ]; then
+            if ask_yes_no "Обновить T-Bank SDK?" "n"; then
+                "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements-tbank.txt" -q \
+                    && ok "T-Bank SDK обновлён" || warn "T-Bank SDK не обновился"
+            fi
+        fi
+
+        if [ -f "$PROJECT_DIR/requirements-dev.txt" ]; then
+            if ask_yes_no "Обновить dev-зависимости (pytest, black, flake8)?" "n"; then
+                "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements-dev.txt" -q \
+                    && ok "Dev обновлены" || warn "Dev не обновились"
+            fi
+        fi
+
+        if ask_yes_no "Перезапустить бота?" "y"; then
+            do_restart
+        fi
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════
 #  БЭКТЕСТ
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -944,17 +1015,18 @@ main_menu() {
         echo "    5) ⏹️  Остановить"
         echo "    6) 🔄 Перезапустить"
         echo "    7) 📊 Масштабировать workers"
+        echo "    8) 📦 Обновить зависимости"
         echo ""
         echo "  ── Мониторинг ─────────────────────────"
-        echo "    8) 📋 Статус и health check"
-        echo "    9) 📜 Логи"
+        echo "    9) 📋 Статус и health check"
+        echo "   10) 📜 Логи"
         echo ""
         echo "  ── Аналитика ─────────────────────────"
-        echo "   10) 🧠 Обучение (learning)"
-        echo "   11) 📈 Бэктест"
+        echo "   11) 🧠 Обучение (learning)"
+        echo "   12) 📈 Бэктест"
         echo ""
         echo "  ── Прочее ─────────────────────────────"
-        echo "   12) 🗑️  Удалить всё"
+        echo "   13) 🗑️  Удалить всё"
         echo "    0) Выход"
         echo ""
 
@@ -968,11 +1040,12 @@ main_menu() {
             5)  do_stop ;;
             6)  do_restart ;;
             7)  do_scale ;;
-            8)  do_status ;;
-            9)  do_logs ;;
-            10) do_learning ;;
-            11) do_backtest ;;
-            12) do_uninstall ;;
+            8)  do_update_deps ;;
+            9)  do_status ;;
+            10) do_logs ;;
+            11) do_learning ;;
+            12) do_backtest ;;
+            13) do_uninstall ;;
             0|q|exit) echo ""; ok "До встречи!"; exit 0 ;;
             *)  warn "Неизвестный пункт" ;;
         esac
@@ -995,6 +1068,7 @@ case "${1:-}" in
     status)     do_status ;;
     logs)       do_logs ;;
     scale)      do_scale ;;
+    update-deps) do_update_deps ;;
     update)     do_update ;;
     learning)   do_learning ;;
     backtest)   do_backtest ;;
@@ -1013,6 +1087,7 @@ case "${1:-}" in
         echo "  status      Статус и health"
         echo "  logs        Логи"
         echo "  scale       Масштабировать workers"
+        echo "  update-deps Обновить зависимости"
         echo "  update      Обновить код"
         echo "  learning    Управление обучением"
         echo "  backtest    Бэктестирование"
