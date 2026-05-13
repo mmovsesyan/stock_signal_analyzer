@@ -123,12 +123,24 @@ def main():
     skipped_no_prices = 0
     skipped_open = 0
     already_ok = 0
+    removed_zero_exit = 0
+    keep_records = []
 
     for rec in records:
         outcome = rec.get("outcome", "")
         if outcome == "open":
             skipped_open += 1
+            keep_records.append(rec)
             continue
+
+        # Удаляем записи с exit_price=0.0 — это ложные исходы
+        # (TP было 0.0 → условие high>=0.0 всегда True → все были win_t2)
+        exit_p = rec.get("exit_price")
+        if exit_p is not None and float(exit_p) == 0.0:
+            removed_zero_exit += 1
+            print(f"  🗑️  {rec.get('symbol','?'):10s} {outcome:10s} "
+                  f"entry_date={rec.get('entry_date','?')[:10]} exit_price=0.0 — удаляем")
+            continue  # Не добавляем в keep_records
 
         changed = False
 
@@ -175,10 +187,12 @@ def main():
         if pnl is not None and pnl != 0.0:
             if not changed:
                 already_ok += 1
+            keep_records.append(rec)
             continue
 
         if not entry or not exit_:
             skipped_no_prices += 1
+            keep_records.append(rec)  # сохраняем запись, просто PnL не пересчитать
             continue
 
         try:
@@ -186,6 +200,7 @@ def main():
         except (TypeError, ValueError) as e:
             print(f"⚠️  {rec.get('signal_id', '?')}: ошибка расчёта — {e}")
             skipped_no_prices += 1
+            keep_records.append(rec)
             continue
 
         old_pnl = rec.get("pnl_pct")
@@ -198,15 +213,18 @@ def main():
               f"entry={float(entry):.4f} exit={float(exit_):.4f} dir={direction or 'long':5s} "
               f"pnl: {str(old_pnl):>8} → {new_pnl:+.2f}%")
 
-    print(f"\n📊 Итого: {total} записей")
-    print(f"  ✅ PnL пересчитан:      {fixed_pnl}")
-    print(f"  🏷️  Tier пропатчен:     {fixed_tier}")
-    print(f"  ➡️  Direction пропатчен: {fixed_direction}")
-    print(f"  ✔️  Уже были OK:        {already_ok}")
-    print(f"  ⏭️  Open (пропуск):     {skipped_open}")
-    print(f"  ❓ Нет цен (пропуск):   {skipped_no_prices}")
+        keep_records.append(rec)
 
-    total_changed = fixed_pnl + fixed_tier + fixed_direction
+    print(f"\n📊 Итого: {total} записей")
+    print(f"  ✅ PnL пересчитан:            {fixed_pnl}")
+    print(f"  🏷️  Tier пропатчен:           {fixed_tier}")
+    print(f"  ➡️  Direction пропатчен:       {fixed_direction}")
+    print(f"  🗑️  Удалено (exit_price=0): {removed_zero_exit}")
+    print(f"  ✔️  Уже были OK:           {already_ok}")
+    print(f"  ⏭️  Open (пропуск):          {skipped_open}")
+    print(f"  ❓ Нет цен (пропуск):        {skipped_no_prices}")
+
+    total_changed = fixed_pnl + fixed_tier + fixed_direction + removed_zero_exit
     if total_changed == 0:
         print("\nНечего исправлять." if not args.dry_run else "\nDRY RUN: нечего исправлять.")
         return
@@ -215,17 +233,17 @@ def main():
         print("\nDRY RUN: файл не изменён.")
         return
 
-    # Атомарная запись через tmp
+    # Атомарная запись через tmp (только валидные записи)
     tmp = path.with_suffix(".tmp")
     backup = path.with_suffix(".bak")
 
     with open(tmp, "w", encoding="utf-8") as f:
-        for rec in records:
+        for rec in keep_records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     shutil.copy2(path, backup)
     tmp.replace(path)
-    print(f"\n✅ Записано. Бэкап: {backup}")
+    print(f"\n✅ Записано {len(keep_records)} записей (удалено {removed_zero_exit} невалидных). Бэкап: {backup}")
 
 
 if __name__ == "__main__":

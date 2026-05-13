@@ -132,18 +132,32 @@ class OutcomeTracker:
         return signals
 
     @staticmethod
-    def _extract_trade_plan(signal: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _safe_price(value: Any) -> float | None:
+        """Конвертировать в float > 0, иначе None."""
+        if value is None:
+            return None
+        try:
+            f = float(value)
+            return f if f > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    def _extract_trade_plan(self, signal: dict[str, Any]) -> dict[str, Any]:
         """Собрать trade_plan из плоских tp_* ключей signal log."""
         direction = signal.get('tp_direction') or signal.get('direction', '')
         if not direction or direction in ('none', 'neutral'):
             return {}
+        entry = self._safe_price(signal.get('tp_entry')) or self._safe_price(signal.get('ref_price'))
+        if not entry:
+            return {}  # без цены входа трекать невозможно
         return {
             'direction': direction,
-            'entry_price': float(signal.get('tp_entry') or signal.get('ref_price', 0)),
-            'stop_price': float(signal.get('tp_stop', 0)),
-            'target1_price': float(signal.get('tp_target1', 0)),
-            'target2_price': float(signal.get('tp_target2', 0)),
-            'max_hold_days': int(signal.get('tp_max_hold_days', 5)),
+            'entry_price': entry,
+            'stop_price': self._safe_price(signal.get('tp_stop')) or 0.0,
+            'target1_price': self._safe_price(signal.get('tp_target1')) or 0.0,
+            'target2_price': self._safe_price(signal.get('tp_target2')) or 0.0,
+            'max_hold_days': int(signal.get('tp_max_hold_days') or 5),
         }
 
     def _get_signal_id(self, signal: dict[str, Any]) -> str:
@@ -237,9 +251,9 @@ class OutcomeTracker:
                 low = float(row['Low'])
 
                 if direction == 'long':
-                    stop_hit = low <= stop_price
-                    tp2_hit = high >= target2_price
-                    tp1_hit = high >= target1_price
+                    stop_hit = stop_price > 0 and low <= stop_price
+                    tp2_hit = target2_price > 0 and high >= target2_price
+                    tp1_hit = target1_price > 0 and high >= target1_price
 
                     if stop_hit and not tp1_hit:
                         # Только стоп — loss
@@ -286,9 +300,9 @@ class OutcomeTracker:
                                 )
 
                 elif direction == 'short':
-                    stop_hit = high >= stop_price
-                    tp2_hit = low <= target2_price
-                    tp1_hit = low <= target1_price
+                    stop_hit = stop_price > 0 and high >= stop_price
+                    tp2_hit = target2_price > 0 and low <= target2_price
+                    tp1_hit = target1_price > 0 and low <= target1_price
 
                     if stop_hit and not tp1_hit:
                         # Стоп сработал — loss
