@@ -1928,7 +1928,6 @@ async def cmd_learning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "Обучение ещё не проводилось или недостаточно данных.\n"
                 "Система начнёт обучение после 20+ сигналов с результатами.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=_learning_menu_keyboard(uid),
             )
             return
         report = format_learning_report()
@@ -2547,10 +2546,10 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Сбор и экспорт$"), on_menu_section_collect))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройки$"), on_menu_section_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления$"), on_menu_section_notify))
-    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройка автосбора$"), on_menu_autocollect))
-    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Обучение$"), on_menu_learning))
-    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Показать отчёт$"), on_menu_show_report))
-    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Статистика исходов$"), on_menu_show_stats))
+    app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Настройка автосбора"), on_menu_autocollect))
+    app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Обучение$"), on_menu_learning))
+    app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Показать отчёт"), on_menu_show_report))
+    app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Статистика исходов"), on_menu_show_stats))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Получать learning report$"), on_menu_toggle_learn_report))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Принудительное обучение$"), on_menu_force_learn))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Бэктест$"), on_menu_backtest))

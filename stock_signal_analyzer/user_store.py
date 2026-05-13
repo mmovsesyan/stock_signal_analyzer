@@ -96,6 +96,10 @@ def _save_raw(path: Path, data: dict[str, Any]) -> None:
 
 
 def _prefs_from_dict(d: dict[str, Any]) -> UserPrefs:
+    """Создать UserPrefs из dict. Если d не dict — вернуть дефолт."""
+    if not isinstance(d, dict):
+        _log.warning("_prefs_from_dict: expected dict, got %s — using defaults", type(d).__name__)
+        return UserPrefs()
     return UserPrefs(
         watchlist=list(d.get("watchlist") or []),
         notify_strong_outside=bool(d.get("notify_strong_outside", True)),

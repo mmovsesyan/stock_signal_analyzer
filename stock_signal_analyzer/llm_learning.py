@@ -496,8 +496,11 @@ def load_learning_state() -> LearningState | None:
     if not path.exists():
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        content = path.read_text(encoding="utf-8")
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            _log.warning("load_learning_state: expected dict, got %s", type(data).__name__)
+            return None
         return LearningState(
             weight_adjustments=data.get("weight_adjustments", {}),
             recommendations=data.get("recommendations", []),
