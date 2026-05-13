@@ -377,14 +377,24 @@ class OutcomeTracker:
 
     def _save_outcome(self, outcome: SignalOutcome, signal: dict[str, Any]):
         """Сохранить результат в файл и обогатить signal log для IC."""
+        # Цена входа: trade_plan.entry_price или ref_price из сигнала
+        trade_plan = signal.get('trade_plan') or {}
+        entry_price = (
+            trade_plan.get('entry_price')
+            or signal.get('tp_entry')
+            or signal.get('ref_price')
+        )
+
         record = {
             'signal_id': outcome.signal_id,
             'symbol': outcome.symbol,
             'outcome': outcome.outcome,
+            'entry_price': entry_price,
             'exit_price': outcome.exit_price,
             'exit_date': outcome.exit_date.isoformat() if outcome.exit_date else None,
             'pnl_pct': outcome.pnl_pct,
             'hold_days': outcome.hold_days,
+            'direction': trade_plan.get('direction') or signal.get('direction') or signal.get('tp_direction'),
             'signal_tier': signal.get('signal_tier'),
             'confidence': signal.get('confidence'),
             'entry_date': signal['ts_utc'],
