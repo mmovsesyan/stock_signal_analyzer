@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 def _default_data_path() -> Path:
@@ -81,11 +84,11 @@ def _save_raw(path: Path, data: dict[str, Any]) -> None:
     # Атомарная запись с ограниченными правами (0o600 — только владелец)
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        data = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        encoded = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
         offset = 0
-        total = len(data)
+        total = len(encoded)
         while offset < total:
-            written = os.write(fd, data[offset:])
+            written = os.write(fd, encoded[offset:])
             offset += written
     finally:
         os.close(fd)
@@ -132,11 +135,11 @@ def save_prefs(user_id: int, prefs: UserPrefs, path: Path | None = None) -> None
 
 
 def normalize_symbol(sym: str) -> str:
-    """Нормализовать тикер: trim + upper.
+    """Нормализовать тикер: trim, убрать внутренние пробелы, upper.
     НЕ удаляем точки — они нужны для .ME, BRK.B и т.д.
     Конвертация BRK.B → BRK-B делается в _symbol_for_yahoo (market_data.py).
     """
-    return sym.strip().upper()
+    return "".join(sym.split()).upper()
 
 
 def all_user_ids(path: Path | None = None) -> list[int]:

@@ -32,7 +32,7 @@ class TradePlan:
     plan_text: str
 
 
-_DIR_THRESHOLD = 0.25
+_DIR_THRESHOLD = 0.15
 _SLIPPAGE_ATR_MULT = 0.3
 
 # (stop_mult, target1_mult, target2_mult, hold_days_base, hold_days_trend)

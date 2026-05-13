@@ -69,8 +69,8 @@ def _macd_histogram_divergence(close: pd.Series, lookback: int = 14) -> tuple[fl
     c = close.iloc[-lookback:]
     mh = macd_hist.iloc[-lookback:]
 
-    price_new_low = float(c.iloc[-1]) <= float(c.min()) * 1.005
-    price_new_high = float(c.iloc[-1]) >= float(c.max()) * 0.995
+    price_new_low = float(c.iloc[-1]) <= float(c.min()) * 1.015
+    price_new_high = float(c.iloc[-1]) >= float(c.max()) * 0.985
 
     half = lookback // 2
     if price_new_low and float(mh.iloc[-1]) > float(mh.iloc[:half].min()):
