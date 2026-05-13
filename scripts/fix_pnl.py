@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Утилита ретроспективного пересчёта pnl_pct в outcomes.jsonl.
+Утилита ретроспективного пересчёта pnl_pct и патча signal_tier в outcomes.jsonl.
 
-Для записей где entry_price и exit_price известны, но pnl_pct = null или 0.0
-(были записаны до фикса outcome_tracker.py).
+Что исправляет:
+  1. pnl_pct = null/0.0 → пересчёт по entry_price/exit_price/direction
+  2. signal_tier = null → ищем в signal_log.jsonl по signal_id, ставим 'C' если не найдено
 
 Использование:
     python3 scripts/fix_pnl.py [--dry-run] [--file /path/to/outcomes.jsonl]
@@ -34,8 +35,36 @@ def calc_pnl(entry: float, exit_: float, direction: str,
     return gross_pct - cost_pct
 
 
+def _load_signal_log(outcomes_path: Path) -> dict[str, dict]:
+    """Загрузить signal_log.jsonl в словарь {signal_id: record}."""
+    data_dir = outcomes_path.parent
+    candidates = [
+        data_dir / "signal_log.jsonl",
+        data_dir / "signals.jsonl",
+    ]
+    for p in candidates:
+        if p.exists():
+            index = {}
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                        sid = rec.get("signal_id") or rec.get("id")
+                        if sid:
+                            index[str(sid)] = rec
+                    except json.JSONDecodeError:
+                        pass
+            print(f"📋 signal_log: загружено {len(index)} записей из {p}")
+            return index
+    print("⚠️  signal_log.jsonl не найден — tier будет взят из outcomes или 'unknown'")
+    return {}
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Пересчёт pnl_pct в outcomes.jsonl")
+    parser = argparse.ArgumentParser(description="Пересчёт pnl_pct и патч tier в outcomes.jsonl")
     parser.add_argument("--dry-run", action="store_true", help="Только показать, не писать")
     parser.add_argument("--file", default=None, help="Путь к outcomes.jsonl")
     args = parser.parse_args()
@@ -57,6 +86,9 @@ def main():
     print(f"📂 Файл: {path}")
     print(f"{'🔍 DRY RUN — изменения НЕ сохранятся' if args.dry_run else '✏️  Режим записи'}\n")
 
+    # Загрузить signal_log для патча tier
+    signal_index = _load_signal_log(path)
+
     records = []
     with open(path, encoding="utf-8") as f:
         for i, line in enumerate(f, 1):
@@ -69,7 +101,9 @@ def main():
                 print(f"⚠️  Строка {i}: JSON ошибка — {e}")
 
     total = len(records)
-    fixed = 0
+    fixed_pnl = 0
+    fixed_tier = 0
+    fixed_direction = 0
     skipped_no_prices = 0
     skipped_open = 0
     already_ok = 0
@@ -80,14 +114,38 @@ def main():
             skipped_open += 1
             continue
 
+        changed = False
+
+        # ── Патч signal_tier ─────────────────────────────────────────────────
+        tier = rec.get("signal_tier")
+        if not tier:
+            sid = str(rec.get("signal_id", ""))
+            sig = signal_index.get(sid, {})
+            new_tier = sig.get("signal_tier") or sig.get("tier") or "unknown"
+            rec["signal_tier"] = new_tier
+            fixed_tier += 1
+            changed = True
+
+        # ── Патч direction ───────────────────────────────────────────────────
+        direction = rec.get("direction")
+        if not direction:
+            sid = str(rec.get("signal_id", ""))
+            sig = signal_index.get(sid, {})
+            tp = sig.get("trade_plan") or {}
+            new_dir = tp.get("direction") or sig.get("direction") or sig.get("tp_direction") or "long"
+            rec["direction"] = new_dir
+            direction = new_dir
+            fixed_direction += 1
+            changed = True
+
+        # ── Пересчёт pnl_pct ────────────────────────────────────────────────
         entry = rec.get("entry_price")
         exit_ = rec.get("exit_price")
-        direction = rec.get("direction", "long")
         pnl = rec.get("pnl_pct")
 
-        # Пропускаем если уже есть нормальный pnl
         if pnl is not None and pnl != 0.0:
-            already_ok += 1
+            if not changed:
+                already_ok += 1
             continue
 
         if not entry or not exit_:
@@ -105,19 +163,22 @@ def main():
         rec["pnl_pct"] = new_pnl
         rec["outcome_pnl"] = new_pnl
         rec["pnl_recalculated_at"] = datetime.now(timezone.utc).isoformat()
-        fixed += 1
+        fixed_pnl += 1
 
-        print(f"  {rec.get('symbol','?'):10s} {outcome:10s} "
-              f"entry={entry:.4f} exit={exit_:.4f} dir={direction or 'long':5s} "
+        print(f"  {rec.get('symbol','?'):10s} {outcome:10s} tier={rec.get('signal_tier','?'):3s} "
+              f"entry={float(entry):.4f} exit={float(exit_):.4f} dir={direction or 'long':5s} "
               f"pnl: {str(old_pnl):>8} → {new_pnl:+.2f}%")
 
     print(f"\n📊 Итого: {total} записей")
-    print(f"  ✅ Пересчитано:    {fixed}")
-    print(f"  ✔️  Уже были OK:   {already_ok}")
-    print(f"  ⏭️  Open (пропуск): {skipped_open}")
-    print(f"  ❓ Нет цен:        {skipped_no_prices}")
+    print(f"  ✅ PnL пересчитан:      {fixed_pnl}")
+    print(f"  🏷️  Tier пропатчен:     {fixed_tier}")
+    print(f"  ➡️  Direction пропатчен: {fixed_direction}")
+    print(f"  ✔️  Уже были OK:        {already_ok}")
+    print(f"  ⏭️  Open (пропуск):     {skipped_open}")
+    print(f"  ❓ Нет цен (пропуск):   {skipped_no_prices}")
 
-    if fixed == 0:
+    total_changed = fixed_pnl + fixed_tier + fixed_direction
+    if total_changed == 0:
         print("\nНечего исправлять." if not args.dry_run else "\nDRY RUN: нечего исправлять.")
         return
 

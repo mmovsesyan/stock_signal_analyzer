@@ -436,16 +436,29 @@ class BacktestValidator:
             td_key = f"{gs.tier}_{gs.direction}"
             by_tier_direction[td_key] = gs
 
-        # Max drawdown approximation (simplified)
-        pnl_list = [g.total_pnl_pct for g in groups.values()]
+        # Max drawdown: считаем по кумулятивной кривой equity из outcomes
+        # (хронологически, не по группам)
+        outcomes_raw = self._load_outcomes()
+        outcomes_raw_sorted = sorted(
+            outcomes_raw,
+            key=lambda r: r.get("exit_date") or r.get("entry_date") or ""
+        )
         max_dd = 0.0
         peak = 0.0
         cumulative = 0.0
-        for pnl in sorted(pnl_list, key=lambda x: abs(x)):
-            cumulative += pnl
-            peak = max(peak, cumulative)
+        for r in outcomes_raw_sorted:
+            pnl = r.get("pnl_pct")
+            if pnl is None:
+                continue
+            try:
+                cumulative += float(pnl)
+            except (TypeError, ValueError):
+                continue
+            if cumulative > peak:
+                peak = cumulative
             dd = peak - cumulative
-            max_dd = max(max_dd, dd)
+            if dd > max_dd:
+                max_dd = dd
 
         return BacktestReport(
             overall=overall,
