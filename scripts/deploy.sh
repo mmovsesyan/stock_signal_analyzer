@@ -830,11 +830,11 @@ do_update_deps() {
     if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
         # Docker mode
         info "Обновляю pip пакеты в контейнерах..."
-        docker compose exec -T api pip install --upgrade pip -q 2>/dev/null || true
+        docker compose exec -T api pip install --upgrade pip -q
         for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-dev.txt; do
             if [ -f "$PROJECT_DIR/$reqfile" ]; then
                 info "Обновляю $reqfile..."
-                docker compose exec -T api pip install --upgrade -r "/app/$reqfile" -q 2>/dev/null \
+                docker compose exec -T api pip install --upgrade -r "/app/$reqfile" \
                     && ok "$reqfile обновлён" || warn "$reqfile не обновился"
             fi
         done
