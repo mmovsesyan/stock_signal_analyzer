@@ -19,7 +19,7 @@
 #    ./scripts/deploy.sh status
 #    ./scripts/deploy.sh logs
 # ═══════════════════════════════════════════════════════════════════════
-set -euo pipefail
+set -uo pipefail
 
 # ── Цвета ────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -381,7 +381,8 @@ do_install() {
     if [ ! -f "$ENV_FILE" ]; then
         do_configure
     else
-        if ask_yes_no "Перенастроить ключи?" "n"; then
+        # При повторном запуске всегда спрашиваем: перенастроить или сменить режим?
+        if ask_yes_no "Перенастроить ключи / сменить режим?" "n"; then
             do_configure
         else
             ok "Используем существующий .env"
@@ -773,6 +774,15 @@ do_logs() {
 
 do_scale() {
     header "Масштабирование"
+    source "$ENV_FILE" 2>/dev/null || true
+
+    if ! echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        warn "Масштабирование workers доступно только в Docker-режиме"
+        info "В systemd-режиме запустите несколько celery worker вручную:"
+        info "  celery -A stock_signal_analyzer.celery_app worker -c 4"
+        return 1
+    fi
+
     echo "  Текущие workers:"
     docker compose ps worker 2>/dev/null || echo "  нет"
     echo ""
@@ -983,12 +993,31 @@ if aw.ic_scores:
 
 do_uninstall() {
     header "Удаление"
-    warn "Это остановит все сервисы и удалит контейнеры."
+    warn "Это удалит все данные и сервисы."
 
     if ! ask_yes_no "Продолжить?" "n"; then return; fi
 
-    docker compose down -v 2>/dev/null || docker compose down
-    ok "Контейнеры и volumes удалены"
+    source "$ENV_FILE" 2>/dev/null || true
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        # Docker mode
+        docker compose down -v 2>/dev/null || docker compose down
+        ok "Контейнеры и volumes удалены"
+    else
+        # systemd/local mode
+        local svc_name="stock-signal-bot"
+        systemctl stop "$svc_name" 2>/dev/null || true
+        systemctl disable "$svc_name" 2>/dev/null || true
+        rm -f /etc/systemd/system/stock-signal-bot.service 2>/dev/null || true
+        rm -f /etc/systemd/system/stock-signal-tracker.{service,timer} 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        ok "Systemd сервисы удалены"
+
+        # venv
+        if ask_yes_no "Удалить venv?" "n"; then
+            rm -rf "$PROJECT_DIR/venv"
+            ok "venv удалён"
+        fi
+    fi
 
     if ask_yes_no "Удалить .env?" "n"; then
         rm -f "$ENV_FILE"
