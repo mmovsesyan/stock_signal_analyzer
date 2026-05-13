@@ -182,8 +182,36 @@ do_full_install() {
     "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
     ok "Основные зависимости установлены"
 
+    # Dev-зависимости
+    if [ -f "$PROJECT_DIR/requirements-dev.txt" ]; then
+        if ask_yes_no "Установить dev-зависимости (pytest, black, flake8)?" "n"; then
+            "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements-dev.txt" -q \
+                && ok "Dev-зависимости установлены" \
+                || warn "Dev-зависимости не установились"
+        fi
+    fi
+
+    # Scale-зависимости (PostgreSQL, Redis, Celery)
+    if [ -f "$PROJECT_DIR/requirements-scale.txt" ]; then
+        if ask_yes_no "Установить scale-зависимости (PostgreSQL, Redis, Celery)?" "y"; then
+            "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements-scale.txt" -q \
+                && ok "Scale-зависимости установлены" \
+                || warn "Scale-зависимости не установились (не критично для базового режима)"
+        fi
+    fi
+
+    # API-зависимости (FastAPI, uvicorn)
+    if [ -f "$PROJECT_DIR/requirements-api.txt" ]; then
+        if ask_yes_no "Установить API-зависимости (FastAPI, uvicorn)?" "y"; then
+            "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements-api.txt" -q \
+                && ok "API-зависимости установлены" \
+                || warn "API-зависимости не установились (не критично)"
+        fi
+    fi
+
+    # T-Bank SDK
     if [ -f "$PROJECT_DIR/requirements-tbank.txt" ]; then
-        if ask_yes_no "Установить SDK Т-Банка (для котировок .ME)?" "n"; then
+        if ask_yes_no "Установить SDK Т-Банка (для котировок .ME)?" "y"; then
             "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements-tbank.txt" -q \
                 && ok "T-Bank SDK установлен" \
                 || warn "T-Bank SDK не установился (не критично для US-тикеров)"
@@ -505,8 +533,36 @@ do_update_deps() {
     fi
     "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel -q
     "$VENV_DIR/bin/pip" install --upgrade -r "$PROJECT_DIR/requirements.txt" -q
-    ok "Зависимости обновлены"
+    ok "Основные зависимости обновлены"
 
+    # Dev requirements (для тестов и линтинга)
+    if [ -f "$PROJECT_DIR/requirements-dev.txt" ]; then
+        if ask_yes_no "Установить dev-зависимости (pytest, black, flake8…)?" "n"; then
+            "$VENV_DIR/bin/pip" install --upgrade -r "$PROJECT_DIR/requirements-dev.txt" -q \
+                && ok "Dev-зависимости обновлены" \
+                || warn "Dev-зависимости не обновились"
+        fi
+    fi
+
+    # Scale requirements (PostgreSQL, Redis, Celery)
+    if [ -f "$PROJECT_DIR/requirements-scale.txt" ]; then
+        if ask_yes_no "Установить scale-зависимости (PostgreSQL, Redis, Celery)?" "n"; then
+            "$VENV_DIR/bin/pip" install --upgrade -r "$PROJECT_DIR/requirements-scale.txt" -q \
+                && ok "Scale-зависимости обновлены" \
+                || warn "Scale-зависимости не обновились"
+        fi
+    fi
+
+    # API requirements (FastAPI, uvicorn)
+    if [ -f "$PROJECT_DIR/requirements-api.txt" ]; then
+        if ask_yes_no "Установить API-зависимости (FastAPI, uvicorn)?" "n"; then
+            "$VENV_DIR/bin/pip" install --upgrade -r "$PROJECT_DIR/requirements-api.txt" -q \
+                && ok "API-зависимости обновлены" \
+                || warn "API-зависимости не обновились"
+        fi
+    fi
+
+    # T-Bank SDK
     if [ -f "$PROJECT_DIR/requirements-tbank.txt" ]; then
         if ask_yes_no "Обновить T-Bank SDK?" "n"; then
             "$VENV_DIR/bin/pip" install --upgrade -r "$PROJECT_DIR/requirements-tbank.txt" -q \
@@ -527,13 +583,21 @@ do_update_deps() {
 # ═══════════════════════════════════════════════════════════════════════
 do_smoke_test() {
     header "Smoke Test"
+
+    # Используем venv если есть, иначе системный python3
+    local py="$VENV_PYTHON"
     if [ ! -f "$VENV_PYTHON" ]; then
-        fail "venv не найден. Сначала выполните установку."
-        return 1
+        if command -v python3 &>/dev/null; then
+            warn "venv не найден, используем системный python3"
+            py="python3"
+        else
+            fail "Ни venv, ни python3 не найдены."
+            return 1
+        fi
     fi
 
     info "Проверка импортов..."
-    if "$VENV_PYTHON" -c "from stock_signal_analyzer.engine import build_report; print('OK')" 2>/dev/null; then
+    if $py -c "from stock_signal_analyzer.engine import build_report; print('OK')" 2>/dev/null; then
         ok "Импорты работают"
     else
         fail "Ошибка импорта. Проверьте зависимости."
@@ -550,23 +614,29 @@ do_smoke_test() {
         set +a
     fi
 
-    "$VENV_PYTHON" main.py "$ticker" && ok "Тест пройден" || fail "Ошибка при генерации сигнала"
+    $py main.py "$ticker" && ok "Тест пройден" || fail "Ошибка при генерации сигнала"
 }
 
 # ═══════════════════════════════════════════════════════════════════════
 #  9. МОНИТОРИНГ СИГНАЛОВ
 # ═══════════════════════════════════════════════════════════════════════
 do_monitor() {
+    local py="$VENV_PYTHON"
     if [ ! -f "$VENV_PYTHON" ]; then
-        fail "venv не найден."
-        return 1
+        if command -v python3 &>/dev/null; then
+            warn "venv не найден, используем системный python3"
+            py="python3"
+        else
+            fail "Ни venv, ни python3 не найдены."
+            return 1
+        fi
     fi
     if [ -f "$ENV_FILE" ]; then
         set -a
         source "$ENV_FILE" 2>/dev/null || true
         set +a
     fi
-    "$VENV_PYTHON" tools/monitor_signals.py
+    $py tools/monitor_signals.py
 }
 
 # ═══════════════════════════════════════════════════════════════════════
