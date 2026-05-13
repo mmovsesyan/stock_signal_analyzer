@@ -2016,8 +2016,11 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
         body = format_backtest_report(report)
-        for chunk in body:
-            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+        # body — строка, отправляем целиком (или чанками по 4096 если длинная)
+        for i in range(0, max(1, len(body)), 4096):
+            chunk = body[i:i + 4096].strip()
+            if chunk:
+                await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
 
