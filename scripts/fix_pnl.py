@@ -35,31 +35,47 @@ def calc_pnl(entry: float, exit_: float, direction: str,
     return gross_pct - cost_pct
 
 
+def _make_signal_id(symbol: str, ts_utc: str) -> str:
+    """outcome_tracker использует 'SYMBOL_ts_utc' как signal_id."""
+    return f"{symbol}_{ts_utc}"
+
+
 def _load_signal_log(outcomes_path: Path) -> dict[str, dict]:
-    """Загрузить signal_log.jsonl в словарь {signal_id: record}."""
+    """Загрузить signal_log / signals.jsonl.
+    Индекс строится по двум ключам:
+      - signal_id из записи (новые сигналы)
+      - symbol_ts_utc (старые сигналы без signal_id)
+    """
     data_dir = outcomes_path.parent
     candidates = [
         data_dir / "signal_log.jsonl",
         data_dir / "signals.jsonl",
     ]
+    index = {}
     for p in candidates:
-        if p.exists():
-            index = {}
-            with open(p, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                        sid = rec.get("signal_id") or rec.get("id")
-                        if sid:
-                            index[str(sid)] = rec
-                    except json.JSONDecodeError:
-                        pass
-            print(f"📋 signal_log: загружено {len(index)} записей из {p}")
-            return index
-    print("⚠️  signal_log.jsonl не найден — tier будет взят из outcomes или 'unknown'")
+        if not p.exists():
+            continue
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    sym = rec.get("symbol", "")
+                    ts = rec.get("ts_utc", "")
+                    # Ключ 1: явный signal_id
+                    sid = rec.get("signal_id") or rec.get("id")
+                    if sid:
+                        index[str(sid)] = rec
+                    # Ключ 2: symbol_ts_utc (как outcome_tracker._get_signal_id)
+                    if sym and ts:
+                        index[_make_signal_id(sym, ts)] = rec
+                except json.JSONDecodeError:
+                    pass
+        print(f"📋 signal_log: загружено {len(index)} ключей из {p}")
+        return index
+    print("⚠️  signal_log.jsonl/signals.jsonl не найден")
     return {}
 
 
@@ -142,6 +158,19 @@ def main():
         entry = rec.get("entry_price")
         exit_ = rec.get("exit_price")
         pnl = rec.get("pnl_pct")
+
+        # Если entry_price отсутствует — берём из signal_log
+        if not entry:
+            sid = str(rec.get("signal_id", ""))
+            sym_ts_key = _make_signal_id(rec.get("symbol", ""), rec.get("entry_date", ""))
+            sig = signal_index.get(sid) or signal_index.get(sym_ts_key) or {}
+            tp_entry = sig.get("tp_entry")
+            ref_price = sig.get("ref_price")
+            new_entry = tp_entry or ref_price
+            if new_entry:
+                entry = new_entry
+                rec["entry_price"] = float(new_entry)
+                changed = True
 
         if pnl is not None and pnl != 0.0:
             if not changed:

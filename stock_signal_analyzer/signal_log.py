@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -44,14 +45,23 @@ def log_path_from_env() -> str | None:
     return os.environ.get("SSA_SIGNAL_LOG") or os.environ.get("SIGNAL_LOG_JSONL")
 
 
+def make_signal_id(symbol: str, ts_utc: str) -> str:
+    """Детерминированный ID сигнала: sha1(symbol+ts_utc)[:12]."""
+    raw = f"{symbol.upper()}|{ts_utc}"
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
 def build_record_from_report(
     report: "SignalReport",
     ref_price: float,
     currency: str,
 ) -> dict[str, Any]:
     """Снимок для офлайн-разметки: через N дней сравнить с ценой."""
+    ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    signal_id = make_signal_id(report.symbol, ts_utc)
     return {
-        "ts_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "signal_id": signal_id,
+        "ts_utc": ts_utc,
         "symbol": report.symbol,
         "ref_price": float(ref_price),
         "currency": currency,
