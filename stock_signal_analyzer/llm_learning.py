@@ -40,7 +40,7 @@ _log = logging.getLogger(__name__)
 _OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b")
 _LLM_LEARNING_ENABLED = os.environ.get("LLM_LEARNING", "1").strip() != "0"
-_MIN_OUTCOMES = int(os.environ.get("LLM_LEARNING_MIN", "20"))
+_MIN_OUTCOMES = max(30, int(os.environ.get("LLM_LEARNING_MIN", "30")))  # минимум 30 для статистической значимости
 _REQUEST_TIMEOUT = 60.0
 
 
@@ -275,6 +275,13 @@ def _build_llm_analysis_prompt(records: list[OutcomeRecord], numeric: dict[str, 
     wins = [r for r in records if r.pnl_pct > 0]
     losses = [r for r in records if r.pnl_pct <= 0]
 
+    # Защита от пустых данных
+    if not records:
+        return "No outcome data available."
+    win_rate = len(wins) / len(records) * 100 if records else 0.0
+    avg_win = float(np.mean([r.pnl_pct for r in wins])) if wins else 0.0
+    avg_loss = float(np.mean([r.pnl_pct for r in losses])) if losses else 0.0
+
     # Топ-5 лучших и худших сделок
     sorted_by_pnl = sorted(records, key=lambda r: r.pnl_pct, reverse=True)
     top_wins = sorted_by_pnl[:5]
@@ -282,9 +289,9 @@ def _build_llm_analysis_prompt(records: list[OutcomeRecord], numeric: dict[str, 
 
     lines = [
         f"Total outcomes: {len(records)} ({len(wins)} wins, {len(losses)} losses)",
-        f"Win rate: {len(wins)/len(records)*100:.1f}%",
-        f"Avg win: +{np.mean([r.pnl_pct for r in wins]):.2f}%",
-        f"Avg loss: {np.mean([r.pnl_pct for r in losses]):.2f}%",
+        f"Win rate: {win_rate:.1f}%",
+        f"Avg win: +{avg_win:.2f}%",
+        f"Avg loss: {avg_loss:.2f}%",
         "",
         "Component means (wins vs losses):",
     ]
@@ -556,7 +563,7 @@ def get_weight_adjustments() -> dict[str, float]:
 # In-memory cache для weight adjustments (чтобы не читать JSON на каждый вызов engine)
 _adj_cache: dict[str, float] = {}
 _adj_cache_ts: float = 0.0
-_ADJ_CACHE_TTL: float = 300.0  # 5 минут
+_ADJ_CACHE_TTL: float = 3600.0  # 1 час — перечитываем state не чаще раза в час
 
 
 def _get_cached_adjustments() -> dict[str, float]:

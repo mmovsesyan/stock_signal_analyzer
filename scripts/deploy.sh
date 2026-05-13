@@ -623,6 +623,7 @@ do_start_docker() {
 # ═══════════════════════════════════════════════════════════════════════
 
 do_start() {
+    check_env_vars || return 1
     source "$ENV_FILE" 2>/dev/null || true
     if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
         do_start_docker
@@ -988,6 +989,56 @@ if aw.ic_scores:
 }
 
 # ═══════════════════════════════════════════════════════════════════════
+#  ЗАПУСК ТЕСТОВ
+# ═══════════════════════════════════════════════════════════════════════
+
+do_run_tests() {
+    header "Запуск тестов"
+
+    source "$ENV_FILE" 2>/dev/null || true
+
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        info "Запускаю pytest в контейнере api..."
+        if docker compose ps api 2>/dev/null | grep -q "Up"; then
+            docker compose exec -T api python3 -m pytest tests/ -v 2>&1 | tail -30
+        else
+            info "Контейнер api не запущен, запускаю одноразовый контейнер..."
+            docker compose run --rm --no-deps api python3 -m pytest tests/ -v 2>&1 | tail -30
+        fi
+    else
+        local venv_python="$PROJECT_DIR/venv/bin/python"
+        if [ ! -f "$venv_python" ]; then
+            fail "venv не найден. Сначала выполните установку."
+            return 1
+        fi
+        info "Запускаю pytest локально..."
+        cd "$PROJECT_DIR" && "$venv_python" -m pytest tests/ -v 2>&1 | tail -30
+    fi
+}
+
+# ── Проверка переменных окружения перед запуском ──────────────────────────────
+check_env_vars() {
+    if [ ! -f "$ENV_FILE" ]; then
+        fail ".env не найден. Запустите установку (пункт 1) или настройку ключей (пункт 2)."
+        return 1
+    fi
+    source "$ENV_FILE" 2>/dev/null || true
+    local missing=()
+    if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+        missing+=("TELEGRAM_BOT_TOKEN")
+    fi
+    if [ -z "${ADMIN_CHAT_ID:-}" ]; then
+        missing+=("ADMIN_CHAT_ID")
+    fi
+    if [ ${#missing[@]} -gt 0 ]; then
+        fail "Отсутствуют обязательные переменные окружения: ${missing[*]}"
+        info "Запустите: ./scripts/deploy.sh configure"
+        return 1
+    fi
+    return 0
+}
+
+# ═══════════════════════════════════════════════════════════════════════
 #  УДАЛЕНИЕ
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -1072,9 +1123,10 @@ main_menu() {
         echo "  ── Аналитика ─────────────────────────"
         echo "   11) 🧠 Обучение (learning)"
         echo "   12) 📈 Бэктест"
+        echo "   13) 🧪 Запустить тесты"
         echo ""
         echo "  ── Прочее ─────────────────────────────"
-        echo "   13) 🗑️  Удалить всё"
+        echo "   14) 🗑️  Удалить всё"
         echo "    0) Выход"
         echo ""
 
@@ -1093,7 +1145,8 @@ main_menu() {
             10) do_logs ;;
             11) do_learning ;;
             12) do_backtest ;;
-            13) do_uninstall ;;
+            13) do_run_tests ;;
+            14) do_uninstall ;;
             0|q|exit) echo ""; ok "До встречи!"; exit 0 ;;
             *)  warn "Неизвестный пункт" ;;
         esac
@@ -1120,6 +1173,7 @@ case "${1:-}" in
     update)     do_update ;;
     learning)   do_learning ;;
     backtest)   do_backtest ;;
+    tests)      do_run_tests ;;
     uninstall)  do_uninstall ;;
     help|--help|-h)
         echo "Stock Signal Analyzer — Deploy & Manage"
@@ -1139,6 +1193,7 @@ case "${1:-}" in
         echo "  update      Обновить код"
         echo "  learning    Управление обучением"
         echo "  backtest    Бэктестирование"
+        echo "  tests       Запустить тесты"
         echo "  uninstall   Удалить"
         echo ""
         echo "Без аргументов — интерактивное меню."

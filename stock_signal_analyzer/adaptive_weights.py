@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -129,9 +130,6 @@ def _compute_ic(
     Возвращает None, если нет реального PnL — IC без PnL бессмыслен.
     IC > 0.05 = информативный; IC > 0.10 = сильный.
     """
-    from datetime import datetime, timezone
-    import time
-
     now = time.time()
     halflife_days = 30.0
     decay_factor = np.log(2) / halflife_days
