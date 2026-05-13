@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -18,6 +19,7 @@ _log = logging.getLogger(__name__)
 _CACHE_MAX_SIZE = 200
 _CACHE: dict[str, tuple[tuple[Any, Any, Any], float]] = {}
 _CACHE_TTL = 300  # 5 минут
+_cache_lock = threading.Lock()  # защищает _CACHE от concurrent mutation
 
 
 def _polygon_available() -> bool:
@@ -49,7 +51,7 @@ def _try_polygon_history(sym: str, days: int = 400) -> tuple[pd.DataFrame | None
         return None, "", ""
 
 def _evict_expired_cache() -> None:
-    """Удалить просроченные записи из кэша."""
+    """Удалить просроченные записи из кэша. Caller должен держать _cache_lock."""
     now = time.time()
     expired = [sym for sym, (_, ts) in _CACHE.items() if now - ts >= _CACHE_TTL]
     for sym in expired:
@@ -57,13 +59,33 @@ def _evict_expired_cache() -> None:
 
 
 def _ensure_cache_capacity() -> None:
-    """Если кэш превысил maxsize, удалить самые старые записи."""
+    """Если кэш превысил maxsize, удалить самые старые записи. Caller должен держать _cache_lock."""
     if len(_CACHE) <= _CACHE_MAX_SIZE:
         return
     sorted_items = sorted(_CACHE.items(), key=lambda x: x[1][1])
     to_remove = len(_CACHE) - _CACHE_MAX_SIZE
     for sym, _ in sorted_items[:to_remove]:
         del _CACHE[sym]
+
+
+def _cache_get(sym: str) -> tuple[Any, Any, Any] | None:
+    """Thread-safe чтение из кэша. Возвращает None если нет или просрочен."""
+    with _cache_lock:
+        _evict_expired_cache()
+        _ensure_cache_capacity()
+        if sym in _CACHE:
+            cached_data, timestamp = _CACHE[sym]
+            if time.time() - timestamp < _CACHE_TTL:
+                return cached_data
+        return None
+
+
+def _cache_set(sym: str, result: tuple[Any, Any, Any]) -> None:
+    """Thread-safe запись в кэш."""
+    with _cache_lock:
+        _evict_expired_cache()
+        _ensure_cache_capacity()
+        _CACHE[sym] = (result, time.time())
 
 
 @dataclass
@@ -171,17 +193,12 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
     """
     sym = symbol.strip().upper()
 
-    # Очистка кэша от просроченных и превышающих maxsize
-    _evict_expired_cache()
-    _ensure_cache_capacity()
-
-    # Проверка кэша
-    if not force_refresh and sym in _CACHE:
-        cached_data, timestamp = _CACHE[sym]
-        age = time.time() - timestamp
-        if age < _CACHE_TTL:
-            _log.debug("Используем кэшированные данные для %s (возраст: %.1fs)", sym, age)
-            return cached_data
+    # Проверка кэша (thread-safe)
+    if not force_refresh:
+        cached = _cache_get(sym)
+        if cached is not None:
+            _log.debug("Используем кэшированные данные для %s", sym)
+            return cached
 
     ysym = _symbol_for_yahoo(sym)
     info: dict[str, Any] = {}
@@ -202,7 +219,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
                 history=tb_hist,
             )
             result = (snap, info, profile)
-            _CACHE[sym] = (result, time.time())
+            _cache_set(sym, result)
             return result
 
     t = yf.Ticker(ysym)
@@ -228,7 +245,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
                 history=tb_hist,
             )
             result = (snap, info, profile)
-            _CACHE[sym] = (result, time.time())
+            _cache_set(sym, result)
             return result
 
     # Fallback на MOEX ISS (бесплатно, без токена) для РФ-тикеров
@@ -249,7 +266,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
                     history=moex_hist,
                 )
                 result = (snap, info, profile)
-                _CACHE[sym] = (result, time.time())
+                _cache_set(sym, result)
                 _log.info("MOEX ISS: загружено %d свечей для %s", len(moex_hist), sym)
                 return result
         except Exception as e:
@@ -270,7 +287,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
                     history=pg_hist,
                 )
                 result = (snap, info, profile)
-                _CACHE[sym] = (result, time.time())
+                _cache_set(sym, result)
                 return result
 
     if hist is None or hist.empty:
@@ -290,7 +307,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
         history=hist,
     )
     result = (snap, info, profile)
-    _CACHE[sym] = (result, time.time())
+    _cache_set(sym, result)
     return result
 
 

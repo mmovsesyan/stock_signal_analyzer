@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -428,27 +429,54 @@ class OutcomeTracker:
         if outcome.outcome != 'open':
             self.checked_signals.add(outcome.signal_id)
 
-    def check_all_outcomes(self):
-        """Проверить все открытые сигналы."""
+    def check_all_outcomes(self, max_workers: int = 8):
+        """Проверить все открытые сигналы (параллельно через ThreadPoolExecutor)."""
         signals = self._load_open_signals()
 
         if not signals:
             _log.info("Нет открытых сигналов для проверки")
             return
 
-        _log.info(f"Проверка {len(signals)} сигналов...")
+        _log.info(f"Проверка {len(signals)} сигналов (workers={max_workers})...")
 
+        # Параллельно проверяем каждый сигнал
+        outcomes_map: dict[str, SignalOutcome] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_signal = {
+                executor.submit(self._check_signal_outcome, sig): sig
+                for sig in signals
+            }
+            for future in as_completed(future_to_signal, timeout=300):
+                sig = future_to_signal[future]
+                try:
+                    outcome = future.result(timeout=30)
+                    outcomes_map[self._get_signal_id(sig)] = outcome
+                except Exception as e:
+                    _log.error("Outcome check failed for %s: %s", sig['symbol'], e)
+                    # Fallback: оставить открытым
+                    outcomes_map[self._get_signal_id(sig)] = SignalOutcome(
+                        signal_id=self._get_signal_id(sig),
+                        symbol=sig['symbol'],
+                        outcome='open',
+                        exit_price=None,
+                        exit_date=None,
+                        pnl_pct=None,
+                        hold_days=None,
+                    )
+
+        # Последовательно сохраняем результаты (файловая запись — не thread-safe)
         closed_count = 0
         for signal in signals:
-            outcome = self._check_signal_outcome(signal)
-            self._save_outcome(outcome, signal)
-
-            if outcome.outcome != 'open':
-                closed_count += 1
-                _log.info(
-                    f"✓ {outcome.symbol}: {outcome.outcome} "
-                    f"(PnL: {outcome.pnl_pct:+.2f}%, {outcome.hold_days} дней)"
-                )
+            signal_id = self._get_signal_id(signal)
+            outcome = outcomes_map.get(signal_id)
+            if outcome:
+                self._save_outcome(outcome, signal)
+                if outcome.outcome != 'open':
+                    closed_count += 1
+                    _log.info(
+                        f"✓ {outcome.symbol}: {outcome.outcome} "
+                        f"(PnL: {outcome.pnl_pct:+.2f}%, {outcome.hold_days} дней)"
+                    )
 
         _log.info(f"Закрыто сигналов: {closed_count}/{len(signals)}")
 

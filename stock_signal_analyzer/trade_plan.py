@@ -48,7 +48,7 @@ _SIDEWAYS_TARGET_SCALE = 0.75
 
 
 def _position_size(confidence: float) -> float:
-    """0..100% от базовой позиции на основе согласованности компонентов."""
+    """Размер позиции 0..100% на основе уверенности сигнала."""
     if confidence < 0.30:
         return 25.0
     if confidence < 0.45:

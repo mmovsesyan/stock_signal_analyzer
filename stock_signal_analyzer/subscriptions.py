@@ -14,14 +14,69 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 
 _log = logging.getLogger(__name__)
 
 SUBSCRIPTIONS_ENABLED = os.environ.get("SUBSCRIPTION_ENABLED", "0").strip() == "1"
+
+# ── LRU-кэш дневных лимитов (обновляется из БД, переживает краткие restart-и) ──
+# Формат: {user_id: (date_str, count)}
+_usage_cache: dict[int, tuple[str, int]] = {}
+
+
+def _today_key() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _get_usage_db(user_id: int, today: str) -> int:
+    """Получить счётчик из БД (fallback → 0)."""
+    try:
+        from .db import get_session, DailyUsage
+        with get_session(read_only=True) as session:
+            row = session.query(DailyUsage).filter_by(
+                user_id=user_id, date=today
+            ).first()
+            return row.count if row else 0
+    except Exception:
+        return 0
+
+
+def _increment_usage_db(user_id: int, today: str) -> None:
+    """Атомарно инкрементировать счётчик (UPSERT)."""
+    try:
+        from .db import get_session, DailyUsage
+        with get_session() as session:
+            row = session.query(DailyUsage).filter_by(
+                user_id=user_id, date=today
+            ).first()
+            if row:
+                row.count += 1
+            else:
+                session.add(DailyUsage(user_id=user_id, date=today, count=1))
+    except Exception:
+        pass  # fail-open: если БД недоступна, лимит не блокирует
+
+
+def _usage_for(user_id: int) -> int:
+    """Получить текущий дневной счётчик (кэш + БД fallback)."""
+    today = _today_key()
+    cached = _usage_cache.get(user_id)
+    if cached and cached[0] == today:
+        return cached[1]
+    # Cache miss или новый день — грузим из БД
+    count = _get_usage_db(user_id, today)
+    _usage_cache[user_id] = (today, count)
+    return count
+
+
+def _bump_usage(user_id: int) -> None:
+    """Инкрементировать счётчик (кэш + БД)."""
+    today = _today_key()
+    _, count = _usage_cache.get(user_id, (today, 0))
+    _usage_cache[user_id] = (today, count + 1)
+    _increment_usage_db(user_id, today)
 
 
 @dataclass
@@ -90,7 +145,7 @@ def get_user_tier(user_id: int) -> str:
 
     try:
         from .db import get_session, User
-        with get_session() as session:
+        with get_session(read_only=True) as session:
             user = session.query(User).filter_by(telegram_id=user_id).first()
             if not user:
                 return "free"
@@ -113,29 +168,22 @@ def check_rate_limit(user_id: int) -> tuple[bool, str]:
     """
     Проверить, не превышен ли дневной лимит.
     Возвращает (allowed, message).
+    Счётчик хранится в БД (persistent across restarts) + LRU-кэш in-memory.
     """
     if not SUBSCRIPTIONS_ENABLED:
         return True, ""
 
     tier = get_user_tier(user_id)
     limits = get_tier_limits(tier)
-    today = _today_key()
+    used = _usage_for(user_id)
 
-    if user_id not in _daily_usage:
-        _daily_usage[user_id] = {"date": today, "count": 0}
-
-    usage = _daily_usage[user_id]
-    if usage["date"] != today:
-        usage["date"] = today
-        usage["count"] = 0
-
-    if usage["count"] >= limits.daily_analyses:
+    if used >= limits.daily_analyses:
         return False, (
             f"Достигнут дневной лимит ({limits.daily_analyses} анализов для тарифа {limits.name}). "
             f"Обновите подписку для увеличения лимита."
         )
 
-    usage["count"] += 1
+    _bump_usage(user_id)
     return True, ""
 
 
@@ -161,10 +209,7 @@ def format_subscription_info(user_id: int) -> str:
     """Форматировать информацию о подписке для Telegram."""
     tier = get_user_tier(user_id)
     limits = get_tier_limits(tier)
-    today = _today_key()
-
-    usage = _daily_usage.get(user_id, {})
-    used = usage.get("count", 0) if usage.get("date") == today else 0
+    used = _usage_for(user_id)
 
     lines = [
         f"📋 Подписка: <b>{limits.name}</b>",

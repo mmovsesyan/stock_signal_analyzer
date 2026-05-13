@@ -32,7 +32,6 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
-    Text,
     create_engine,
     Index,
     text,
@@ -206,16 +205,35 @@ class NotifyLog(Base):
     )
 
 
+class DailyUsage(Base):
+    """Счётчик дневных использований (rate limiting, persistent across restarts)."""
+    __tablename__ = "daily_usage"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    date = Column(String(10), nullable=False)  # YYYY-MM-DD
+    count = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("ix_daily_usage_user_date", "user_id", "date", unique=True),
+    )
+
+
 # ── Session management ───────────────────────────────────────────────────────
 
 
 @contextmanager
-def get_session() -> Generator[Session, None, None]:
-    """Context manager для сессии БД."""
+def get_session(read_only: bool = False) -> Generator[Session, None, None]:
+    """Context manager для сессии БД.
+
+    read_only=True — только чтение, без auto-commit (для SELECT-запросов).
+    read_only=False — commit при успешном выходе (для INSERT/UPDATE/DELETE).
+    """
     session = _SessionFactory()
     try:
         yield session
-        session.commit()
+        if not read_only:
+            session.commit()
     except Exception:
         session.rollback()
         raise

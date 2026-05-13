@@ -30,6 +30,7 @@ from typing import Any
 import requests
 
 from .news_feeds import NewsItem
+from .retry_utils import retry_with_backoff
 
 _log = logging.getLogger(__name__)
 
@@ -162,45 +163,59 @@ class LLMSentimentResult:
     detail: str
 
 
+@retry_with_backoff(max_retries=2, initial_delay=0.5, backoff_factor=2.0,
+                    retry_on=(requests.RequestException,))
+def _ollama_chat_raw(payload: dict) -> requests.Response:
+    """HTTP POST к Ollama с retry (transient network errors)."""
+    r = requests.post(
+        f"{_OLLAMA_HOST}/api/chat",
+        json=payload,
+        timeout=_REQUEST_TIMEOUT,
+    )
+    r.raise_for_status()
+    return r
+
+
 def _call_ollama(headlines: list[str]) -> dict[str, Any] | None:
     """Вызвать Ollama API и получить structured JSON."""
+    payload = {
+        "model": _OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": _build_prompt(headlines)},
+        ],
+        "stream": False,
+        "format": "json",
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 512,
+        },
+    }
     try:
-        payload = {
-            "model": _OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": _build_prompt(headlines)},
-            ],
-            "stream": False,
-            "format": "json",
-            "options": {
-                "temperature": 0.1,
-                "num_predict": 512,
-            },
-        }
-        r = requests.post(
-            f"{_OLLAMA_HOST}/api/chat",
-            json=payload,
-            timeout=_REQUEST_TIMEOUT,
-        )
-        if r.status_code != 200:
-            _log.warning("Ollama returned %d: %s", r.status_code, r.text[:200])
-            return None
-        data = r.json()
-        content = data.get("message", {}).get("content", "")
-        if not content:
-            return None
-        # Парсим JSON из ответа
-        result = json.loads(content)
-        return result
-    except json.JSONDecodeError as e:
-        _log.warning("Ollama returned invalid JSON: %s", e)
-        return None
+        r = _ollama_chat_raw(payload)
     except requests.RequestException as e:
-        _log.warning("Ollama request failed: %s", e)
+        _log.warning("Ollama request failed after retries: %s", e)
         return None
     except Exception as e:
         _log.warning("Ollama unexpected error: %s", e)
+        return None
+
+    if r.status_code != 200:
+        _log.warning("Ollama returned %d: %s", r.status_code, r.text[:200])
+        return None
+    try:
+        data = r.json()
+    except json.JSONDecodeError as e:
+        _log.warning("Ollama returned invalid JSON: %s", e)
+        return None
+
+    content = data.get("message", {}).get("content", "")
+    if not content:
+        return None
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        _log.warning("Failed to parse Ollama response: %s", e)
         return None
 
 

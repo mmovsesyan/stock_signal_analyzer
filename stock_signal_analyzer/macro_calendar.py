@@ -12,7 +12,23 @@ from typing import Any
 
 import requests
 
+from .retry_utils import retry_with_backoff
+
 FINNHUB_BASE = "https://finnhub.io/api/v1"
+
+
+@retry_with_backoff(max_retries=2, initial_delay=0.5, backoff_factor=2.0,
+                    retry_on=(requests.RequestException,))
+def _finnhub_economic_get(d_from: str, d_to: str, token: str, timeout: float) -> requests.Response:
+    """HTTP GET к Finnhub economic calendar с retry."""
+    r = requests.get(
+        f"{FINNHUB_BASE}/calendar/economic",
+        params={"from": d_from, "to": d_to, "token": token},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    return r
+
 
 CRITICAL_KEYWORDS = (
     "fomc",
@@ -104,12 +120,8 @@ def fetch_economic_calendar(
     d_from = today - timedelta(days=days_back)
     d_to = today + timedelta(days=days_forward)
     _rate_wait()
-    r = requests.get(
-        f"{FINNHUB_BASE}/calendar/economic",
-        params={"from": d_from.isoformat(), "to": d_to.isoformat(), "token": key},
-        timeout=timeout,
-    )
-    r.raise_for_status()
+    r = _finnhub_economic_get(d_from.isoformat(), d_to.isoformat(), key, timeout)
+    data = r.json()
     data = r.json()
     if not isinstance(data, dict):
         return []

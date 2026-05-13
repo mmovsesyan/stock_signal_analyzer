@@ -18,11 +18,6 @@ import yfinance as yf
 
 _log = logging.getLogger(__name__)
 
-_REGIME_CACHE_TTL = 600.0
-_regime_lock = threading.Lock()
-_regime_cache: CrossAssetRegime | None = None
-_regime_cache_ts: float = 0.0
-
 
 @dataclass
 class CrossAssetRegime:
@@ -37,6 +32,12 @@ class CrossAssetRegime:
     strategy_bias: str       # "momentum" | "mean-reversion" | "neutral"
     risk_multiplier: float   # множитель для позиций (0.3..1.2)
     detail: str
+
+
+_REGIME_CACHE_TTL = 600.0
+_regime_lock = threading.Lock()
+_regime_cache: CrossAssetRegime | None = None
+_regime_cache_ts: float = 0.0
 
 
 def _safe_fetch_close(ticker: str, period: str = "6mo") -> tuple[float, float, float]:

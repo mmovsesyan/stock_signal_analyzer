@@ -29,7 +29,7 @@ import os
 import time
 import threading
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy import text
 
@@ -55,11 +55,20 @@ _health_state: dict[str, Any] = {
     "errors": [],
     "uptime_start": time.time(),
 }
+_health_lock = threading.Lock()
+
+
+def _health_update(**updates: Any) -> None:
+    """Thread-safe обновление health state."""
+    with _health_lock:
+        for k, v in updates.items():
+            _health_state[k] = v
 
 
 def get_health_state() -> dict[str, Any]:
-    """Получить состояние здоровья системы."""
-    state = dict(_health_state)
+    """Получить состояние здоровья системы (thread-safe)."""
+    with _health_lock:
+        state = dict(_health_state)
     state["uptime_sec"] = time.time() - state.pop("uptime_start", time.time())
     return state
 
@@ -75,13 +84,15 @@ def run_outcome_check() -> dict[str, Any]:
         tracker = OutcomeTracker()
         tracker.check_all_outcomes()
         stats = tracker.get_statistics()
-        _health_state["last_outcome_check"] = datetime.now(timezone.utc).isoformat()
+        _health_update(last_outcome_check=datetime.now(timezone.utc).isoformat())
         _log.info("Scheduler: outcome check done (total=%d)", stats.get("total_signals", 0))
         return stats
     except Exception as e:
         _log.exception("Scheduler: outcome check failed")
-        _health_state["errors"].append(f"outcome: {e}")
-        _health_state["errors"] = _health_state["errors"][-10:]  # keep last 10
+        _health_update(last_outcome_check=datetime.now(timezone.utc).isoformat())
+        with _health_lock:
+            _health_state["errors"].append(f"outcome: {e}")
+            _health_state["errors"] = _health_state["errors"][-10:]  # keep last 10
         return {"error": str(e)}
 
 
@@ -91,7 +102,7 @@ def run_learning_cycle() -> dict[str, Any]:
     try:
         from .llm_learning import run_learning_cycle as _run
         state = _run()
-        _health_state["last_learning"] = datetime.now(timezone.utc).isoformat()
+        _health_update(last_learning=datetime.now(timezone.utc).isoformat())
         _log.info("Scheduler: learning done (outcomes=%d, wr=%.1f%%)",
                   state.total_outcomes_analyzed, state.win_rate * 100)
         return {
@@ -101,8 +112,10 @@ def run_learning_cycle() -> dict[str, Any]:
         }
     except Exception as e:
         _log.exception("Scheduler: learning failed")
-        _health_state["errors"].append(f"learning: {e}")
-        _health_state["errors"] = _health_state["errors"][-10:]
+        _health_update(last_learning=datetime.now(timezone.utc).isoformat())
+        with _health_lock:
+            _health_state["errors"].append(f"learning: {e}")
+            _health_state["errors"] = _health_state["errors"][-10:]
         return {"error": str(e)}
 
 
@@ -128,13 +141,15 @@ def run_signal_collection() -> dict[str, Any]:
             except Exception:
                 errors += 1
 
-        _health_state["last_collect"] = datetime.now(timezone.utc).isoformat()
+        _health_update(last_collect=datetime.now(timezone.utc).isoformat())
         _log.info("Scheduler: collection done (%d collected, %d errors)", collected, errors)
         return {"collected": collected, "errors": errors}
     except Exception as e:
         _log.exception("Scheduler: collection failed")
-        _health_state["errors"].append(f"collect: {e}")
-        _health_state["errors"] = _health_state["errors"][-10:]
+        _health_update(last_collect=datetime.now(timezone.utc).isoformat())
+        with _health_lock:
+            _health_state["errors"].append(f"collect: {e}")
+            _health_state["errors"] = _health_state["errors"][-10:]
         return {"error": str(e)}
 
 
@@ -142,7 +157,7 @@ def run_db_cleanup() -> dict[str, Any]:
     """Очистка старых данных в БД."""
     _log.info("Scheduler: running DB cleanup...")
     try:
-        from .db import get_session, Signal, NotifyLog
+        from .db import get_session, NotifyLog
         from datetime import timedelta
 
         cutoff_signals = datetime.now(timezone.utc) - timedelta(days=90)
@@ -158,7 +173,7 @@ def run_db_cleanup() -> dict[str, Any]:
             # Но можно удалить очень старые без outcomes
             # (оставляем на будущее)
 
-        _health_state["last_cleanup"] = datetime.now(timezone.utc).isoformat()
+        _health_update(last_cleanup=datetime.now(timezone.utc).isoformat())
         _log.info("Scheduler: cleanup done (notify_log: %d deleted)", deleted_notify)
         return {"notify_deleted": deleted_notify}
     except Exception as e:
@@ -187,7 +202,7 @@ def run_health_check() -> dict[str, Any]:
     # DB
     try:
         from .db import get_session
-        with get_session() as session:
+        with get_session(read_only=True) as session:
             session.execute(text("SELECT 1"))
         status["database"] = True
     except Exception:
