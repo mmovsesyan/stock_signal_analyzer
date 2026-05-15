@@ -318,12 +318,77 @@ def _print_stats(stats: Stats) -> None:
     print()
 
 
+@dataclass
+class ForwardMetrics:
+    """Предиктивные метрики: что происходит после сигнала без учёта стопов/целей."""
+    by_day: dict[int, list[float]] = field(default_factory=lambda: defaultdict(list))
+    directional_accuracy: dict[int, float] = field(default_factory=dict)
+
+
+def _forward_metrics(signals: list[dict[str, Any]]) -> ForwardMetrics:
+    """Считает доходность через 1/3/5/10 дней после сигнала и directional accuracy."""
+    fm = ForwardMetrics()
+    days_list = [1, 3, 5, 10]
+    for row in signals:
+        symbol = row.get("symbol", "")
+        direction = row.get("tp_direction") or row.get("direction", "")
+        ts_utc = str(row.get("ts_utc", ""))
+        if not symbol or not ts_utc:
+            continue
+        try:
+            dt_signal = datetime.fromisoformat(ts_utc.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        start = (dt_signal + timedelta(days=1)).strftime("%Y-%m-%d")
+        end = (dt_signal + timedelta(days=15)).strftime("%Y-%m-%d")
+        try:
+            hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
+        except Exception:
+            continue
+        if hist is None or hist.empty or len(hist) < 2:
+            continue
+        entry = float(hist.iloc[0].get("Open", 0))
+        if entry <= 0:
+            continue
+        for d in days_list:
+            if d < len(hist):
+                close_d = float(hist.iloc[d].get("Close", 0))
+                if close_d > 0:
+                    ret = (close_d / entry - 1.0) * 100.0
+                    fm.by_day[d].append(ret)
+                    # Directional accuracy
+                    correct = (direction == "long" and ret > 0) or (direction == "short" and ret < 0)
+                    if d not in fm.directional_accuracy:
+                        fm.directional_accuracy[d] = 0.0
+                    fm.directional_accuracy[d] += 1.0 if correct else 0.0
+    for d in days_list:
+        if d in fm.directional_accuracy and len(fm.by_day.get(d, [])) > 0:
+            fm.directional_accuracy[d] = fm.directional_accuracy[d] / len(fm.by_day[d]) * 100.0
+    return fm
+
+
+def _print_forward_metrics(fm: ForwardMetrics) -> None:
+    print("\n" + "=" * 56)
+    print("  ПРЕДИКТИВНЫЕ МЕТРИКИ (без стопов/целей)")
+    print("=" * 56)
+    for d in sorted(fm.by_day.keys()):
+        rets = fm.by_day[d]
+        if not rets:
+            continue
+        avg = sum(rets) / len(rets)
+        wins = sum(1 for r in rets if r > 0)
+        acc = fm.directional_accuracy.get(d, 0.0)
+        print(f"  Через {d:2d} дней: avg {avg:+.2f}%  |  directional accuracy {acc:.1f}%  |  n={len(rets)}")
+    print()
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Бэктест сигналов из JSONL.")
     p.add_argument("path", help="Файл .jsonl (SSA_SIGNAL_LOG)")
     p.add_argument("--min-tier", default=None, choices=["A", "B", "C"], help="Минимальный класс (A = только A)")
     p.add_argument("--target", type=int, default=1, choices=[1, 2], help="Какую цель проверять (1 или 2)")
     p.add_argument("--commission", type=float, default=0.1, help="Комиссия за сделку в %% (по умолчанию 0.1%%)")
+    p.add_argument("--forward", action="store_true", help="Считать forward-looking метрики (медленно)")
     args = p.parse_args()
 
     signals = _load_signals(args.path, args.min_tier)
@@ -357,6 +422,12 @@ def main() -> int:
             print(f"  обработано {i}/{len(signals)}...")
 
     _print_stats(stats)
+
+    if args.forward:
+        print("\nСчитаю forward-looking метрики (займёт время)...")
+        fm = _forward_metrics(signals)
+        _print_forward_metrics(fm)
+
     return 0
 
 

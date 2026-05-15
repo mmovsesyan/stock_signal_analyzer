@@ -36,6 +36,8 @@ import yfinance as yf
 # Добавить корень проекта в path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from stock_signal_analyzer.backtest_charts import generate_backtest_plots
+
 
 @dataclass
 class TradeRecord:
@@ -449,6 +451,8 @@ def main() -> int:
     p.add_argument("--commission", type=float, default=0.1, help="Комиссия в %% за сделку (по умолчанию 0.1)")
     p.add_argument("--capital", type=float, default=100000, help="Начальный капитал")
     p.add_argument("--export", type=str, default=None, help="Экспорт результатов в JSON файл")
+    p.add_argument("--charts", action="store_true", help="Сгенерировать графики (PNG)")
+    p.add_argument("--charts-dir", type=str, default="./data/backtest_charts", help="Директория для графиков")
     args = p.parse_args()
 
     import stenv
@@ -477,6 +481,19 @@ def main() -> int:
 
     result = _compute_stats(all_trades, initial_capital=args.capital)
     _print_report(result)
+
+    if args.charts:
+        print("  Генерация графиков...")
+        try:
+            chart_paths = generate_backtest_plots(result, args.charts_dir)
+            if chart_paths:
+                print(f"  Сохранено {len(chart_paths)} файлов в {args.charts_dir}:")
+                for p in chart_paths:
+                    print(f"    • {p}")
+            else:
+                print("  Графики не сгенерированы (matplotlib недоступен или нет данных)")
+        except Exception as exc:
+            print(f"  ⚠ Ошибка генерации графиков: {exc}")
 
     if args.export:
         export_data = {

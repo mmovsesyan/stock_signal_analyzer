@@ -20,6 +20,7 @@ from .levels import KeyLevels, compute_key_levels
 from .macro_calendar import MacroContext, build_macro_context
 from .live_price import fetch_live_price
 from .market_data import TickerSnapshot, fetch_snapshot_with_meta
+from .market_regime import MarketRegime, detect_market_regime
 from .momentum import MomentumScore, analyze_momentum
 from .news_feeds import NewsItem, fetch_macro_headlines, fetch_ticker_news_google
 from .quant_models import (
@@ -57,7 +58,7 @@ from .volume_pressure import VolumePressureResult, analyze_volume_pressure
 
 # ── Константы ────────────────────────────────────────────────────────────────
 
-VOL_BLEND = 0.08
+VOL_BLEND = 0.12
 
 # Штраф за несовпадение знака объёма с общим знаком сигнала
 _VOL_ALIGN_PENALTY: float = 0.86
@@ -187,16 +188,16 @@ class _RawInputs:
     cross_asset: CrossAssetRegime | None
     adaptive_w: AdaptiveWeightsResult | None
     live_price: float | None  # актуальная цена (T-Bank / MOEX ISS / Finnhub)
+    # Market regime
+    market_regime: MarketRegime | None
 
 
 @dataclass
 class _ScoreBundle:
-    """Результат всей математики весов, мультипликаторов и confidence."""
-    score_pre_macro: float  # после vol_al*liq*confidence, но ДО макро
+    """Результат всей математики весов, корректировок и confidence."""
+    score_pre_macro: float
     total: float
     confidence: float
-    vol_al: float
-    liq: float
     online_note: str
     timing_detail: str
     signal_tier: str
@@ -252,11 +253,29 @@ def _merge_news_with_weights(
 
 
 def _component_confidence(components: list[float]) -> float:
-    if len(components) < 2:
-        return 0.75
-    arr = np.array(components, dtype=float)
-    spread = float(np.max(arr) - np.min(arr))
-    return float(np.clip(1.0 - spread / 2.2, 0.22, 1.0))
+    """Уверенность = согласованность знаков + средняя сила + диверсификация.
+
+    Старый подход (spread-based) ошибочно считал разброс = низкой уверенностью.
+    Новый: если все компоненты согласованы по знаку и умеренно сильны — высокая
+    уверенность. Если один доминирует на 3× — штраф (зависимость от одного фактора).
+    """
+    active = [c for c in components if abs(c) > 0.03]
+    if len(active) < 2:
+        return 0.35
+
+    signs = [np.sign(c) for c in active]
+    positive = sum(1 for s in signs if s > 0)
+    negative = sum(1 for s in signs if s < 0)
+    total = len(active)
+
+    sign_agreement = max(positive, negative) / total
+    avg_strength = sum(abs(c) for c in active) / total
+    max_strength = max(abs(c) for c in active)
+    dominance_ratio = max_strength / (avg_strength + 1e-9)
+    diversity = float(np.clip(2.0 / dominance_ratio, 0.3, 1.0))
+
+    confidence = sign_agreement * 0.45 + avg_strength * 0.35 + diversity * 0.20
+    return float(np.clip(confidence, 0.15, 1.0))
 
 
 def _volume_alignment(raw_total: float, vol_score: float) -> float:
@@ -468,6 +487,12 @@ def _gather_inputs(
             trend_str_res = None
 
     try:
+        market_regime = detect_market_regime(hist)
+    except Exception as exc:
+        _log.debug("Market regime detection failed: %s", exc)
+        market_regime = None
+
+    try:
         cross_asset_res = build_cross_asset_regime()
     except Exception as exc:
         _log.debug("Cross-asset regime failed: %s", exc)
@@ -549,6 +574,7 @@ def _gather_inputs(
         cross_asset=cross_asset_res,
         adaptive_w=adaptive_w,
         live_price=live_price,
+        market_regime=market_regime,
     )
 
 
@@ -585,18 +611,18 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
     quant_parts: list[float] = []
 
     if inputs.mtf_mom is not None and abs(inputs.mtf_mom.score) > 0.01:
-        quant_adj += 0.12 * inputs.mtf_mom.score
+        quant_adj += 0.15 * inputs.mtf_mom.score
         quant_parts.append(inputs.mtf_mom.score)
 
     if inputs.zscore is not None and abs(inputs.zscore.composite) > 0.01:
         ca_bias = inputs.cross_asset.strategy_bias if inputs.cross_asset else "neutral"
-        zs_weight = 0.10 if ca_bias == "mean-reversion" else 0.05
+        zs_weight = 0.12 if ca_bias == "mean-reversion" else 0.08
         quant_adj += zs_weight * inputs.zscore.composite
         quant_parts.append(inputs.zscore.composite)
 
     if inputs.trend_str is not None and abs(inputs.trend_str.score) > 0.01:
         ca_bias = inputs.cross_asset.strategy_bias if inputs.cross_asset else "neutral"
-        tr_weight = 0.10 if ca_bias == "momentum" else 0.06
+        tr_weight = 0.14 if ca_bias == "momentum" else 0.10
         quant_adj += tr_weight * inputs.trend_str.score
         quant_parts.append(inputs.trend_str.score)
 
@@ -609,71 +635,109 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
     comps.extend(quant_parts)
     confidence = _component_confidence(comps)
 
-    # ── Cross-asset regime risk multiplier ──
-    ca_risk_mult = 1.0
-    if inputs.cross_asset is not None:
-        ca_risk_mult = inputs.cross_asset.risk_multiplier
-
+    # ── Volume alignment & liquidity — аддитивные корректировки ──
     vol_al = _volume_alignment(raw_total, vol_res.score)
     liq = _liquidity_mult(hist["Volume"]) if "Volume" in hist.columns else 1.0
 
-    # Confidence multiplier: additive blend, не компрессия
-    # При confidence=1.0 → 100% score; при 0.22 → 55% score
-    conf_mult = _CONF_BASE + _CONF_SCALE * confidence
+    # Вместо каскадного умножения (сжимает score до нуля),
+    # confidence/volume/liquidity дают мягкие +/- поправки.
+    adj = 0.0
+    if confidence > 0.6:
+        adj += 0.06
+    elif confidence < 0.35:
+        adj -= 0.06
+    if vol_al < 1.0:
+        adj -= 0.04
+    else:
+        adj += 0.02
+    if liq < 1.0:
+        adj -= 0.03
+    raw_total = float(np.clip(raw_total + adj, -1.0, 1.0))
 
-    # Применяем volume + liquidity + confidence ОДНИМ шагом
-    # вместо каскада — это предотвращает чрезмерную компрессию
-    raw_total = float(
-        np.clip(raw_total * vol_al * liq * conf_mult, -1.0, 1.0)
-    )
-
-    # raw_total здесь — score после vol_al*liq*confidence, но ДО макро
+    # raw_total здесь — score после confidence/volume, но ДО макро-контекста
     score_pre_macro = raw_total
 
-    # ── Context modifiers (additive, не multiplicative) ──
-    # Вместо каскада мультипликаторов, собираем все влияния и применяем ОДИН раз
-    context_mult = 1.0
+    # ── Context modifiers (аддитивные, не multiplicative) ──
+    # Каскад мультипликаторов сжимал итоговый score до 0.3× от оригинала.
+    # Теперь контекст — это мягкие +/- поправки (±0.20 суммарно).
+    context_adj = 0.0
+    context_notes: list[str] = []
 
     # Macro dampening
-    context_mult *= macro_ctx.dampening
+    if macro_ctx.dampening < 0.93:
+        context_adj -= 0.04
+        context_notes.append(f"макро-фон: ×{macro_ctx.dampening:.2f}")
 
-    # Cross-asset regime (Bridgewater): в risk-off / crisis сжимаем сигнал
-    context_mult *= ca_risk_mult
+    # Cross-asset regime
+    if inputs.cross_asset is not None:
+        if inputs.cross_asset.risk_regime == "crisis":
+            context_adj -= 0.06
+            context_notes.append(f"межрынок: {inputs.cross_asset.risk_regime}")
+        elif inputs.cross_asset.risk_regime == "risk_off":
+            context_adj -= 0.03
+            context_notes.append(f"межрынок: {inputs.cross_asset.risk_regime}")
 
     # Earnings window
-    context_mult *= inputs.e_mult
+    if inputs.earn_bad:
+        context_adj -= 0.04
+        context_notes.append("окно отчётности")
 
     # Index tailwind
     idx_mult, idx_note, idx_hw = index_tailwind_mult(inputs.snap.symbol, raw_total)
-    context_mult *= idx_mult
+    if idx_hw:
+        context_adj -= 0.03
+        context_notes.append(idx_note)
+    elif idx_mult > 1.0:
+        context_adj += 0.02
+        context_notes.append(idx_note)
 
-    # Weekly misalignment — мягкий штраф
+    # Weekly misalignment
     wk_reg = inputs.wk_reg
     wk_note = inputs.wk_note
     weekly_ok = weekly_aligns_direction(raw_total, wk_reg)
     if not weekly_ok:
-        context_mult *= _WEEKLY_MISALIGN_MULT
+        context_adj -= 0.03
+        context_notes.append("недельный тренд против")
 
     # Intraday conflict
     online_note = ""
     if has_intra and intra is not None:
         if abs(raw_total) > _INTRADAY_CONFLICT_SCORE_THR and abs(intra.score) > _INTRADAY_CONFLICT_INTRA_THR:
             if np.sign(intra.score) != np.sign(raw_total) and np.sign(intra.score) != 0:
-                context_mult *= _INTRADAY_CONFLICT_MULT
+                context_adj -= 0.04
                 online_note = "онлайн против дневного знака — снижение"
 
-    # Ограничиваем контекстный множитель: минимум 0.3, максимум 1.0
-    # Это предотвращает чрезмерную компрессию от каскада модификаторов
-    context_mult = float(np.clip(context_mult, 0.3, 1.0))
+    # Market regime adjustment
+    regime = inputs.market_regime
+    if regime is not None and regime.regime != "transition":
+        if regime.regime == "bull":
+            if raw_total > 0:
+                context_adj += 0.03
+                context_notes.append("bull: long aligned")
+            else:
+                context_adj -= 0.03
+                context_notes.append("bull: short counter-trend")
+        elif regime.regime == "bear":
+            if raw_total < 0:
+                context_adj += 0.03
+                context_notes.append("bear: short aligned")
+            else:
+                context_adj -= 0.03
+                context_notes.append("bear: long counter-trend")
+        elif regime.regime == "sideways":
+            context_adj -= 0.02
+            context_notes.append("sideways: mean-reversion bias")
 
-    total = float(np.clip(raw_total * context_mult, -1.0, 1.0))
+    # Ограничиваем суммарную корректировку: максимум ±0.20
+    context_adj = float(np.clip(context_adj, -0.20, 0.10))
+    total = float(np.clip(raw_total + context_adj, -1.0, 1.0))
 
     ca_note = ""
     if inputs.cross_asset and inputs.cross_asset.risk_regime != "neutral":
-        ca_note = f"межрынок: {inputs.cross_asset.risk_regime} (×{ca_risk_mult:.2f})"
+        ca_note = f"межрынок: {inputs.cross_asset.risk_regime}"
 
     timing_parts = [p for p in (wk_note, inputs.e_note, idx_note, ca_note, online_note) if p]
-    timing_detail = " | ".join(timing_parts) if timing_parts else "—"
+    timing_detail = " | ".join(context_notes) if context_notes else "—"
 
     has_pat = bool(tech.pattern_summary and tech.pattern_summary.strip())
     signal_tier, tier_rationale = classify_signal_tier(
@@ -682,12 +746,12 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
         macro_dampening=macro_ctx.dampening,
         adx14=tech.adx14,
         news_score=news_score,
-        liq_mult=liq,
-        vol_align_mult=vol_al,
         has_chart_pattern=has_pat,
         weekly_aligned=weekly_ok,
         earnings_window=inputs.earn_bad,
         index_headwind=idx_hw,
+        market_regime=inputs.cross_asset.risk_regime if inputs.cross_asset else "neutral",
+        directional_regime=inputs.market_regime,
     )
 
     sent = inputs.sent
@@ -706,8 +770,6 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
         score_pre_macro=score_pre_macro,
         total=total,
         confidence=confidence,
-        vol_al=vol_al,
-        liq=liq,
         online_note=online_note,
         timing_detail=timing_detail,
         signal_tier=signal_tier,
@@ -929,6 +991,7 @@ def build_report(
         nearest_resistance=inputs.levels.nearest_resistance,
         institutional_size_pct=pos_size_res.final_pct,
         vol_regime=inputs.vol_regime.regime if inputs.vol_regime else "normal",
+        market_regime=inputs.market_regime,
     )
     rep.trade_plan = tp
 

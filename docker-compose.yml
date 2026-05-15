@@ -13,8 +13,11 @@ services:
       - FINNHUB_API_KEY=${FINNHUB_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
       - TINKOFF_INVEST_TOKEN=${TINKOFF_INVEST_TOKEN}
-      - OLLAMA_HOST=http://ollama:11434
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_CLOUD_API_KEY=${OLLAMA_CLOUD_API_KEY}
+      - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
       - NOTIFY_INTERVAL_SEC=${NOTIFY_INTERVAL_SEC:-3600}
       - NOTIFY_MIN_TIER=${NOTIFY_MIN_TIER:-A}
@@ -76,16 +79,17 @@ services:
     environment:
       - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
       - STOCK_SIGNAL_DATA=/data
-      - OLLAMA_HOST=http://ollama:11434
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
-      - LLM_LEARNING=1
-      - LLM_LEARNING_MIN=20
+      - OLLAMA_CLOUD_API_KEY=${OLLAMA_CLOUD_API_KEY}
+      - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
+      - LLM_LEARNING=${LLM_LEARNING:-1}
+      - LLM_LEARNING_MIN=${LLM_LEARNING_MIN:-20}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
     command: -m stock_signal_analyzer.llm_learning
-    depends_on:
-      - ollama
     networks:
       - stock-signal-net
     logging:
@@ -106,8 +110,11 @@ services:
       - FINNHUB_API_KEY=${FINNHUB_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
       - TINKOFF_INVEST_TOKEN=${TINKOFF_INVEST_TOKEN}
-      - OLLAMA_HOST=http://ollama:11434
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_CLOUD_API_KEY=${OLLAMA_CLOUD_API_KEY}
+      - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
       - API_RATE_LIMIT_PER_MIN=${API_RATE_LIMIT_PER_MIN:-30}
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
@@ -119,7 +126,6 @@ services:
       - "8000:8000"
     command: -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 2
     depends_on:
-      - ollama
       - postgres
       - redis
     networks:
@@ -174,8 +180,11 @@ services:
       - STOCK_SIGNAL_DATA=/data
       - FINNHUB_API_KEY=${FINNHUB_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
-      - OLLAMA_HOST=http://ollama:11434
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_CLOUD_API_KEY=${OLLAMA_CLOUD_API_KEY}
+      - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -219,40 +228,6 @@ services:
         max-size: "5m"
         max-file: "2"
 
-  # Ollama LLM (sentiment analysis)
-  ollama:
-    image: ollama/ollama:latest
-    container_name: stock-signal-ollama
-    restart: unless-stopped
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
-    networks:
-      - stock-signal-net
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-
-  # Автоматическая загрузка модели при первом запуске
-  ollama-pull:
-    image: ollama/ollama:latest
-    container_name: stock-signal-ollama-pull
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c", "sleep 15 && ollama pull ${OLLAMA_MODEL:-qwen2.5:1.5b}"]
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-    depends_on:
-      - ollama
-    networks:
-      - stock-signal-net
-
 networks:
   stock-signal-net:
     driver: bridge
@@ -260,6 +235,5 @@ networks:
 volumes:
   data:
   logs:
-  ollama_data:
   postgres_data:
   redis_data:
