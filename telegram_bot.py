@@ -813,7 +813,46 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await cmd_start(update, context)
+    """Помощь — полная справка по боту."""
+    if not update.message:
+        return
+    text = (
+        "<b>📈 Stock Signal Analyzer — справка</b>\n\n"
+        "<b>Что это?</b>\n"
+        "AI-советчик по трейдингу. Анализирует акции по 7+ факторам "
+        "(техника, импульс, новости, объём, макро, квант-модели, режим рынка) "
+        "и выдаёт готовый торговый план с entry, stop, targets.\n\n"
+        "<b>Как читать сигнал?</b>\n"
+        "• <b>Score</b> — сила сигнала (от -1 до +1). Чем выше |score|, тем сильнее.\n"
+        "• <b>Tier</b> — класс сигнала:\n"
+        "  <b>A</b> — сильный (score ≥ 0.46, ADX ≥ 20, R:R ≥ 1.5)\n"
+        "  <b>B</b> — средний (score ≥ 0.30, ADX ≥ 20, R:R ≥ 1.5)\n"
+        "  <b>C</b> — слабый / нет сигнала\n"
+        "• <b>R:R</b> — соотношение риска к прибыли (всегда ≥ 1.5)\n\n"
+        "<b>Что делать с сигналом?</b>\n"
+        "<b>Класс A (long/short)</b> — рассмотреть вход. Стоп-лосс обязателен.\n"
+        "<b>Класс B</b> — можно входить, но размер позиции уменьшить вдвое.\n"
+        "<b>Класс C</b> — не торговать, ждать лучших условий.\n\n"
+        "<b>Команды бота:</b>\n"
+        "/signal &lt;тикер&gt; — полный анализ (AAPL, SBER.ME)\n"
+        "/price &lt;тикер&gt; — быстрая цена\n"
+        "/dashboard — свод по watchlist\n"
+        "/watchlist — управление списком отслеживания\n"
+        "/settings — интерактивные настройки\n"
+        "/learning — отчёт обучения\n"
+        "/status — статус системы\n"
+        "/help — эта справка\n\n"
+        "<b>Настройки:</b>\n"
+        "Фильтр сигналов (conservative/balanced/aggressive), уведомления вне watchlist, "
+        "learning report, автосбор, просадки, дайджест — всё настраивается через /settings.\n\n"
+        "<b>Рынки:</b>\n"
+        "US — Polygon + Finnhub + Yahoo\n"
+        "RU — Т-Банк (Мосбиржа) + Yahoo fallback\n\n"
+        "<b>⚠️ Важно:</b>\n"
+        "Это только информационный инструмент, НЕ финансовая рекомендация. "
+        "Всегда проводите собственный анализ. Торговля связана с риском потери капитала."
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_main_menu_keyboard())
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
