@@ -2456,6 +2456,24 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             save_prefs(uid, prefs)
 
 
+async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Периодический автосбор сигналов."""
+    try:
+        from stock_signal_analyzer.scheduler import run_signal_collection
+        run_signal_collection()
+    except Exception:
+        log.exception("autocollect_job failed")
+
+
+async def learning_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Периодический цикл самообучения."""
+    try:
+        from stock_signal_analyzer.scheduler import run_learning_cycle
+        run_learning_cycle()
+    except Exception:
+        log.exception("learning_job failed")
+
+
 async def post_init(application: Application) -> None:
     # Регистрация команд в меню Telegram (появляются при нажатии /)
     from telegram import BotCommand
