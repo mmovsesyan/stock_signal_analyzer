@@ -69,10 +69,18 @@ from stock_signal_analyzer.telegram_format import (
 from stock_signal_analyzer.user_store import (
     all_user_ids,
     can_notify_again,
-    load_prefs,
     mark_notified,
     normalize_symbol,
+)
+from stock_signal_analyzer.user_settings import (
+    ensure_user_exists,
+    load_prefs,
     save_prefs,
+)
+from stock_signal_analyzer.subscriptions import (
+    check_feature_access,
+    get_user_tier,
+    get_tier_limits,
 )
 from stock_signal_analyzer.universe import RU_BLUE_CHIPS, US_BLUE_CHIPS
 
@@ -514,6 +522,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not uid:
         return
 
+    # Убедиться что пользователь есть в БД
+    ensure_user_exists(uid, username=user.username if user else None)
+
     # Если пользователь уже одобрен — показать главное меню
     if _is_approved(uid):
         text = (
@@ -874,11 +885,14 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def _show_settings_inline(update: Update, uid: int) -> None:
-    """Показать inline-меню настроек."""
+    """Показать inline-меню настроек с учётом тарифа."""
     prefs = load_prefs(uid)
     msg = update.message or (update.callback_query.message if update.callback_query else None)
     if not msg:
         return
+
+    tier = get_user_tier(uid)
+    limits = get_tier_limits(tier)
 
     filter_icon = {"conservative": "🛡️", "balanced": "⚖️", "aggressive": "🚀"}
     filter_label = {"conservative": "Консервативный", "balanced": "Сбалансированный", "aggressive": "Агрессивный"}
@@ -890,20 +904,31 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
     li = lang_icon.get(prefs.language, "🇷🇺")
     ll = lang_label.get(prefs.language, "Русский")
 
-    text = (
-        f"⚙️ <b>Настройки</b>\n\n"
-        f"📊 <b>Фильтр сигналов:</b> {fi} {fl}\n"
-        f"   Определяет, какие сигналы показывать.\n\n"
-        f"🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}\n"
-        f"   Порог: |score| ≥ {prefs.strong_threshold:.2f}\n\n"
-        f"🌐 <b>Язык:</b> {li} {ll}\n\n"
-        f"📈 <b>Learning report:</b> {'✅' if prefs.receive_learning_report else '❌'}\n\n"
-        f"⚡ <b>Автосбор:</b> {'✅' if prefs.auto_collect else '❌'}\n\n"
-        f"🛡️ <b>Уведомления о просадках:</b> {'✅' if prefs.notify_drawdown else '❌'}\n\n"
-        f"📰 <b>Ежедневный дайджест:</b> {'✅' if prefs.daily_digest else '❌'}"
-    )
+    def _feat(val: bool, available: bool) -> str:
+        if not available:
+            return "🔒"
+        return "✅" if val else "❌"
 
-    keyboard = [
+    text = f"""⚙️ <b>Настройки</b>
+📋 Тариф: <b>{limits.name}</b>
+
+📊 <b>Фильтр сигналов:</b> {fi} {fl}
+   Определяет, какие сигналы показывают.
+
+🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
+   Порог: |score| ≥ {prefs.strong_threshold:.2f}
+
+🌐 <b>Язык:</b> {li} {ll}
+
+📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
+
+⚡ <b>Автосбор:</b> {_feat(prefs.auto_collect, limits.autocollect)}
+
+🛡️ <b>Уведомления о просадках:</b> {_feat(prefs.notify_drawdown, limits.drawdown_notify)}
+
+📰 <b>Ежедневный дайджест:</b> {_feat(prefs.daily_digest, limits.daily_digest)}"""
+
+    keyboard: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton("🛡️ Консервативный", callback_data=f"set|filter|conservative|{uid}"),
             InlineKeyboardButton("⚖️ Сбалансированный", callback_data=f"set|filter|balanced|{uid}"),
@@ -917,29 +942,45 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
             InlineKeyboardButton("🇷🇺 Русский", callback_data=f"set|lang|ru|{uid}"),
             InlineKeyboardButton("🇬🇧 English", callback_data=f"set|lang|en|{uid}"),
         ],
-        [
+    ]
+
+    if limits.learning_report:
+        keyboard.append([
             InlineKeyboardButton("📈 Learning: ON" if prefs.receive_learning_report else "📈 Learning: OFF",
                                callback_data=f"set|learning|{('off' if prefs.receive_learning_report else 'on')}|{uid}"),
-        ],
-        [
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Learning — требуется Pro", callback_data=f"set|upgrade|learning|{uid}")])
+
+    if limits.autocollect:
+        keyboard.append([
             InlineKeyboardButton("⚡ Автосбор: ON" if prefs.auto_collect else "⚡ Автосбор: OFF",
                                callback_data=f"set|autocollect|{('off' if prefs.auto_collect else 'on')}|{uid}"),
-        ],
-        [
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Автосбор — требуется Pro", callback_data=f"set|upgrade|autocollect|{uid}")])
+
+    if limits.drawdown_notify:
+        keyboard.append([
             InlineKeyboardButton("🛡️ Просадки: ON" if prefs.notify_drawdown else "🛡️ Просадки: OFF",
                                callback_data=f"set|drawdown|{('off' if prefs.notify_drawdown else 'on')}|{uid}"),
-        ],
-        [
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Просадки — требуется Pro", callback_data=f"set|upgrade|drawdown|{uid}")])
+
+    if limits.daily_digest:
+        keyboard.append([
             InlineKeyboardButton("📰 Дайджест: ON" if prefs.daily_digest else "📰 Дайджест: OFF",
                                callback_data=f"set|digest|{('off' if prefs.daily_digest else 'on')}|{uid}"),
-        ],
-    ]
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Дайджест — требуется Pro", callback_data=f"set|upgrade|digest|{uid}")])
 
     await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка inline-кнопок настроек."""
+    """Обработка inline-кнопок настроек с проверкой тарифа."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -960,6 +1001,21 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("⛔ Нельзя менять чужие настройки.", parse_mode=ParseMode.HTML)
         return
 
+    tier = get_user_tier(uid)
+    limits = get_tier_limits(tier)
+
+    # Обработка запроса апгрейда
+    if key == "upgrade":
+        feature_names = {
+            "learning": "Learning report",
+            "autocollect": "Автосбор",
+            "drawdown": "Уведомления о просадках",
+            "digest": "Ежедневный дайджест",
+        }
+        name = feature_names.get(value, value)
+        await query.answer(f"{name} доступен с тарифа Pro. Обратитесь к администратору.", show_alert=True)
+        return
+
     prefs = load_prefs(uid)
 
     if key == "filter":
@@ -969,12 +1025,24 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif key == "lang":
         prefs.language = value
     elif key == "learning":
+        if not limits.learning_report:
+            await query.answer("Learning report доступен с тарифа Pro", show_alert=True)
+            return
         prefs.receive_learning_report = (value == "on")
     elif key == "autocollect":
+        if not limits.autocollect:
+            await query.answer("Автосбор доступен с тарифа Pro", show_alert=True)
+            return
         prefs.auto_collect = (value == "on")
     elif key == "drawdown":
+        if not limits.drawdown_notify:
+            await query.answer("Уведомления о просадках доступны с тарифа Pro", show_alert=True)
+            return
         prefs.notify_drawdown = (value == "on")
     elif key == "digest":
+        if not limits.daily_digest:
+            await query.answer("Ежедневный дайджест доступен с тарифа Pro", show_alert=True)
+            return
         prefs.daily_digest = (value == "on")
 
     save_prefs(uid, prefs)
@@ -990,20 +1058,43 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
     li = lang_icon.get(prefs.language, "🇷🇺")
     ll = lang_label.get(prefs.language, "Русский")
 
-    text = (
-        f"⚙️ <b>Настройки обновлены ✅</b>\n\n"
-        f"📊 <b>Фильтр сигналов:</b> {fi} {fl}\n"
-        f"   Определяет, какие сигналы показывать.\n\n"
-        f"🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}\n"
-        f"   Порог: |score| ≥ {prefs.strong_threshold:.2f}\n\n"
-        f"🌐 <b>Язык:</b> {li} {ll}\n\n"
-        f"📈 <b>Learning report:</b> {'✅' if prefs.receive_learning_report else '❌'}\n\n"
-        f"⚡ <b>Автосбор:</b> {'✅' if prefs.auto_collect else '❌'}\n\n"
-        f"🛡️ <b>Уведомления о просадках:</b> {'✅' if prefs.notify_drawdown else '❌'}\n\n"
-        f"📰 <b>Ежедневный дайджест:</b> {'✅' if prefs.daily_digest else '❌'}"
-    )
+    def _feat(val: bool, available: bool) -> str:
+        if not available:
+            return "🔒"
+        return "✅" if val else "❌"
 
-    keyboard = [
+    text = f"""
+⚙️ <b>Настройки обновлены ✅</b>
+
+📋 Тариф: <b>{limits.name}</b>
+
+
+📊 <b>Фильтр сигналов:</b> {fi} {fl}
+
+   Определяет, какие сигналы показывают.
+
+
+🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
+
+   Порог: |score| ≥ {prefs.strong_threshold:.2f}
+
+
+🌐 <b>Язык:</b> {li} {ll}
+
+
+📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
+
+
+⚡ <b>Автосбор:</b> {_feat(prefs.auto_collect, limits.autocollect)}
+
+
+🛡️ <b>Уведомления о просадках:</b> {_feat(prefs.notify_drawdown, limits.drawdown_notify)}
+
+
+📰 <b>Ежедневный дайджест:</b> {_feat(prefs.daily_digest, limits.daily_digest)}
+"""
+
+    keyboard: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton("🛡️ Консервативный", callback_data=f"set|filter|conservative|{uid}"),
             InlineKeyboardButton("⚖️ Сбалансированный", callback_data=f"set|filter|balanced|{uid}"),
@@ -1017,23 +1108,39 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
             InlineKeyboardButton("🇷🇺 Русский", callback_data=f"set|lang|ru|{uid}"),
             InlineKeyboardButton("🇬🇧 English", callback_data=f"set|lang|en|{uid}"),
         ],
-        [
+    ]
+
+    if limits.learning_report:
+        keyboard.append([
             InlineKeyboardButton("📈 Learning: ON" if prefs.receive_learning_report else "📈 Learning: OFF",
                                callback_data=f"set|learning|{('off' if prefs.receive_learning_report else 'on')}|{uid}"),
-        ],
-        [
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Learning — требуется Pro", callback_data=f"set|upgrade|learning|{uid}")])
+
+    if limits.autocollect:
+        keyboard.append([
             InlineKeyboardButton("⚡ Автосбор: ON" if prefs.auto_collect else "⚡ Автосбор: OFF",
                                callback_data=f"set|autocollect|{('off' if prefs.auto_collect else 'on')}|{uid}"),
-        ],
-        [
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Автосбор — требуется Pro", callback_data=f"set|upgrade|autocollect|{uid}")])
+
+    if limits.drawdown_notify:
+        keyboard.append([
             InlineKeyboardButton("🛡️ Просадки: ON" if prefs.notify_drawdown else "🛡️ Просадки: OFF",
                                callback_data=f"set|drawdown|{('off' if prefs.notify_drawdown else 'on')}|{uid}"),
-        ],
-        [
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Просадки — требуется Pro", callback_data=f"set|upgrade|drawdown|{uid}")])
+
+    if limits.daily_digest:
+        keyboard.append([
             InlineKeyboardButton("📰 Дайджест: ON" if prefs.daily_digest else "📰 Дайджест: OFF",
                                callback_data=f"set|digest|{('off' if prefs.daily_digest else 'on')}|{uid}"),
-        ],
-    ]
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("🔒 Дайджест — требуется Pro", callback_data=f"set|upgrade|digest|{uid}")])
 
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 

@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Generator
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -84,6 +85,16 @@ class User(Base):
     strong_threshold = Column(Float, default=0.35)
     notify_cooldown_sec = Column(Integer, default=86400)
     use_default_tickers = Column(Boolean, default=True)
+
+    # Extended preferences (migrated from telegram_users.json)
+    signal_filter_type = Column(String(20), default="balanced")
+    language = Column(String(10), default="ru")
+    auto_collect = Column(Boolean, default=False)
+    receive_learning_report = Column(Boolean, default=False)
+    notify_drawdown = Column(Boolean, default=True)
+    daily_digest = Column(Boolean, default=False)
+    max_watchlist_size = Column(Integer, default=30)
+    autocollect_tickers = Column(JSON, default=list)
 
     # Relations
     watchlist = relationship("Watchlist", back_populates="user", cascade="all, delete-orphan")

@@ -95,6 +95,10 @@ class TierLimits:
     max_watchlist: int
     autocollect: bool
     notifications: bool
+    learning_report: bool
+    drawdown_notify: bool
+    daily_digest: bool
+    custom_tickers: bool
 
 
 TIERS: dict[str, TierLimits] = {
@@ -108,6 +112,10 @@ TIERS: dict[str, TierLimits] = {
         max_watchlist=5,
         autocollect=False,
         notifications=False,
+        learning_report=False,
+        drawdown_notify=False,
+        daily_digest=False,
+        custom_tickers=False,
     ),
     "pro": TierLimits(
         name="Pro",
@@ -119,6 +127,10 @@ TIERS: dict[str, TierLimits] = {
         max_watchlist=30,
         autocollect=True,
         notifications=True,
+        learning_report=True,
+        drawdown_notify=True,
+        daily_digest=True,
+        custom_tickers=True,
     ),
     "premium": TierLimits(
         name="Premium",
@@ -130,6 +142,10 @@ TIERS: dict[str, TierLimits] = {
         max_watchlist=100,
         autocollect=True,
         notifications=True,
+        learning_report=True,
+        drawdown_notify=True,
+        daily_digest=True,
+        custom_tickers=True,
     ),
 }
 
@@ -239,3 +255,23 @@ def format_subscription_info(user_id: int) -> str:
         f"Watchlist: до {limits.max_watchlist} тикеров",
     ]
     return "\n".join(lines)
+
+
+def check_feature_access(user_id: int, feature: str) -> bool:
+    """Проверить, доступна ли фича пользователю по тарифу.
+
+    Features:
+        learning_report — learning report (pro+)
+        autocollect — автосбор (pro+)
+        drawdown_notify — уведомления о просадках (pro+)
+        daily_digest — ежедневный дайджест (pro+)
+        per_user_learning — персональное обучение (premium)
+        priority_queue — приоритетная очередь (premium)
+        llm_sentiment — LLM sentiment (pro+)
+        custom_tickers — свои тикеры в автосборе (pro+)
+    """
+    if not SUBSCRIPTIONS_ENABLED:
+        return True
+    tier = get_user_tier(user_id)
+    limits = get_tier_limits(tier)
+    return getattr(limits, feature, False)
