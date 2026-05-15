@@ -90,7 +90,17 @@ def fetch_tinkoff_price(ticker: str) -> dict[str, Any] | None:
             if not instruments.instruments:
                 return None
 
-            instrument = instruments.instruments[0]
+            # Фильтруем по акциям (share) и предпочтительно TQBR
+            shares = [
+                i for i in instruments.instruments
+                if getattr(i, "instrument_type", "") == "share"
+            ]
+            if not shares:
+                return None
+            instrument = next(
+                (i for i in shares if getattr(i, "class_code", "") == "TQBR"),
+                shares[0]
+            )
             uid = getattr(instrument, "uid", None) or ""
             figi = getattr(instrument, "figi", "") or ""
 
@@ -153,7 +163,17 @@ def fetch_tinkoff_candles(ticker: str, days: int = 30) -> list[dict[str, Any]] |
             if not instruments.instruments:
                 return None
 
-            instrument = instruments.instruments[0]
+            # Фильтруем по акциям (share) и предпочтительно TQBR
+            shares = [
+                i for i in instruments.instruments
+                if getattr(i, "instrument_type", "") == "share"
+            ]
+            if not shares:
+                return None
+            instrument = next(
+                (i for i in shares if getattr(i, "class_code", "") == "TQBR"),
+                shares[0]
+            )
             uid = getattr(instrument, "uid", None) or ""
             figi = getattr(instrument, "figi", "") or ""
 
