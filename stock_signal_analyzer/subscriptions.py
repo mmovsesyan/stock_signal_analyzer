@@ -25,6 +25,10 @@ SUBSCRIPTIONS_ENABLED = os.environ.get("SUBSCRIPTION_ENABLED", "0").strip() == "
 # Формат: {user_id: (date_str, count)}
 _usage_cache: dict[int, tuple[str, int]] = {}
 
+# Кэш последнего известного тарифа (переживает кратковременные ошибки БД)
+_tier_cache: dict[int, tuple[str, float]] = {}  # user_id: (tier, timestamp)
+_TIER_CACHE_TTL = 300.0  # 5 минут
+
 
 def _today_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -130,32 +134,46 @@ TIERS: dict[str, TierLimits] = {
 }
 
 
-# In-memory rate counter (per user daily usage)
-_daily_usage: dict[int, dict[str, Any]] = {}
-
-
-def _today_key() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def get_user_tier(user_id: int) -> str:
-    """Получить тариф пользователя из БД или вернуть free."""
+    """Получить тариф пользователя из БД или вернуть free.
+
+    При временной недоступности БД использует кэш последнего известного тарифа
+    чтобы не сбрасывать всех пользователей на free.
+    """
     if not SUBSCRIPTIONS_ENABLED:
         return "premium"  # Если подписки выключены — всё доступно
+
+    # Проверить кэш
+    now = datetime.now(timezone.utc).timestamp()
+    cached = _tier_cache.get(user_id)
+    if cached is not None:
+        cached_tier, cached_ts = cached
+        if now - cached_ts < _TIER_CACHE_TTL:
+            return cached_tier
 
     try:
         from .db import get_session, User
         with get_session(read_only=True) as session:
             user = session.query(User).filter_by(telegram_id=user_id).first()
             if not user:
+                _tier_cache[user_id] = ("free", now)
                 return "free"
             # Проверить не истёк ли тариф
             if user.tier_expires_at and user.tier_expires_at < datetime.now(timezone.utc):
                 user.tier = "free"
                 user.tier_expires_at = None
+                _tier_cache[user_id] = ("free", now)
                 return "free"
-            return user.tier or "free"
+            tier = user.tier or "free"
+            _tier_cache[user_id] = (tier, now)
+            return tier
     except Exception:
+        # БД недоступна — используем кэш если есть, иначе free
+        if cached is not None:
+            _log.warning("DB unavailable for tier lookup, using cache for user %d", user_id)
+            return cached[0]
         return "free"
 
 

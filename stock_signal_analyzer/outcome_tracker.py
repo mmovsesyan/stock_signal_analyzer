@@ -132,7 +132,6 @@ class OutcomeTracker:
         return signals
 
     @staticmethod
-    @staticmethod
     def _safe_price(value: Any) -> float | None:
         """Конвертировать в float > 0, иначе None."""
         if value is None:
@@ -255,6 +254,16 @@ class OutcomeTracker:
                     tp2_hit = target2_price > 0 and high >= target2_price
                     tp1_hit = target1_price > 0 and high >= target1_price
 
+                    # Gap-aware: если открытие ниже стопа (gap down), реальный выход по open
+                    open_price = float(row.get('Open', entry_price))
+                    if open_price <= stop_price:
+                        exit_p = min(open_price, stop_price)
+                        pnl_pct = self._calculate_pnl(entry_price, exit_p, direction)
+                        return SignalOutcome(
+                            signal_id=signal_id, symbol=symbol, outcome='loss',
+                            exit_price=exit_p, exit_date=date, pnl_pct=pnl_pct, hold_days=i
+                        )
+
                     if stop_hit and not tp1_hit:
                         # Только стоп — loss
                         pnl_pct = self._calculate_pnl(entry_price, stop_price, direction)
@@ -303,6 +312,16 @@ class OutcomeTracker:
                     stop_hit = stop_price > 0 and high >= stop_price
                     tp2_hit = target2_price > 0 and low <= target2_price
                     tp1_hit = target1_price > 0 and low <= target1_price
+
+                    # Gap-aware: если открытие выше стопа (gap up), реальный выход по open
+                    open_price = float(row.get('Open', entry_price))
+                    if open_price >= stop_price:
+                        exit_p = max(open_price, stop_price)
+                        pnl_pct = self._calculate_pnl(entry_price, exit_p, direction)
+                        return SignalOutcome(
+                            signal_id=signal_id, symbol=symbol, outcome='loss',
+                            exit_price=exit_p, exit_date=date, pnl_pct=pnl_pct, hold_days=i
+                        )
 
                     if stop_hit and not tp1_hit:
                         # Стоп сработал — loss

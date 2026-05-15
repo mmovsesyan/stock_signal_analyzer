@@ -277,6 +277,7 @@ def _collect_menu_keyboard() -> ReplyKeyboardMarkup:
 def _settings_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton("⚙️ Интерактивные настройки")],
             [KeyboardButton("🤖 Настройка автосбора"), KeyboardButton("🔔 Уведомления")],
             [KeyboardButton("🧠 Обучение")],
             [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
@@ -815,6 +816,183 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_start(update, context)
 
 
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Интерактивные настройки пользователя."""
+    uid = _uid(update)
+    if not _is_approved(uid):
+        if update.message:
+            await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
+        return
+    await _show_settings_inline(update, uid)
+
+
+async def _show_settings_inline(update: Update, uid: int) -> None:
+    """Показать inline-меню настроек."""
+    prefs = load_prefs(uid)
+    msg = update.message or (update.callback_query.message if update.callback_query else None)
+    if not msg:
+        return
+
+    filter_icon = {"conservative": "🛡️", "balanced": "⚖️", "aggressive": "🚀"}
+    filter_label = {"conservative": "Консервативный", "balanced": "Сбалансированный", "aggressive": "Агрессивный"}
+    fi = filter_icon.get(prefs.signal_filter_type, "⚖️")
+    fl = filter_label.get(prefs.signal_filter_type, "Сбалансированный")
+
+    lang_icon = {"ru": "🇷🇺", "en": "🇬🇧"}
+    lang_label = {"ru": "Русский", "en": "English"}
+    li = lang_icon.get(prefs.language, "🇷🇺")
+    ll = lang_label.get(prefs.language, "Русский")
+
+    text = (
+        f"⚙️ <b>Настройки</b>\n\n"
+        f"📊 <b>Фильтр сигналов:</b> {fi} {fl}\n"
+        f"   Определяет, какие сигналы показывать.\n\n"
+        f"🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}\n"
+        f"   Порог: |score| ≥ {prefs.strong_threshold:.2f}\n\n"
+        f"🌐 <b>Язык:</b> {li} {ll}\n\n"
+        f"📈 <b>Learning report:</b> {'✅' if prefs.receive_learning_report else '❌'}\n\n"
+        f"⚡ <b>Автосбор:</b> {'✅' if prefs.auto_collect else '❌'}\n\n"
+        f"🛡️ <b>Уведомления о просадках:</b> {'✅' if prefs.notify_drawdown else '❌'}\n\n"
+        f"📰 <b>Ежедневный дайджест:</b> {'✅' if prefs.daily_digest else '❌'}"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🛡️ Консервативный", callback_data=f"set|filter|conservative|{uid}"),
+            InlineKeyboardButton("⚖️ Сбалансированный", callback_data=f"set|filter|balanced|{uid}"),
+            InlineKeyboardButton("🚀 Агрессивный", callback_data=f"set|filter|aggressive|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Уведомления: ON" if prefs.notify_strong_outside else "🔕 Уведомления: OFF",
+                               callback_data=f"set|notify|{('off' if prefs.notify_strong_outside else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🇷🇺 Русский", callback_data=f"set|lang|ru|{uid}"),
+            InlineKeyboardButton("🇬🇧 English", callback_data=f"set|lang|en|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("📈 Learning: ON" if prefs.receive_learning_report else "📈 Learning: OFF",
+                               callback_data=f"set|learning|{('off' if prefs.receive_learning_report else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("⚡ Автосбор: ON" if prefs.auto_collect else "⚡ Автосбор: OFF",
+                               callback_data=f"set|autocollect|{('off' if prefs.auto_collect else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🛡️ Просадки: ON" if prefs.notify_drawdown else "🛡️ Просадки: OFF",
+                               callback_data=f"set|drawdown|{('off' if prefs.notify_drawdown else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("📰 Дайджест: ON" if prefs.daily_digest else "📰 Дайджест: OFF",
+                               callback_data=f"set|digest|{('off' if prefs.daily_digest else 'on')}|{uid}"),
+        ],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="menu|root")],
+    ]
+
+    await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка inline-кнопок настроек."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    parts = query.data.split("|")
+    if len(parts) < 4 or parts[0] != "set":
+        return
+
+    _, key, value, uid_str = parts
+    try:
+        uid = int(uid_str)
+    except ValueError:
+        return
+
+    # Проверить, что пользователь меняет свои настройки
+    if _uid(update) != uid and not _is_admin(_uid(update)):
+        await query.edit_message_text("⛔ Нельзя менять чужие настройки.", parse_mode=ParseMode.HTML)
+        return
+
+    prefs = load_prefs(uid)
+
+    if key == "filter":
+        prefs.signal_filter_type = value
+    elif key == "notify":
+        prefs.notify_strong_outside = (value == "on")
+    elif key == "lang":
+        prefs.language = value
+    elif key == "learning":
+        prefs.receive_learning_report = (value == "on")
+    elif key == "autocollect":
+        prefs.auto_collect = (value == "on")
+    elif key == "drawdown":
+        prefs.notify_drawdown = (value == "on")
+    elif key == "digest":
+        prefs.daily_digest = (value == "on")
+
+    save_prefs(uid, prefs)
+
+    # Обновить сообщение
+    filter_icon = {"conservative": "🛡️", "balanced": "⚖️", "aggressive": "🚀"}
+    filter_label = {"conservative": "Консервативный", "balanced": "Сбалансированный", "aggressive": "Агрессивный"}
+    fi = filter_icon.get(prefs.signal_filter_type, "⚖️")
+    fl = filter_label.get(prefs.signal_filter_type, "Сбалансированный")
+
+    lang_icon = {"ru": "🇷🇺", "en": "🇬🇧"}
+    lang_label = {"ru": "Русский", "en": "English"}
+    li = lang_icon.get(prefs.language, "🇷🇺")
+    ll = lang_label.get(prefs.language, "Русский")
+
+    text = (
+        f"⚙️ <b>Настройки обновлены ✅</b>\n\n"
+        f"📊 <b>Фильтр сигналов:</b> {fi} {fl}\n"
+        f"   Определяет, какие сигналы показывать.\n\n"
+        f"🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}\n"
+        f"   Порог: |score| ≥ {prefs.strong_threshold:.2f}\n\n"
+        f"🌐 <b>Язык:</b> {li} {ll}\n\n"
+        f"📈 <b>Learning report:</b> {'✅' if prefs.receive_learning_report else '❌'}\n\n"
+        f"⚡ <b>Автосбор:</b> {'✅' if prefs.auto_collect else '❌'}\n\n"
+        f"🛡️ <b>Уведомления о просадках:</b> {'✅' if prefs.notify_drawdown else '❌'}\n\n"
+        f"📰 <b>Ежедневный дайджест:</b> {'✅' if prefs.daily_digest else '❌'}"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🛡️ Консервативный", callback_data=f"set|filter|conservative|{uid}"),
+            InlineKeyboardButton("⚖️ Сбалансированный", callback_data=f"set|filter|balanced|{uid}"),
+            InlineKeyboardButton("🚀 Агрессивный", callback_data=f"set|filter|aggressive|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🔔 Уведомления: ON" if prefs.notify_strong_outside else "🔕 Уведомления: OFF",
+                               callback_data=f"set|notify|{('off' if prefs.notify_strong_outside else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🇷🇺 Русский", callback_data=f"set|lang|ru|{uid}"),
+            InlineKeyboardButton("🇬🇧 English", callback_data=f"set|lang|en|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("📈 Learning: ON" if prefs.receive_learning_report else "📈 Learning: OFF",
+                               callback_data=f"set|learning|{('off' if prefs.receive_learning_report else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("⚡ Автосбор: ON" if prefs.auto_collect else "⚡ Автосбор: OFF",
+                               callback_data=f"set|autocollect|{('off' if prefs.auto_collect else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🛡️ Просадки: ON" if prefs.notify_drawdown else "🛡️ Просадки: OFF",
+                               callback_data=f"set|drawdown|{('off' if prefs.notify_drawdown else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("📰 Дайджест: ON" if prefs.daily_digest else "📰 Дайджест: OFF",
+                               callback_data=f"set|digest|{('off' if prefs.daily_digest else 'on')}|{uid}"),
+        ],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="menu|root")],
+    ]
+
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
 async def _send_price_for_symbol(message, sym: str) -> None:
     if not message:
         return
@@ -1279,6 +1457,22 @@ async def on_menu_section_collect(update: Update, context: ContextTypes.DEFAULT_
 async def on_menu_section_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
     await _show_notify_menu(update.message)
+
+
+async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_settings_menu(update.message, _uid(update))
+
+
+async def on_menu_settings_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Открыть интерактивные inline-настройки."""
+    _clear_pending_action(context)
+    uid = _uid(update)
+    if not _is_approved(uid):
+        if update.message:
+            await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
+        return
+    await _show_settings_inline(update, uid)
 
 
 async def on_menu_back_sections(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2310,10 +2504,13 @@ def main() -> int:
     app.add_handler(CommandHandler("collect", cmd_collect))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("status", cmd_collect_status))
+    app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("learning", cmd_learning))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("force_learn", cmd_force_learn))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
+    # Settings callbacks
+    app.add_handler(CallbackQueryHandler(_on_settings_callback, pattern=r"^set\|"))
     app.add_handler(
         MessageHandler(filters.Regex(r"^/анализ(?:@\w+)?(?:\s+.*)?$"), cmd_signal_ru)
     )
@@ -2337,6 +2534,7 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Сбор и экспорт$"), on_menu_section_collect))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройки$"), on_menu_section_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления$"), on_menu_section_notify))
+    app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Интерактивные настройки"), on_menu_settings_inline))
     app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Настройка автосбора"), on_menu_autocollect))
     app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Обучение$"), on_menu_learning))
     app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Показать отчёт"), on_menu_show_report))

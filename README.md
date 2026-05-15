@@ -299,10 +299,25 @@ docker compose exec api python3 -m pytest tests/ -v
 
 | Команда | Описание |
 |---------|----------|
+| `/settings` | Интерактивные настройки (inline-кнопки) |
 | `/watchlist add AAPL MSFT` | Добавить в watchlist |
 | `/collect` | Запустить массовый сбор сигналов |
 | `/status` | Статус системы |
 | `/export` | Выгрузить лог сигналов |
+
+### Настройки
+
+Команда `/settings` открывает интерактивное меню с inline-кнопками:
+
+| Настройка | Описание |
+|-----------|----------|
+| **Фильтр сигналов** | Conservative / Balanced / Aggressive — строгость отбора сигналов |
+| **Уведомления вне списка** | Вкл/выкл уведомления о сильных сигналах не из watchlist |
+| **Язык** | Русский / English |
+| **Learning report** | Получать отчёты о самообучении |
+| **Автосбор** | Автоматический сбор сигналов |
+| **Просадки** | Уведомления о circuit breaker |
+| **Дайджест** | Ежедневная сводка сигналов |
 
 ### Админ-команды
 
@@ -397,6 +412,17 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 
 ## ✅ Что нового
 
+### v2.4 (2026-05-15) — Интерактивные настройки + архитектурные улучшения
+
+- **Интерактивные настройки** (`/settings`) — inline-кнопки для фильтра сигналов, уведомлений, языка, learning report, автосбора, просадок, дайджеста
+- **Единый Settings dataclass** (`config.py`) — централизованная загрузка всех env vars через `@lru_cache`
+- **Kelly caching** (`risk_manager.py`) — кэширование Kelly criterion на 1 час, устранение I/O bottleneck
+- **Tier cache** (`subscriptions.py`) — кэш тарифов на 5 минут, защита от сброса при кратковременных ошибках БД
+- **Gap-aware outcome tracking** (`outcome_tracker.py`) — учёт gap down/up при определении исхода сигнала
+- **Dead code удалён** — `_daily_usage` in-memory counter (заменён на БД + LRU cache)
+- **Code quality** — документированы magic numbers, добавлены length checks, исправлено дублирование `@staticmethod`
+- Тесты: 106 passed
+
 ### v2.3.1 (2026-05-14) — Chandelier stop + bugfix
 
 - **Chandelier trailing stop** (`technical.py`) — динамический стоп на основе highest high/lowest low ± 3×ATR (Chuck LeBeau)
@@ -458,5 +484,5 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 ---
 
 <p align="center">
-  <strong>Version 2.1.0</strong> • Updated 2026-05-13
+  <strong>Version 2.4.0</strong> • Updated 2026-05-15
 </p>

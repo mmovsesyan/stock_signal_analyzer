@@ -182,36 +182,74 @@ def _plain_language_summary(r: SignalReport) -> str:
     if analyst:
         parts.append(f"🏦 Аналитики: {analyst}")
 
+    # ── Совет по риск-менеджменту ──
+    parts.append("")
+    parts.append("🛡️ <b>Совет по риск-менеджменту</b>")
+    if r.atr_pct is not None and r.atr_pct > 3.0:
+        parts.append("Высокая волатильность — уменьшите размер позиции или подождите успокоения.")
+    if conf < 0.50:
+        parts.append("Низкая согласованность компонентов — не входите на полную позицию.")
+    if r.macro_dampening < 0.85:
+        parts.append("Макро-фон неблагоприятный — сократите риск или отложите вход.")
+    tp = r.trade_plan
+    if tp and tp.direction != "none" and tp.position_size_pct > 0:
+        parts.append(
+            f"Рекомендуемый размер позиции: <b>{tp.position_size_pct:.0f}%</b> от капитала. "
+            f"Не превышайте — это защита от серии убытков."
+        )
+
     # ── Класс и рекомендация ──
     if tier == "A":
-        tp = r.trade_plan
         if tp and tp.direction != "none":
             d = "покупку" if tp.direction == "long" else "продажу"
             stop_abs = tp.stop_price
             t1_abs = tp.target1_price
             parts.append(
                 f"\n✅ <b>Класс A — сильный сигнал</b>\n"
-                f"Можно рассмотреть {d}:\n"
+                f"<b>Рекомендация:</b> рассмотреть {d} при пробое текущего уровня.\n"
                 f"  Вход: ~{ref:,.2f} {currency}\n"
                 f"  Стоп-лосс: {stop_abs:,.2f} {currency} ({tp.stop_pct:+.1f}%)\n"
-                f"  Цель: {t1_abs:,.2f} {currency} ({tp.target1_pct:+.1f}%)\n"
-                f"  Удержание: до {tp.max_hold_days} дней"
+                f"  Цель 1: {t1_abs:,.2f} {currency} ({tp.target1_pct:+.1f}%) — закрыть {tp.partial_exit_pct:.0f}%\n"
+                f"  Цель 2: {tp.target2_price:,.2f} {currency} ({tp.target2_pct:+.1f}%) — остаток\n"
+                f"  Удержание: до {tp.max_hold_days} дней\n"
+                f"  R:R = {tp.risk_reward_1:.1f} (минимум 1.5)"
             )
         else:
             parts.append("✅ <b>Класс A</b> — сильный сигнал по всем критериям.")
     elif tier == "B":
-        tp = r.trade_plan
         if tp and tp.direction != "none":
             d = "покупку" if tp.direction == "long" else "продажу"
             parts.append(
                 f"\n🔶 <b>Класс B — средний сигнал</b>\n"
-                f"Можно рассмотреть {d}, но с осторожностью.\n"
-                f"  Стоп: {tp.stop_price:,.2f} {currency} ({tp.stop_pct:+.1f}%)"
+                f"<b>Рекомендация:</b> можно рассмотреть {d}, но уменьшите позицию вдвое.\n"
+                f"  Стоп: {tp.stop_price:,.2f} {currency} ({tp.stop_pct:+.1f}%)\n"
+                f"  Цель: {tp.target1_price:,.2f} {currency} ({tp.target1_pct:+.1f}%)\n"
+                f"  R:R = {tp.risk_reward_1:.1f}"
             )
         else:
             parts.append("🔶 <b>Класс B</b> — средний сигнал. Можно рассмотреть, но с осторожностью.")
     else:
-        parts.append("⚪ <b>Класс C</b> — слабый или противоречивый сигнал. Лучше наблюдать и не торговать.")
+        parts.append("⚪ <b>Класс C</b> — слабый или противоречивый сигнал. <b>Лучше наблюдать и не торговать.</b>")
+
+    # ── Educational: почему этот сигнал ──
+    parts.append("")
+    parts.append("📚 <b>Почему такая оценка?</b>")
+    if r.technical_score > 0.2:
+        parts.append("Технический анализ показывает бычьи паттерны или выход из консолидации.")
+    elif r.technical_score < -0.2:
+        parts.append("Технический анализ показывает медвежьи паттерны или пробой поддержки.")
+    if abs(r.momentum_score) > 0.15:
+        parts.append("Импульс подтверждает направление — ускорение или замедление тренда.")
+    if abs(r.news_score) > 0.15:
+        parts.append("Новостной фон влияет на сентимент и может усилить движение.")
+    if r.volume_score > 0.1:
+        parts.append("Объём выше среднего — подтверждение интереса участников.")
+    elif r.volume_score < -0.1:
+        parts.append("Объём ниже среднего — движение может быть слабым и быстро развернуться.")
+    parts.append(
+        "Все компоненты объединяются взвешенно. Класс A требует согласованности, "
+        "сильного тренда (ADX>20) и благоприятного макро-фона."
+    )
 
     return "\n".join(parts)
 

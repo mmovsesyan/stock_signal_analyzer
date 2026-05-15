@@ -34,7 +34,9 @@ def _roc_acceleration(close: pd.Series) -> float:
     """
     if len(close) < 12:
         return 0.0
+    # ROC(5): 5-дневная доходность (текущая свеча vs 5 свечей назад)
     roc_now = float(close.iloc[-1] / close.iloc[-6] - 1.0)
+    # ROC(5) 5 дней назад: для измерения ускорения
     roc_prev = float(close.iloc[-6] / close.iloc[-11] - 1.0)
     return roc_now - roc_prev
 

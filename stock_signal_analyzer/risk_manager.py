@@ -89,6 +89,11 @@ def kelly_from_confidence(confidence: float, signal_strength: float) -> KellyRes
     return kelly_criterion(est_wr, est_rr, 1.0)
 
 
+# ── Kelly caching ─────────────────────────────────────────────────────────────
+_kelly_cache: tuple[KellyResult | None, float] | None = None
+_KELLY_CACHE_TTL_SEC = 3600.0  # 1 hour
+
+
 def kelly_from_outcomes(outcomes_path: str | None = None, min_trades: int = 30) -> KellyResult | None:
     """
     Рассчитать Kelly из реальной статистики сделок.
@@ -98,14 +103,22 @@ def kelly_from_outcomes(outcomes_path: str | None = None, min_trades: int = 30) 
     - Средний выигрыш / средний проигрыш
     - Kelly fraction
 
+    Результат кэшируется на 1 час чтобы избежать повторного чтения файла.
     Возвращает None, если недостаточно сделок (< min_trades).
     """
+    global _kelly_cache
+    if _kelly_cache is not None:
+        cached_result, cached_ts = _kelly_cache
+        if _time.time() - cached_ts < _KELLY_CACHE_TTL_SEC:
+            return cached_result
+
     path = outcomes_path or os.path.join(
         os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer"),
         "outcomes.jsonl"
     )
 
     if not os.path.exists(path):
+        _kelly_cache = (None, _time.time())
         return None
 
     pnl_values = []
@@ -124,22 +137,27 @@ def kelly_from_outcomes(outcomes_path: str | None = None, min_trades: int = 30) 
                 except (json.JSONDecodeError, ValueError):
                     continue
     except OSError:
+        _kelly_cache = (None, _time.time())
         return None
 
     if len(pnl_values) < min_trades:
+        _kelly_cache = (None, _time.time())
         return None
 
     wins = [p for p in pnl_values if p > 0]
     losses = [abs(p) for p in pnl_values if p < 0]
 
     if not wins or not losses:
+        _kelly_cache = (None, _time.time())
         return None
 
     win_rate = len(wins) / len(pnl_values)
     avg_win = sum(wins) / len(wins)
     avg_loss = sum(losses) / len(losses)
 
-    return kelly_criterion(win_rate, avg_win, avg_loss)
+    result = kelly_criterion(win_rate, avg_win, avg_loss)
+    _kelly_cache = (result, _time.time())
+    return result
 
 
 # ── 2. Volatility Targeting ──────────────────────────────────────────────────

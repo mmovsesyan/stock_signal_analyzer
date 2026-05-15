@@ -49,6 +49,18 @@ class UserPrefs:
     tier: str = "free"
     """Получать learning report (1 = да, 0 = нет)."""
     receive_learning_report: bool = False
+    """Тип фильтра сигналов: conservative, balanced, aggressive."""
+    signal_filter_type: str = "balanced"
+    """Язык интерфейса: ru, en."""
+    language: str = "ru"
+    """Включить автосбор сигналов."""
+    auto_collect: bool = False
+    """Максимальный размер watchlist."""
+    max_watchlist_size: int = 30
+    """Получать уведомления о просадках (circuit breaker)."""
+    notify_drawdown: bool = True
+    """Получать ежедневный дайджест."""
+    daily_digest: bool = False
 
 
 def _empty_store() -> dict[str, Any]:
@@ -113,6 +125,12 @@ def _prefs_from_dict(d: dict[str, Any]) -> UserPrefs:
         use_default_tickers=bool(d.get("use_default_tickers", True)),
         tier=str(d.get("tier", "free")),
         receive_learning_report=bool(d.get("receive_learning_report", False)),
+        signal_filter_type=str(d.get("signal_filter_type", "balanced")),
+        language=str(d.get("language", "ru")),
+        auto_collect=bool(d.get("auto_collect", False)),
+        max_watchlist_size=int(d.get("max_watchlist_size", 30)),
+        notify_drawdown=bool(d.get("notify_drawdown", True)),
+        daily_digest=bool(d.get("daily_digest", False)),
     )
 
 

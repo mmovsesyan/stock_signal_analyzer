@@ -29,6 +29,8 @@ class VolumePressureResult:
 
 
 def _cmf_last(high: pd.Series, low: pd.Series, close: pd.Series, vol: pd.Series, period: int = 20) -> float:
+    if len(high) < period or len(low) < period or len(close) < period or len(vol) < period:
+        return 0.0
     h = high.astype(float)
     l = low.astype(float)
     c = close.astype(float)
