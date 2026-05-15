@@ -53,6 +53,9 @@ class Settings:
     # Subscriptions
     subscription_enabled: bool = False
 
+    # Admin contact for new users
+    admin_contact_info: str = ""
+
     # News
     default_news_feeds: list[str] = None  # type: ignore[assignment]
 
@@ -103,6 +106,7 @@ def get_settings() -> Settings:
         ssa_signal_log=os.environ.get("SSA_SIGNAL_LOG"),
         ssa_drawdown_state=os.environ.get("SSA_DRAWDOWN_STATE"),
         subscription_enabled=os.environ.get("SUBSCRIPTION_ENABLED", "0").strip() == "1",
+        admin_contact_info=os.environ.get("ADMIN_CONTACT_INFO", ""),
         default_news_feeds=None,
     )
 

@@ -181,6 +181,20 @@ do_configure() {
     fi
     echo ""
 
+    # ── 1c. Admin Contact Info ──
+    echo -e "  ${BOLD}1c. Ваши контактные данные для новых пользователей${NC} ${YELLOW}(опционально)${NC}"
+    echo "     Показываются новым пользователям при выборе плана."
+    echo "     Формат: @username или t.me/username или email"
+    echo ""
+    local cur_contact=""
+    if [ -f "$ENV_FILE" ]; then
+        cur_contact=$(grep -oP '(?<=^ADMIN_CONTACT_INFO=).+' "$ENV_FILE" 2>/dev/null || true)
+    fi
+    local new_contact
+    new_contact=$(ask_input "Ваш контакт для новых пользователей (Enter = пропустить)" "$cur_contact")
+    if [ -n "$new_contact" ]; then cur_contact="$new_contact"; fi
+    echo ""
+
     # ── 2. Massive (ex-Polygon.io) (рекомендуется) ──
     echo -e "  ${BOLD}2. Massive (Polygon) API Key${NC} ${YELLOW}(рекомендуется)${NC}"
     echo "     Что даёт: котировки US, исторические свечи, новости"
@@ -375,6 +389,7 @@ do_configure() {
 # ── Telegram ──────────────────────────────────
 TELEGRAM_BOT_TOKEN=${cur_tg}
 ADMIN_CHAT_ID=${cur_admin}
+ADMIN_CONTACT_INFO=${cur_contact}
 
 # ── API ключи ─────────────────────────────────
 POLYGON_API_KEY=${cur_pg}

@@ -87,6 +87,7 @@ _PENDING_ACTION_KEY = "pending_action"
 # ADMIN_CHAT_ID — Telegram ID администратора. Получает уведомления о новых юзерах,
 # управляет доступом. Задать в .env.
 _ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
+_ADMIN_CONTACT_INFO = os.environ.get("ADMIN_CONTACT_INFO", "").strip()
 # ALLOW_ALL_USERS — если "1" или "true", доступ всем (для дебага/локальной разработки)
 _ALLOW_ALL = os.environ.get("ALLOW_ALL_USERS", "").strip().lower() in ("1", "true", "yes")
 # Множество одобренных user_id (загружается из файла)
@@ -573,11 +574,18 @@ async def _on_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     plan_label = plan_names.get(plan, plan)
 
     # Подтверждение пользователю
+    contact_line = ""
+    if _ADMIN_CONTACT_INFO:
+        contact_line = (
+            f"\n\n📞 Для связи с администратором:\n"
+            f"  <b>{_esc(_ADMIN_CONTACT_INFO)}</b>\n"
+        )
     await query.edit_message_text(
         f"✅ Вы выбрали план: <b>{plan_label}</b>\n\n"
         "Ваша заявка отправлена администратору.\n"
         "Вы получите уведомление когда доступ будет активирован.\n\n"
-        "⏳ Обычно это занимает несколько минут.",
+        "⏳ Обычно это занимает несколько минут."
+        f"{contact_line}",
         parse_mode=ParseMode.HTML,
     )
 
