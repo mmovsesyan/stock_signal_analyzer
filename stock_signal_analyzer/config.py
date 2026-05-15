@@ -29,8 +29,11 @@ class Settings:
     polygon_api_key: str | None = None
 
     # Ollama / LLM
+    llm_provider: str = "ollama"
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:1.5b"
+    ollama_cloud_api_key: str | None = None
+    ollama_cloud_model: str = "qwen2.5:1.5b"
     llm_sentiment_enabled: bool = True
     llm_cache_ttl: int = 3600
 
@@ -83,8 +86,11 @@ def get_settings() -> Settings:
         tinkoff_invest_token=os.environ.get("TINKOFF_INVEST_TOKEN"),
         tinkoff_token=os.environ.get("TINKOFF_TOKEN"),
         polygon_api_key=os.environ.get("POLYGON_API_KEY"),
+        llm_provider=os.environ.get("LLM_PROVIDER", "ollama").strip().lower(),
         ollama_host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b"),
+        ollama_cloud_api_key=os.environ.get("OLLAMA_CLOUD_API_KEY") or None,
+        ollama_cloud_model=os.environ.get("OLLAMA_CLOUD_MODEL", "qwen2.5:1.5b"),
         llm_sentiment_enabled=os.environ.get("LLM_SENTIMENT", "1").strip() != "0",
         llm_cache_ttl=int(os.environ.get("LLM_CACHE_TTL", "3600")),
         scheduler_mode=os.environ.get("SCHEDULER_MODE", "apscheduler"),

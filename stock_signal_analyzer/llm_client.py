@@ -25,12 +25,22 @@ _log = logging.getLogger(__name__)
 
 # ── Конфигурация ─────────────────────────────────────────────────────────────
 
-_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama").strip().lower()
-_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-_OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b")
+# Предпочитаем config.py, но fallback на env для автономного импорта
+try:
+    from stock_signal_analyzer.config import get_settings
+    _settings = get_settings()
+    _PROVIDER = _settings.llm_provider
+    _OLLAMA_HOST = _settings.ollama_host
+    _OLLAMA_MODEL = _settings.ollama_model
+    _OLLAMA_CLOUD_API_KEY = (_settings.ollama_cloud_api_key or "").strip()
+    _OLLAMA_CLOUD_MODEL = _settings.ollama_cloud_model
+except Exception:
+    _PROVIDER = os.environ.get("LLM_PROVIDER", "ollama").strip().lower()
+    _OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b")
+    _OLLAMA_CLOUD_API_KEY = os.environ.get("OLLAMA_CLOUD_API_KEY", "").strip()
+    _OLLAMA_CLOUD_MODEL = os.environ.get("OLLAMA_CLOUD_MODEL", "qwen2.5:1.5b")
 
-_OLLAMA_CLOUD_API_KEY = os.environ.get("OLLAMA_CLOUD_API_KEY", "").strip()
-_OLLAMA_CLOUD_MODEL = os.environ.get("OLLAMA_CLOUD_MODEL", "qwen2.5:1.5b")
 _OLLAMA_CLOUD_URL = "https://api.ollama.ai/v1/chat/completions"
 
 _REQUEST_TIMEOUT = 30.0

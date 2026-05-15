@@ -276,15 +276,56 @@ do_configure() {
     if [ -n "$new_pgpass" ]; then cur_pgpass="$new_pgpass"; fi
     echo ""
 
-    # ── 6. LLM (автоматически) ──
-    echo -e "  ${BOLD}6. LLM модель для AI-анализа${NC}"
-    echo "     Модель: qwen2.5:1.5b (1.5 GB RAM)"
-    echo "     Устанавливается автоматически при первом запуске."
-    echo "     Используется для: sentiment анализа новостей + обучения на outcomes."
+    # ── 6. LLM провайдер ──
+    echo -e "  ${BOLD}6. LLM для AI-анализа${NC} ${YELLOW}( sentiment + обучение )${NC}"
     echo ""
+    ask_choice "Как использовать LLM?" \
+        "Ollama Cloud API (рекомендуется: без нагрузки на сервер, дёшево)" \
+        "Локальный Ollama (требует +4 GB RAM, сервер нагружает)"
+    local llm_provider_choice=$?
+    local llm_provider="ollama"
+    local ollama_cloud_key=""
     local ollama_model="qwen2.5:1.5b"
     local llm_enabled="1"
-    ok "LLM: qwen2.5:1.5b (установится автоматически)"
+
+    if [ "$llm_provider_choice" -eq 0 ]; then
+        llm_provider="ollama_cloud"
+        echo ""
+        echo -e "  ${BOLD}Ollama Cloud API Key${NC} ${RED}(обязательно для cloud)${NC}"
+        echo "     Что даёт: AI-анализ новостей и обучение через облако Ollama."
+        echo "     Никакой нагрузки на ваш сервер — всё считается в облаке."
+        echo "     Очень дёшево: ~$0.0001 за запрос (qwen2.5:1.5b)."
+        echo "     Как получить:"
+        echo "       1) Откройте https://ollama.com/settings/keys"
+        echo "       2) Войдите и нажмите «Create API Key»"
+        echo "       3) Скопируйте ключ (формат: ok-...)"
+        echo "     Ссылка: https://ollama.com/settings/keys"
+        echo ""
+        local cur_oc=""
+        if [ -f "$ENV_FILE" ]; then
+            cur_oc=$(grep -oP '(?<=^OLLAMA_CLOUD_API_KEY=).+' "$ENV_FILE" 2>/dev/null || true)
+        fi
+        local mask_oc=""
+        if [ -n "$cur_oc" ]; then mask_oc="${cur_oc:0:8}..."; fi
+        ollama_cloud_key=$(ask_input_required "Ollama Cloud API Key" "$mask_oc")
+        if [[ "$ollama_cloud_key" == "$mask_oc" ]] && [ -n "$cur_oc" ]; then
+            ollama_cloud_key="$cur_oc"
+        fi
+        if [ -z "$ollama_cloud_key" ]; then
+            fail "Для Ollama Cloud API Key обязателен!"
+            return 1
+        fi
+        ok "LLM: Ollama Cloud / qwen2.5:1.5b (~$0.0001/запрос)"
+    else
+        echo ""
+        echo -e "  ${BOLD}Локальный Ollama${NC}"
+        echo "     Модель: qwen2.5:1.5b (1.5 GB RAM)"
+        echo "     Устанавливается автоматически при первом запуске."
+        echo "     Требует ~4 GB RAM суммарно (модель + бот + БД)."
+        echo ""
+        ok "LLM: локальный Ollama / qwen2.5:1.5b"
+    fi
+    echo ""
 
     # ── 7. Интервалы ──
     echo ""
@@ -345,8 +386,11 @@ MAX_CHAT_ID=${cur_max_chat}
 MAX_NOTIFY=1
 
 # ── LLM (Ollama) ─────────────────────────────
+LLM_PROVIDER=${llm_provider}
 OLLAMA_HOST=${OLLAMA_HOST}
 OLLAMA_MODEL=${ollama_model}
+OLLAMA_CLOUD_API_KEY=${ollama_cloud_key}
+OLLAMA_CLOUD_MODEL=${ollama_model}
 LLM_SENTIMENT=${llm_enabled}
 
 # ── Database ──────────────────────────────────
