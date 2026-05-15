@@ -1475,6 +1475,11 @@ async def on_menu_settings_inline(update: Update, context: ContextTypes.DEFAULT_
     await _show_settings_inline(update, uid)
 
 
+async def on_menu_autocollect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_autocollect_menu(update.message, _uid(update))
+
+
 async def on_menu_back_sections(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
     await _show_root_sections_menu(update.message)
