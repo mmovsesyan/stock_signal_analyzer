@@ -315,7 +315,8 @@ do_configure() {
             fail "Для Ollama Cloud API Key обязателен!"
             return 1
         fi
-        ok "LLM: Ollama Cloud / qwen2.5:1.5b (~$0.0001/запрос)"
+        ollama_model="gemma3:4b"
+        ok "LLM: Ollama Cloud / gemma3:4b (~$0.0001/запрос)"
     else
         echo ""
         echo -e "  ${BOLD}Локальный Ollama${NC}"
