@@ -2313,6 +2313,46 @@ async def on_menu_clear_custom_tickers(update: Update, context: ContextTypes.DEF
     )
 
 
+async def on_menu_add_custom_tickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки 'Добавить свои тикеры'."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+    _set_pending_action(context, "add_custom")
+    await update.message.reply_text(
+        "Введите тикеры через пробел (например: AAPL MSFT TSLA):",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_autocollect_menu_keyboard(uid),
+    )
+
+
+async def on_menu_toggle_default_tickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки переключения дефолтных тикеров."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not uid:
+        return
+    prefs = load_prefs(uid)
+    prefs.use_default_tickers = not prefs.use_default_tickers
+    save_prefs(uid, prefs)
+    status = "включены" if prefs.use_default_tickers else "выключены"
+    await update.message.reply_text(
+        f"✅ Дефолтные тикеры <b>{status}</b>.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_autocollect_menu_keyboard(uid),
+    )
+
+
+async def on_menu_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик кнопки 'Принудительное обучение'."""
+    if not update.message:
+        return
+    await cmd_force_learn(update, context)
+
+
 async def on_menu_back_to_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик кнопки '⬅️ Назад в настройки'."""
     if not update.message:
