@@ -886,7 +886,6 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
             InlineKeyboardButton("📰 Дайджест: ON" if prefs.daily_digest else "📰 Дайджест: OFF",
                                callback_data=f"set|digest|{('off' if prefs.daily_digest else 'on')}|{uid}"),
         ],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="menu|root")],
     ]
 
     await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -987,7 +986,6 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
             InlineKeyboardButton("📰 Дайджест: ON" if prefs.daily_digest else "📰 Дайджест: OFF",
                                callback_data=f"set|digest|{('off' if prefs.daily_digest else 'on')}|{uid}"),
         ],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="menu|root")],
     ]
 
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
