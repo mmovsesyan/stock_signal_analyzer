@@ -53,5 +53,6 @@ Thumbs.db
 .github/
 .gitlab-ci.yml
 
-# Scripts (не нужны в образе)
+# Scripts (не нужны в образе, кроме миграции)
 scripts/
+!scripts/migrate_user_settings.py
