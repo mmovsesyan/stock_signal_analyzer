@@ -117,14 +117,23 @@ def tbank_volume_context_enabled() -> bool:
 
 
 def _find_instrument(client: Any, ticker: str) -> Any | None:
-    """Ищет инструмент по тикеру, возвращает первый точный матч или первый результат."""
+    """Ищет инструмент по тикеру, возвращает акцию с доступными торгами (TQBR приоритет)."""
     found = client.instruments.find_instrument(query=ticker)
     if not found.instruments:
         return None
-    for x in found.instruments:
-        if getattr(x, "ticker", "").upper() == ticker:
-            return x
-    return found.instruments[0]
+    # Фильтруем: только акции (share), доступные для торговли, предпочтительно TQBR
+    matches = [
+        x for x in found.instruments
+        if getattr(x, "ticker", "").upper() == ticker
+        and getattr(x, "instrument_type", "") == "share"
+        and getattr(x, "api_trade_available_flag", False)
+    ]
+    if not matches:
+        return None
+    return next(
+        (m for m in matches if getattr(m, "class_code", "") == "TQBR"),
+        matches[0]
+    )
 
 
 def fetch_last_price_tbank(symbol: str, token: str | None = None) -> TbankQuote | None:
