@@ -265,3 +265,44 @@ def analyze_technical(hist: pd.DataFrame) -> TechnicalScore:
         bb_squeeze=bb_sq,
         macd_divergence=macd_div_note,
     )
+
+
+def chandelier_stop(
+    hist: pd.DataFrame,
+    direction: str,
+    atr_period: int = 14,
+    lookback: int = 22,
+    atr_mult: float = 3.0,
+) -> float | None:
+    """
+    Chandelier Exit (Chuck LeBeau): trailing stop на основе ATR.
+
+    Long:  Highest High за lookback − atr_mult × ATR(atr_period)
+    Short: Lowest Low  за lookback + atr_mult × ATR(atr_period)
+
+    Параметры по умолчанию: 22 свечи (≈1 месяц), 3×ATR — консервативные.
+    Агрессивные: 10 свечей, 2×ATR.
+    """
+    if hist is None or len(hist) < max(lookback, atr_period) + 1:
+        return None
+
+    high = hist["High"].astype(float)
+    low = hist["Low"].astype(float)
+    close = hist["Close"].astype(float)
+
+    # ATR(atr_period)
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = tr.rolling(window=atr_period).mean().iloc[-1]
+
+    if pd.isna(atr) or atr <= 0:
+        return None
+
+    if direction == "long":
+        highest = high.iloc[-lookback:].max()
+        return float(highest - atr_mult * atr)
+    else:
+        lowest = low.iloc[-lookback:].min()
+        return float(lowest + atr_mult * atr)

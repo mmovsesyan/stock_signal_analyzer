@@ -1,5 +1,5 @@
 """
-LLM Learning — обучение на исторических сигналах через Ollama.
+LLM Learning — обучение на исторических сигналах через LLM (локальный или cloud).
 
 Совмещает числовой IC-анализ (adaptive_weights.py) с качественным LLM-анализом:
 1. Загружает outcomes (сигналы с реальными PnL)
@@ -12,7 +12,7 @@ LLM Learning — обучение на исторических сигналах
 - Периодический анализ (раз в сутки или по команде)
 - Результат сохраняется в JSON файл (learning_state.json)
 - engine.py читает state и применяет корректировки
-- Graceful: если Ollama недоступен, используются только числовые IC
+- Graceful: если LLM недоступен, используются только числовые IC
 
 Переменные окружения:
   LLM_LEARNING        — включить (1/0, по умолчанию 1)
@@ -26,22 +26,19 @@ import hashlib
 import json
 import logging
 import os
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import requests
+
+from .llm_client import llm_available, llm_chat_json
 
 _log = logging.getLogger(__name__)
 
-_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-_OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b")
 _LLM_LEARNING_ENABLED = os.environ.get("LLM_LEARNING", "1").strip() != "0"
-_MIN_OUTCOMES = max(30, int(os.environ.get("LLM_LEARNING_MIN", "30")))  # минимум 30 для статистической значимости
-_REQUEST_TIMEOUT = 60.0
+_MIN_OUTCOMES = int(os.environ.get("LLM_LEARNING_MIN", "20"))
 
 
 def _state_path() -> Path:
@@ -275,13 +272,6 @@ def _build_llm_analysis_prompt(records: list[OutcomeRecord], numeric: dict[str, 
     wins = [r for r in records if r.pnl_pct > 0]
     losses = [r for r in records if r.pnl_pct <= 0]
 
-    # Защита от пустых данных
-    if not records:
-        return "No outcome data available."
-    win_rate = len(wins) / len(records) * 100 if records else 0.0
-    avg_win = float(np.mean([r.pnl_pct for r in wins])) if wins else 0.0
-    avg_loss = float(np.mean([r.pnl_pct for r in losses])) if losses else 0.0
-
     # Топ-5 лучших и худших сделок
     sorted_by_pnl = sorted(records, key=lambda r: r.pnl_pct, reverse=True)
     top_wins = sorted_by_pnl[:5]
@@ -289,9 +279,9 @@ def _build_llm_analysis_prompt(records: list[OutcomeRecord], numeric: dict[str, 
 
     lines = [
         f"Total outcomes: {len(records)} ({len(wins)} wins, {len(losses)} losses)",
-        f"Win rate: {win_rate:.1f}%",
-        f"Avg win: +{avg_win:.2f}%",
-        f"Avg loss: {avg_loss:.2f}%",
+        f"Win rate: {len(wins)/len(records)*100:.1f}%",
+        f"Avg win: +{np.mean([r.pnl_pct for r in wins]):.2f}%",
+        f"Avg loss: {np.mean([r.pnl_pct for r in losses]):.2f}%",
         "",
         "Component means (wins vs losses):",
     ]
@@ -331,38 +321,16 @@ def _build_llm_analysis_prompt(records: list[OutcomeRecord], numeric: dict[str, 
     return "\n".join(lines)
 
 
-def _call_ollama_learning(prompt: str) -> dict[str, Any] | None:
-    """Вызвать Ollama для анализа паттернов."""
-    try:
-        payload = {
-            "model": _OLLAMA_MODEL,
-            "messages": [
-                {"role": "system", "content": _LLM_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-            "format": "json",
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 800,
-            },
-        }
-        r = requests.post(
-            f"{_OLLAMA_HOST}/api/chat",
-            json=payload,
-            timeout=_REQUEST_TIMEOUT,
-        )
-        if r.status_code != 200:
-            _log.warning("Ollama learning returned %d", r.status_code)
-            return None
-        data = r.json()
-        content = data.get("message", {}).get("content", "")
-        if not content:
-            return None
-        return json.loads(content)
-    except (json.JSONDecodeError, requests.RequestException) as e:
-        _log.warning("Ollama learning failed: %s", e)
-        return None
+def _call_llm_learning(prompt: str) -> dict[str, Any] | None:
+    """Вызвать LLM для анализа паттернов (локальный или cloud)."""
+    messages = [
+        {"role": "system", "content": _LLM_SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+    result = llm_chat_json(messages, temperature=0.2, max_tokens=800)
+    if result is None:
+        _log.warning("LLM learning failed")
+    return result
 
 
 # ── Совмещение числового и LLM анализа ───────────────────────────────────────
@@ -445,15 +413,14 @@ def run_learning_cycle(force: bool = False) -> LearningState:
 
     if _LLM_LEARNING_ENABLED:
         try:
-            from .llm_sentiment import ollama_available
-            if ollama_available():
+            if llm_available():
                 prompt = _build_llm_analysis_prompt(records, numeric)
-                llm_result = _call_ollama_learning(prompt)
+                llm_result = _call_llm_learning(prompt)
                 if llm_result:
                     llm_adj = llm_result.get("weight_recommendations")
                     _log.info("Learning: LLM анализ завершён")
             else:
-                _log.info("Learning: Ollama недоступен, только числовой анализ")
+                _log.info("Learning: LLM недоступен, только числовой анализ")
         except Exception as e:
             _log.warning("Learning: LLM failed: %s", e)
 
@@ -563,7 +530,7 @@ def get_weight_adjustments() -> dict[str, float]:
 # In-memory cache для weight adjustments (чтобы не читать JSON на каждый вызов engine)
 _adj_cache: dict[str, float] = {}
 _adj_cache_ts: float = 0.0
-_ADJ_CACHE_TTL: float = 3600.0  # 1 час — перечитываем state не чаще раза в час
+_ADJ_CACHE_TTL: float = 300.0  # 5 минут
 
 
 def _get_cached_adjustments() -> dict[str, float]:

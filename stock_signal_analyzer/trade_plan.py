@@ -11,6 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
+from .market_regime import MarketRegime
+
 
 @dataclass
 class TradePlan:
@@ -30,6 +34,10 @@ class TradePlan:
     position_size_pct: float
     partial_exit_pct: float  # % позиции закрыть на T1 (обычно 50)
     plan_text: str
+    # Chandelier trailing stop (Chuck LeBeau)
+    chandelier_stop_price: float | None = None  # None = не рассчитан / неприменим
+    chandelier_atr_mult: float = 3.0
+    chandelier_lookback: int = 22
 
 
 # Порог для генерации торгового плана: |score| < 0.30 = недостаточная чёткость сигнала
@@ -56,15 +64,31 @@ _SIDEWAYS_TARGET_SCALE = 0.90
 _MIN_RR = 1.5
 
 
-def _position_size(confidence: float) -> float:
-    """Размер позиции 0..100% на основе уверенности сигнала."""
+def _position_size(confidence: float, atr_pct: float | None, market_regime: MarketRegime | None = None) -> float:
+    """Рекомендуемый размер позиции (% капитала) на основе 1% риска на сделку.
+
+    Формула: позиция = 1% / (1.5 × ATR%) × 100
+    При ATR=2%, стоп=3% → позиция ≈ 33% капитала.
+    При низкой confidence уменьшаем, при отсутствии ATR — консервативно.
+    В sideways режиме уменьшаем размер позиции.
+    """
+    base_risk_pct = 1.0
+
+    if atr_pct is None or atr_pct <= 0:
+        return 10.0 if confidence >= 0.5 else 5.0
+
+    stop_distance = 1.5 * atr_pct
+    raw = base_risk_pct / stop_distance * 100.0
+
     if confidence < 0.30:
-        return 25.0
-    if confidence < 0.45:
-        return 50.0
-    if confidence < 0.60:
-        return 75.0
-    return 100.0
+        return 5.0
+    conf_scale = 0.5 + 0.5 * confidence
+
+    # Reduce size in sideways markets
+    if market_regime is not None and market_regime.regime == "sideways":
+        conf_scale *= 0.85
+
+    return float(np.clip(raw * conf_scale, 5.0, 100.0))
 
 
 def _none_plan(ref_price: float, reason: str) -> TradePlan:
@@ -101,6 +125,7 @@ def build_trade_plan(
     nearest_resistance: float | None = None,
     institutional_size_pct: float | None = None,
     vol_regime: str = "normal",
+    market_regime: MarketRegime | None = None,
 ) -> TradePlan:
     if abs(score) < _DIR_THRESHOLD or atr_pct is None or atr_pct <= 0 or ref_price <= 0:
         return _none_plan(ref_price, _no_plan_text(signal_tier))
@@ -133,6 +158,17 @@ def build_trade_plan(
         stop_m *= 1.2
         t1_m *= 0.8
         t2_m *= 0.8
+
+    # Directional regime adjustments
+    if market_regime is not None:
+        if market_regime.regime == "bull":
+            stop_m *= 0.95
+            t1_m *= 1.10
+            t2_m *= 1.10
+        elif market_regime.regime == "bear":
+            stop_m *= 1.10
+            t1_m *= 0.95
+            t2_m *= 0.95
 
     # ── Масштабирование по абсолютному ATR% ──
     # Для высоковолатильных бумаг (ATR > 3%) сужаем множители,
@@ -196,12 +232,14 @@ def build_trade_plan(
         )
 
     max_hold = hold_trend if adx14 > 25.0 else hold_base
+    if market_regime is not None and market_regime.regime == "bull" and adx14 > 25.0:
+        max_hold += 3  # extended hold in strong bull
 
     # Trailing stop: после +1xATR стоп на безубыток, после +2xATR стоп на +1xATR
     trail_activation = atr_pct  # +1 x ATR(14)% от входа
     trail_step = atr_pct  # каждый шаг = 1 x ATR
 
-    pos_size = institutional_size_pct if institutional_size_pct is not None else _position_size(confidence)
+    pos_size = institutional_size_pct if institutional_size_pct is not None else _position_size(confidence, atr_pct, market_regime)
 
     partial_exit = 50.0
 

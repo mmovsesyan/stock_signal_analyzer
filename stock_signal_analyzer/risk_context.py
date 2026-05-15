@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .market_regime import MarketRegime
+
 
 def atr_percent_14(hist: pd.DataFrame) -> float | None:
     """ATR(14) как % от последней цены — масштаб волатильности для сравнения тикеров."""
@@ -46,37 +48,58 @@ def classify_signal_tier(
     macro_dampening: float,
     adx14: float,
     news_score: float,
-    liq_mult: float,
-    vol_align_mult: float,
     has_chart_pattern: bool,
     weekly_aligned: bool = True,
     earnings_window: bool = False,
     index_headwind: bool = False,
+    market_regime: str = "neutral",
+    directional_regime: MarketRegime | None = None,
 ) -> tuple[str, str]:
     """
-    A — строгий набор условий (мало сигналов, выше ожидаемая точность при валидации на истории).
-    B — умеренный. C — наблюдение / слабая согласованность.
-    Второй элемент — краткое пояснение (почему не A или почему A).
+    A — строгий набор условий: сильный score, высокая confidence, тренд, нет конфликтов.
+    B — умеренный. C — наблюдение / много противоречий.
     """
     abs_t = abs(total)
     reasons_a: list[str] = []
 
-    if abs_t < 0.46:
-        reasons_a.append(f"|итог|={abs_t:.2f}<0.46")
-    if confidence < 0.60:
-        reasons_a.append(f"согласованность={confidence:.2f}<0.60")
-    if macro_dampening < 0.93:
-        reasons_a.append(f"макро×{macro_dampening:.2f}<0.93")
-    if liq_mult < 0.99:
-        reasons_a.append("тонкий объём (ликвидность)")
-    if vol_align_mult < 0.99:
-        reasons_a.append("объём не подтверждает направление")
-    if adx14 < 20.0 and not has_chart_pattern:
-        # Повышен порог: ADX < 20 без паттерна = боковик, не даём A
-        reasons_a.append(f"ADX={adx14:.1f}<20 и нет паттерна на графике")
-    if adx14 < 18.5:
-        # ADX совсем низкий — не A даже с паттерном
-        reasons_a.append(f"ADX={adx14:.1f}<18.5 — выраженный боковик")
+    # Dynamic thresholds based on directional regime
+    # Neutral defaults: conservative (validated by backtest for quality)
+    score_thr = 0.46
+    conf_thr = 0.60
+    adx_thr = 20.0
+
+    if directional_regime is not None:
+        if directional_regime.regime == "bull":
+            if total > 0:
+                score_thr = 0.40  # easier for long
+                conf_thr = 0.52
+                adx_thr = 16.0
+            else:
+                score_thr = 0.50  # harder for short
+                conf_thr = 0.60
+                adx_thr = 20.0
+        elif directional_regime.regime == "bear":
+            if total < 0:
+                score_thr = 0.40  # easier for short
+                conf_thr = 0.52
+                adx_thr = 16.0
+            else:
+                score_thr = 0.50  # harder for long
+                conf_thr = 0.60
+                adx_thr = 20.0
+        elif directional_regime.regime == "sideways":
+            score_thr = 0.42
+            conf_thr = 0.60
+            adx_thr = 20.0
+
+    if abs_t < score_thr:
+        reasons_a.append(f"|итог|={abs_t:.2f}<{score_thr:.2f}")
+    if confidence < conf_thr:
+        reasons_a.append(f"согласованность={confidence:.2f}<{conf_thr:.2f}")
+    if macro_dampening < 0.90:
+        reasons_a.append(f"макро×{macro_dampening:.2f}<0.90")
+    if adx14 < adx_thr and not has_chart_pattern:
+        reasons_a.append("ADX низкий и нет паттерна на графике")
     if not _news_aligned(total, news_score):
         reasons_a.append("новости против итога")
     if not weekly_aligned:
@@ -85,15 +108,34 @@ def classify_signal_tier(
         reasons_a.append("окно отчётности (±2 дня)")
     if index_headwind:
         reasons_a.append("индекс против направления")
+    if market_regime == "crisis":
+        reasons_a.append("рынок в кризисном режиме")
 
     if not reasons_a:
         return (
             "A",
-            "Высокое качество по внутренним правилам (согласованность, макро, ликвидность, контекст).",
+            "Высокое качество: сильный сигнал, согласованность компонентов, благоприятный контекст.",
         )
 
-    # Tier B: confidence >= 0.50 (повышен с 0.42), abs_t >= 0.32, ADX >= 20 (обязателен)
-    if abs_t >= 0.32 and confidence >= 0.50 and macro_dampening >= 0.85 and adx14 >= 20.0:
+    # Tier B: динамические пороги ADX (строже в боковике/нейтрале, мягче в тренде)
+    tier_b_score_thr = 0.32
+    tier_b_conf_thr = 0.50
+    tier_b_adx_thr = 20.0
+    if directional_regime is not None and directional_regime.regime in ("bull", "bear"):
+        aligned = (
+            (directional_regime.regime == "bull" and total > 0)
+            or (directional_regime.regime == "bear" and total < 0)
+        )
+        if aligned:
+            tier_b_score_thr = 0.28
+            tier_b_conf_thr = 0.45
+            tier_b_adx_thr = 18.0
+    if (
+        abs_t >= tier_b_score_thr
+        and confidence >= tier_b_conf_thr
+        and macro_dampening >= 0.85
+        and adx14 >= tier_b_adx_thr
+    ):
         return (
             "B",
             "Среднее качество. До класса A не хватает: " + "; ".join(reasons_a[:4])

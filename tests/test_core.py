@@ -312,12 +312,12 @@ def _good_tier_kwargs(**overrides):
         macro_dampening=0.95,
         adx14=25.0,
         news_score=0.3,
-        liq_mult=1.0,
-        vol_align_mult=1.0,
         has_chart_pattern=False,
         weekly_aligned=True,
         earnings_window=False,
         index_headwind=False,
+        market_regime="neutral",
+        directional_regime=None,
     )
     base.update(overrides)
     return base
@@ -876,23 +876,25 @@ def test_classify_tier_b_requires_adx_20():
     """ADX < 20 без паттерна → не tier B (должен быть C)."""
     tier, _ = classify_signal_tier(
         total=0.45, confidence=0.6, macro_dampening=0.90,
-        adx14=19.0, news_score=0.2, liq_mult=1.0,
-        vol_align_mult=1.0, has_chart_pattern=False,
-        weekly_aligned=True, earnings_window=False, index_headwind=False
+        adx14=19.0, news_score=0.2,
+        has_chart_pattern=False,
+        weekly_aligned=True, earnings_window=False, index_headwind=False,
+        market_regime="neutral", directional_regime=None,
     )
     assert tier == 'C', f"ADX=19 без паттерна должен дать C, получили {tier}"
 
 
 def test_classify_tier_b_confidence_50():
-    """Tier B требует confidence >= 0.50."""
+    """Tier B требует confidence >= 0.50 (в neutral режиме)."""
     tier, rationale = classify_signal_tier(
         total=0.45, confidence=0.48, macro_dampening=0.90,
-        adx14=22.0, news_score=0.2, liq_mult=1.0,
-        vol_align_mult=1.0, has_chart_pattern=False,
-        weekly_aligned=True, earnings_window=False, index_headwind=False
+        adx14=22.0, news_score=0.2,
+        has_chart_pattern=False,
+        weekly_aligned=True, earnings_window=False, index_headwind=False,
+        market_regime="neutral", directional_regime=None,
     )
-    # Confidence < 0.50 → не tier B  
-    assert tier == 'C', f"confidence=0.48 < 0.50 должен дать C, получили {tier}"
+    # Confidence < 0.55 → не tier B в neutral режиме
+    assert tier == 'C', f"confidence=0.48 < 0.55 должен дать C, получили {tier}"
 
 
 # ===========================================================================
