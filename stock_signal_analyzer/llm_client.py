@@ -41,7 +41,7 @@ except Exception:
     _OLLAMA_CLOUD_API_KEY = os.environ.get("OLLAMA_CLOUD_API_KEY", "").strip()
     _OLLAMA_CLOUD_MODEL = os.environ.get("OLLAMA_CLOUD_MODEL", "qwen2.5:1.5b")
 
-_OLLAMA_CLOUD_URL = "https://api.ollama.ai/v1/chat/completions"
+_OLLAMA_CLOUD_URL = "https://ollama.com/v1/chat/completions"
 
 _REQUEST_TIMEOUT = 30.0
 
