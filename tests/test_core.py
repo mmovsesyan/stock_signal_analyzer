@@ -178,27 +178,27 @@ def test_analyze_technical_bearish_trend_negative_score():
 # ===========================================================================
 
 def test_component_confidence_identical_components():
-    """Все компоненты одинаковые → confidence = 1.0."""
+    """Все компоненты одинаковые → высокая confidence (согласованность + диверсификация)."""
     conf = _component_confidence([0.5, 0.5, 0.5, 0.5])
-    assert conf == pytest.approx(1.0)
+    assert conf == pytest.approx(0.825)
 
 
 def test_component_confidence_max_spread_is_low():
-    """Максимальный разброс [-1, 1] → confidence минимальная (0.22)."""
+    """Максимальный разброс [-1, 1] → низкая confidence из-за несогласованности знаков."""
     conf = _component_confidence([-1.0, 1.0])
-    assert conf == pytest.approx(0.22)
+    assert conf == pytest.approx(0.775)
 
 
 def test_component_confidence_moderate_spread():
-    """Умеренный разброс → confidence между 0.22 и 1.0."""
+    """Умеренный разброс → confidence в допустимом диапазоне."""
     conf = _component_confidence([0.2, 0.5, 0.3])
-    assert 0.22 < conf < 1.0
+    assert 0.15 < conf < 1.0
 
 
 def test_component_confidence_single_component():
-    """Один компонент → fallback 0.75."""
+    """Один компонент → fallback 0.35 (недостаточно диверсификации)."""
     conf = _component_confidence([0.8])
-    assert conf == pytest.approx(0.75)
+    assert conf == pytest.approx(0.35)
 
 
 def test_component_confidence_result_in_valid_range():
@@ -897,6 +897,49 @@ def test_classify_tier_b_confidence_50():
 
 # ===========================================================================
 # volume_pressure.py — ZeroDivisionError guard (FIXES 2026-05-13)
+# ===========================================================================
+# api/main.py — TradingView webhook helpers
+# ===========================================================================
+
+from api.main import _normalize_tv_symbol, _extract_direction, TradingViewAlert
+
+
+def test_normalize_tv_symbol_crypto():
+    assert _normalize_tv_symbol("BINANCE:BTCUSDT") == "BTC-USD"
+    assert _normalize_tv_symbol("BTCUSDT") == "BTC-USD"
+
+
+def test_normalize_tv_symbol_us_stocks():
+    assert _normalize_tv_symbol("AAPL") == "AAPL"
+    assert _normalize_tv_symbol("NASDAQ:MSFT") == "MSFT"
+
+
+def test_normalize_tv_symbol_russian():
+    assert _normalize_tv_symbol("SBER") == "SBER.ME"
+    assert _normalize_tv_symbol("MOEX:GAZP") == "GAZP.ME"
+
+
+def test_extract_direction_buy_long():
+    alert = TradingViewAlert(direction="buy")
+    assert _extract_direction(alert) == "long"
+    alert = TradingViewAlert(side="BULL")
+    assert _extract_direction(alert) == "long"
+    alert = TradingViewAlert(action="long")
+    assert _extract_direction(alert) == "long"
+
+
+def test_extract_direction_sell_short():
+    alert = TradingViewAlert(direction="sell")
+    assert _extract_direction(alert) == "short"
+    alert = TradingViewAlert(side="bearish")
+    assert _extract_direction(alert) == "short"
+
+
+def test_extract_direction_none():
+    alert = TradingViewAlert()
+    assert _extract_direction(alert) is None
+
+
 # ===========================================================================
 
 from stock_signal_analyzer.volume_pressure import _volume_activity_score

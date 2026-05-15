@@ -346,6 +346,166 @@ async def learning_report():
     }
 
 
+class TradingViewAlert(BaseModel):
+    symbol: Optional[str] = Field(None, description="Тикер (AAPL, BTCUSDT)")
+    ticker: Optional[str] = Field(None, description="Альтернативное поле тикера")
+    price: Optional[float] = Field(None, description="Цена сигнала")
+    close: Optional[float] = Field(None, description="Альтернативное поле цены")
+    direction: Optional[str] = Field(None, description="Направление (long/short/buy/sell)")
+    side: Optional[str] = Field(None, description="Альтернативное поле направления")
+    action: Optional[str] = Field(None, description="Действие (buy/sell/alert)")
+    message: Optional[str] = Field(None, description="Сообщение алерта")
+    description: Optional[str] = Field(None, description="Описание стратегии")
+    strategy: Optional[str] = Field(None, description="Название стратегии TradingView")
+    interval: Optional[str] = Field(None, description="Таймфрейм (1h, 4h, 1d)")
+    timestamp: Optional[str] = Field(None, description="Время алерта ISO")
+    time: Optional[str] = Field(None, description="Альтернативное поле времени")
+    secret: Optional[str] = Field(None, description="Секрет для валидации (опционально)")
+    volume: Optional[float] = Field(None, description="Объём на свече")
+    exchange: Optional[str] = Field(None, description="Биржа")
+
+
+class TradingViewResponse(BaseModel):
+    status: str
+    symbol: str
+    external_direction: Optional[str] = None
+    external_price: Optional[float] = None
+    ssa_score: float
+    ssa_tier: str
+    ssa_direction: str
+    ssa_confidence: float
+    trade_plan: Optional[Dict] = None
+    ssa_verdict: str
+    signal_id: Optional[str] = None
+    message: Optional[str] = None
+
+
+_TV_WEBHOOK_SECRET = os.environ.get("TV_WEBHOOK_SECRET", "").strip()
+
+
+def _normalize_tv_symbol(raw: str) -> str:
+    """Нормализовать TradingView символ для Yahoo Finance."""
+    sym = raw.upper().strip()
+    # Убрать префикс биржи (BINANCE:BTCUSDT → BTC-USD или BTCUSDT)
+    if ":" in sym:
+        sym = sym.split(":")[-1]
+    # Крипто-пары: BTCUSDT → BTC-USD для Yahoo
+    if sym.endswith("USDT") and len(sym) > 4:
+        base = sym[:-4]
+        return f"{base}-USD"
+    if sym.endswith("USD") and not sym.endswith("-USD") and len(sym) > 3:
+        return f"{sym}-USD" if sym != "USD" else sym
+    # Российские тикеры: SBER → SBER.ME
+    if sym.isalpha() and len(sym) <= 5 and sym not in ("AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "META", "NVDA"):
+        return f"{sym}.ME"
+    return sym
+
+
+def _extract_direction(alert: TradingViewAlert) -> str | None:
+    """Извлечь нормализованное направление из алерта."""
+    for field in (alert.direction, alert.side, alert.action):
+        if not field:
+            continue
+        val = field.lower().strip()
+        if val in ("buy", "long", "bull", "bullish"):
+            return "long"
+        if val in ("sell", "short", "bear", "bearish"):
+            return "short"
+    return None
+
+
+@app.post("/webhook/tradingview", response_model=TradingViewResponse)
+async def webhook_tradingview(alert: TradingViewAlert):
+    """
+    Принимать алерты из TradingView, усиливать SSA-анализом.
+
+    TradingView webhook настройка:
+      URL: https://your-host/webhook/tradingview
+      Message: {"symbol":"{{ticker}}","price":{{close}},"side":"{{strategy.order.action}}","interval":"{{interval}}","time":"{{time}}"}
+
+    Если TV_WEBHOOK_SECRET задан — проверяется поле secret в JSON.
+    """
+    # Validate secret if configured
+    if _TV_WEBHOOK_SECRET:
+        if not alert.secret or alert.secret != _TV_WEBHOOK_SECRET:
+            raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+    symbol = alert.symbol or alert.ticker
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Missing symbol/ticker in payload")
+
+    sym = _normalize_tv_symbol(symbol)
+    ext_dir = _extract_direction(alert)
+    ext_price = alert.price or alert.close
+
+    log.info("TradingView alert: %s (normalized: %s) dir=%s price=%s", symbol, sym, ext_dir, ext_price)
+
+    loop = asyncio.get_running_loop()
+    try:
+        report = await loop.run_in_executor(
+            None,
+            lambda: build_report(sym, fast_mode=True),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"Symbol not supported: {sym}")
+    except Exception as e:
+        log.exception("TradingView webhook analysis error for %s", sym)
+        raise HTTPException(status_code=500, detail="Analysis engine error")
+
+    tp_dict = None
+    if report.trade_plan and report.trade_plan.direction != "none":
+        tp_dict = trade_plan_to_dict(report.trade_plan)
+
+    ssa_dir = report.trade_plan.direction if report.trade_plan else "none"
+
+    # Store in signal log for walk-forward validation
+    try:
+        from stock_signal_analyzer.signal_log import build_record_from_report, append_signal_record, log_path_from_env, make_signal_id
+        path = log_path_from_env()
+        if path:
+            record = build_record_from_report(report, ref_price=report.ref_price, currency="USD")
+            record["external_source"] = "tradingview"
+            record["external_direction"] = ext_dir
+            record["external_price"] = ext_price
+            record["external_interval"] = alert.interval
+            record["external_strategy"] = alert.strategy
+            record["external_message"] = alert.message or alert.description
+            signal_id = make_signal_id(report.symbol, record["ts_utc"])
+            record["signal_id"] = signal_id
+            append_signal_record(path, record)
+    except Exception:
+        log.warning("Failed to log TradingView signal", exc_info=True)
+
+    # Build mismatch message if directions differ
+    message = None
+    if ext_dir and ssa_dir != "none" and ext_dir != ssa_dir:
+        message = (
+            f"⚠️ TradingView сигнал ({ext_dir}) противоречит SSA ({ssa_dir}). "
+            f"SSA score={report.score:+.2f}, confidence={report.confidence:.2f}. "
+            "Рекомендуем воздержаться или перепроверить."
+        )
+    elif ext_dir and ssa_dir != "none" and ext_dir == ssa_dir:
+        message = (
+            f"✅ Сигналы совпадают: {ext_dir}. "
+            f"SSA score={report.score:+.2f}, tier={report.signal_tier}."
+        )
+
+    return TradingViewResponse(
+        status="ok",
+        symbol=sym,
+        external_direction=ext_dir,
+        external_price=ext_price,
+        ssa_score=round(report.score, 4),
+        ssa_tier=report.signal_tier,
+        ssa_direction=ssa_dir,
+        ssa_confidence=round(report.confidence, 3),
+        trade_plan=tp_dict,
+        ssa_verdict=report.verdict,
+        signal_id=signal_id if path else None,
+        message=message,
+    )
+
+
 # ── Startup event ────────────────────────────────────────────────────────────
 
 @app.on_event("startup")
