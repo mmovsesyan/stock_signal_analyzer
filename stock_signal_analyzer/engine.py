@@ -992,6 +992,7 @@ def build_report(
         institutional_size_pct=pos_size_res.final_pct,
         vol_regime=inputs.vol_regime.regime if inputs.vol_regime else "normal",
         market_regime=inputs.market_regime,
+        hist=inputs.hist,
     )
     rep.trade_plan = tp
 

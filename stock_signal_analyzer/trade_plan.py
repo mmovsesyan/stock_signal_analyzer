@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from .market_regime import MarketRegime
+from .technical import chandelier_stop
 
 
 @dataclass
@@ -126,6 +128,7 @@ def build_trade_plan(
     institutional_size_pct: float | None = None,
     vol_regime: str = "normal",
     market_regime: MarketRegime | None = None,
+    hist: pd.DataFrame | None = None,
 ) -> TradePlan:
     if abs(score) < _DIR_THRESHOLD or atr_pct is None or atr_pct <= 0 or ref_price <= 0:
         return _none_plan(ref_price, _no_plan_text(signal_tier))
@@ -243,6 +246,9 @@ def build_trade_plan(
 
     partial_exit = 50.0
 
+    # Chandelier trailing stop
+    chand_stop = chandelier_stop(hist, direction) if hist is not None else None
+
     plan_text = _format_plan(
         direction=direction,
         symbol=symbol,
@@ -260,6 +266,7 @@ def build_trade_plan(
         pos_size=pos_size,
         trail_act_pct=trail_activation,
         partial_exit=partial_exit,
+        chandelier_stop=chand_stop,
     )
 
     return TradePlan(
@@ -279,6 +286,7 @@ def build_trade_plan(
         position_size_pct=round(pos_size, 0),
         partial_exit_pct=partial_exit,
         plan_text=plan_text,
+        chandelier_stop_price=round(chand_stop, 4) if chand_stop is not None else None,
     )
 
 
@@ -306,16 +314,21 @@ def _format_plan(
     pos_size: float,
     trail_act_pct: float,
     partial_exit: float,
+    chandelier_stop: float | None = None,
 ) -> str:
     d = "LONG" if direction == "long" else "SHORT"
     sym = symbol or "—"
+    chand_line = ""
+    if chandelier_stop is not None:
+        chand_line = f"Chandelier стоп: {chandelier_stop:.2f}\n"
     return (
         f"{d} {sym} @ {entry:.2f}\n"
         f"Стоп: {stop:.2f} ({stop_pct:+.2f}%)\n"
+        f"{chand_line}"
         f"Цель 1: {t1:.2f} ({t1_pct:+.2f}%)  R:R {rr1:.1f} — закрыть {partial_exit:.0f}%\n"
         f"Цель 2: {t2:.2f} ({t2_pct:+.2f}%)  R:R {rr2:.1f} — остаток\n"
         f"Трейлинг: после {trail_act_pct:+.1f}% стоп на безубыток\n"
-        f"Удержание: до {hold} дней  |  Позиция: {pos_size:.0f}%\n"
+        f"Удержание: до {hold} дней  |  Позиция: {pos_size:.0f}% капитала\n"
         f"Класс: {tier}"
     )
 
@@ -338,4 +351,5 @@ def trade_plan_to_dict(tp: TradePlan) -> dict[str, Any]:
         "tp_trailing_step_pct": tp.trailing_step_pct,
         "tp_position_size_pct": tp.position_size_pct,
         "tp_partial_exit_pct": tp.partial_exit_pct,
+        "tp_chandelier_stop": tp.chandelier_stop_price,
     }

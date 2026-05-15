@@ -953,3 +953,45 @@ def test_volume_activity_zero_volume_returns_zero():
     vol = pd.Series([0.0] * 25, dtype=float)
     result = _volume_activity_score(close, vol)
     assert result == pytest.approx(0.0), f"Ожидали 0.0, получили {result}"
+
+
+# ===========================================================================
+# technical.py — chandelier_stop
+# ===========================================================================
+
+from stock_signal_analyzer.technical import chandelier_stop
+
+
+def test_chandelier_stop_long():
+    """Chandelier long: highest high - 3×ATR."""
+    hist = pd.DataFrame({
+        "High": [110.0, 112.0, 115.0, 113.0, 118.0, 120.0, 119.0],
+        "Low": [105.0, 108.0, 109.0, 110.0, 111.0, 114.0, 115.0],
+        "Close": [108.0, 111.0, 113.0, 112.0, 116.0, 118.0, 117.0],
+    })
+    stop = chandelier_stop(hist, "long", atr_period=3, lookback=5, atr_mult=3.0)
+    assert stop is not None
+    assert stop < hist["Close"].iloc[-1]
+
+
+def test_chandelier_stop_short():
+    """Chandelier short: lowest low + 3×ATR."""
+    hist = pd.DataFrame({
+        "High": [110.0, 112.0, 115.0, 113.0, 118.0, 120.0, 119.0],
+        "Low": [105.0, 108.0, 109.0, 110.0, 111.0, 114.0, 115.0],
+        "Close": [108.0, 111.0, 113.0, 112.0, 116.0, 118.0, 117.0],
+    })
+    stop = chandelier_stop(hist, "short", atr_period=3, lookback=5, atr_mult=3.0)
+    assert stop is not None
+    assert stop > hist["Close"].iloc[-1]
+
+
+def test_chandelier_stop_insufficient_data():
+    """Мало данных → None."""
+    hist = pd.DataFrame({
+        "High": [110.0],
+        "Low": [105.0],
+        "Close": [108.0],
+    })
+    stop = chandelier_stop(hist, "long")
+    assert stop is None
