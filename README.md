@@ -13,8 +13,8 @@
   <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker" alt="Docker">
   <img src="https://img.shields.io/badge/AI-Ollama_LLM-orange" alt="AI">
   <img src="https://img.shields.io/badge/Markets-US_&_RU-green" alt="Markets">
-  <img src="https://img.shields.io/badge/Tests-103_passed-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/Version-2.3-purple" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-106_passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-2.3.1-purple" alt="Version">
 </p>
 
 ---
@@ -30,6 +30,7 @@
 - 📊 **7 факторов** — техника, импульс, новости, объём, макро-данные, квант-модели, real-time price
 - 🏛️ **Режим рынка** — автоопределение bull/bear/sideways для адаптивных порогов и риск-менеджмента
 - 🎯 **Торговые планы** — entry, stop, два targets, R:R ≥ 1.5, ATR-based position size
+- 📉 **Chandelier trailing stop** — динамический стоп на основе ATR (Chuck LeBeau)
 - 📊 **Бэктест с графиками** — equity curve, drawdown, monthly returns, PnL distribution, tier stats
 - 📡 **TradingView webhook** — принимайте алерты из TradingView и усиливайте SSA-анализом
 - 📱 **Telegram + REST API** — получайте сигналы куда удобно
@@ -396,6 +397,12 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 
 ## ✅ Что нового
 
+### v2.3.1 (2026-05-14) — Chandelier stop + bugfix
+
+- **Chandelier trailing stop** (`technical.py`) — динамический стоп на основе highest high/lowest low ± 3×ATR (Chuck LeBeau)
+- Интегрирован в `TradePlan`, отображается в плане, экспортируется в signal log
+- Тесты: 106 passed
+
 ### v2.3 (2026-05-14) — TradingView интеграция
 
 - **TradingView webhook** (`POST /webhook/tradingview`) — принимает алерты из TradingView, нормализует символы (крипто, US, RU), усиливает SSA-анализом
@@ -403,6 +410,13 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 - Опциональная защита `TV_WEBHOOK_SECRET`
 - Автоматическое логирование внешних сигналов + SSA результата для walk-forward валидации
 - Тесты: 103 passed
+
+### v2.2.1 (2026-05-14) — Восстановление MarketRegime после rebase
+
+- Исправлена критическая ошибка: rebase потерял интеграцию `MarketRegime` в `trade_plan.py` и `risk_context.py`
+- Восстановлены динамические пороги Tier A/B с консервативными значениями по умолчанию (neutral: score≥0.46, conf≥0.60, ADX≥20.0)
+- Восстановлен `llm_client.py` в `llm_learning.py` и `llm_sentiment.py`
+- Восстановлена ATR-based position sizing с regime adjustments
 
 ### v2.2 (2026-05-14) — Режим рынка и визуализация
 
