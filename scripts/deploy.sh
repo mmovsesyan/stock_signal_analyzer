@@ -10,6 +10,9 @@
 #  - Масштабирования
 #  - Обновления
 #
+#  После установки используйте /settings в Telegram для интерактивной
+#  настройки фильтров, уведомлений, языка и автосбора.
+#
 #  Использование:
 #    chmod +x scripts/deploy.sh
 #    ./scripts/deploy.sh
@@ -1087,6 +1090,8 @@ show_banner() {
     echo "║        AI-powered multi-factor trading signals              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
+    echo -e "  Telegram: /settings — интерактивная настройка бота"
+    echo ""
 }
 
 main_menu() {
@@ -1196,6 +1201,7 @@ case "${1:-}" in
         echo "  tests       Запустить тесты"
         echo "  uninstall   Удалить"
         echo ""
+        echo "Telegram бот: /signal /settings /watchlist /dashboard"
         echo "Без аргументов — интерактивное меню."
         ;;
     "")         main_menu ;;
