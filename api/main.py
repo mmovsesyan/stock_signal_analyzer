@@ -33,7 +33,7 @@ stenv.load_project_env()
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from stock_signal_analyzer.cache import cache_analyze_key, get_cache
 from stock_signal_analyzer.config_validator import validate_api_config
@@ -42,15 +42,60 @@ from stock_signal_analyzer.live_price import fetch_live_price
 from stock_signal_analyzer.market_data import fetch_snapshot_with_meta
 from stock_signal_analyzer.rate_limiter import is_allowed
 from stock_signal_analyzer.trade_plan import trade_plan_to_dict
-from stock_signal_analyzer.universe import RU_BLUE_CHIPS
+from stock_signal_analyzer.universe import RU_BLUE_CHIPS, resolve_symbol_market
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan events: startup and shutdown."""
+    # Startup
+    validate_api_config()
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["alembic", "upgrade", "head"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            log.info("Alembic migrations applied")
+        else:
+            log.warning("Alembic failed (%s), falling back to init_db", result.stderr.strip()[:200])
+            from stock_signal_analyzer.db import init_db
+            init_db()
+            log.info("Database tables initialized (fallback)")
+    except Exception as e:
+        log.warning("Database not available: %s", e)
+
+    try:
+        from stock_signal_analyzer.scheduler import start_apscheduler
+        start_apscheduler()
+        log.info("Scheduler started")
+    except Exception as e:
+        log.warning("Scheduler failed to start: %s", e)
+
+    yield
+
+    # Shutdown
+    try:
+        from stock_signal_analyzer.scheduler import stop_apscheduler
+        stop_apscheduler()
+        log.info("Scheduler stopped")
+    except Exception as e:
+        log.warning("Scheduler shutdown error: %s", e)
+
 
 app = FastAPI(
     title="Stock Signal Analyzer API",
     version="1.0.0",
     description="Multi-factor stock signal analysis API",
+    lifespan=lifespan,
 )
 
 _allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
@@ -109,6 +154,11 @@ class AnalyzeRequest(BaseModel):
     )
     fast_mode: bool = Field(False, description="Быстрый режим (без новостей)")
     use_finnhub_ws: bool = Field(False, description="WebSocket Finnhub")
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _resolve_symbol(cls, v: str) -> str:
+        return resolve_symbol_market(v.strip().upper())
 
 
 class QuoteResponse(BaseModel):
@@ -180,17 +230,18 @@ async def health_detailed():
     }
 
 
-def _validate_symbol_path(symbol: str) -> str:
+def _prepare_symbol(symbol: str) -> str:
+    """Validate and resolve symbol (auto-detect .ME for Russian tickers)."""
     sym = symbol.strip().upper()
     if not sym or ".." in sym or "/" in sym or "\\" in sym or len(sym) > 20:
         raise HTTPException(status_code=400, detail="Invalid symbol")
-    return sym
+    return resolve_symbol_market(sym)
 
 
 @app.get("/quote/{symbol}", response_model=QuoteResponse)
 async def get_quote(symbol: str):
     """Быстрая котировка по тикеру."""
-    symbol = _validate_symbol_path(symbol)
+    symbol = _prepare_symbol(symbol)
     loop = asyncio.get_running_loop()
     try:
         snap, _info, profile = await loop.run_in_executor(
@@ -283,7 +334,7 @@ async def analyze(req: AnalyzeRequest):
 @app.get("/analyze/{symbol}", response_model=SignalResponse)
 async def analyze_get(symbol: str, fast: bool = False):
     """GET-вариант анализа (удобно для браузера)."""
-    symbol = _validate_symbol_path(symbol)
+    symbol = _prepare_symbol(symbol)
     return await analyze(AnalyzeRequest(symbol=symbol, fast_mode=fast))
 
 
@@ -541,35 +592,4 @@ async def webhook_tradingview(alert: TradingViewAlert):
     )
 
 
-# ── Startup event ────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup_event():
-    """Инициализация при старте API."""
-    validate_api_config()
-    # Миграции Alembic (или fallback на init_db)
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["alembic", "upgrade", "head"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode == 0:
-            log.info("Alembic migrations applied")
-        else:
-            log.warning("Alembic failed (%s), falling back to init_db", result.stderr.strip()[:200])
-            from stock_signal_analyzer.db import init_db
-            init_db()
-            log.info("Database tables initialized (fallback)")
-    except Exception as e:
-        log.warning("Database not available: %s", e)
-
-    # Запустить scheduler (если не Celery mode)
-    try:
-        from stock_signal_analyzer.scheduler import start_apscheduler
-        start_apscheduler()
-        log.info("Scheduler started")
-    except Exception as e:
-        log.warning("Scheduler failed to start: %s", e)
+# ── Lifespan events handled by @asynccontextmanager above ─────────────────────
