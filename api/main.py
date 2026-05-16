@@ -99,7 +99,12 @@ async def rate_limit_middleware(request: Request, call_next):
 # ── Models ───────────────────────────────────────────────────────────────────
 
 class AnalyzeRequest(BaseModel):
-    symbol: str = Field(..., description="Тикер (AAPL, SBER.ME)")
+    symbol: str = Field(
+        ...,
+        description="Тикер (AAPL, SBER.ME)",
+        max_length=20,
+        pattern=r"^[A-Za-z0-9\-\.]{1,20}$",
+    )
     fast_mode: bool = Field(False, description="Быстрый режим (без новостей)")
     use_finnhub_ws: bool = Field(False, description="WebSocket Finnhub")
 
@@ -173,9 +178,17 @@ async def health_detailed():
     }
 
 
+def _validate_symbol_path(symbol: str) -> str:
+    sym = symbol.strip().upper()
+    if not sym or ".." in sym or "/" in sym or "\\" in sym or len(sym) > 20:
+        raise HTTPException(status_code=400, detail="Invalid symbol")
+    return sym
+
+
 @app.get("/quote/{symbol}", response_model=QuoteResponse)
 async def get_quote(symbol: str):
     """Быстрая котировка по тикеру."""
+    symbol = _validate_symbol_path(symbol)
     loop = asyncio.get_running_loop()
     try:
         snap, _info, profile = await loop.run_in_executor(
@@ -337,22 +350,32 @@ async def learning_report():
 
 
 class TradingViewAlert(BaseModel):
-    symbol: Optional[str] = Field(None, description="Тикер (AAPL, BTCUSDT)")
-    ticker: Optional[str] = Field(None, description="Альтернативное поле тикера")
+    symbol: Optional[str] = Field(
+        None,
+        description="Тикер (AAPL, BTCUSDT)",
+        max_length=20,
+        pattern=r"^[A-Za-z0-9\:\-\.]{1,20}$",
+    )
+    ticker: Optional[str] = Field(
+        None,
+        description="Альтернативное поле тикера",
+        max_length=20,
+        pattern=r"^[A-Za-z0-9\:\-\.]{1,20}$",
+    )
     price: Optional[float] = Field(None, description="Цена сигнала")
     close: Optional[float] = Field(None, description="Альтернативное поле цены")
     direction: Optional[str] = Field(None, description="Направление (long/short/buy/sell)")
     side: Optional[str] = Field(None, description="Альтернативное поле направления")
     action: Optional[str] = Field(None, description="Действие (buy/sell/alert)")
-    message: Optional[str] = Field(None, description="Сообщение алерта")
-    description: Optional[str] = Field(None, description="Описание стратегии")
-    strategy: Optional[str] = Field(None, description="Название стратегии TradingView")
-    interval: Optional[str] = Field(None, description="Таймфрейм (1h, 4h, 1d)")
-    timestamp: Optional[str] = Field(None, description="Время алерта ISO")
-    time: Optional[str] = Field(None, description="Альтернативное поле времени")
-    secret: Optional[str] = Field(None, description="Секрет для валидации (опционально)")
+    message: Optional[str] = Field(None, description="Сообщение алерта", max_length=500)
+    description: Optional[str] = Field(None, description="Описание стратегии", max_length=500)
+    strategy: Optional[str] = Field(None, description="Название стратегии TradingView", max_length=100)
+    interval: Optional[str] = Field(None, description="Таймфрейм (1h, 4h, 1d)", max_length=10)
+    timestamp: Optional[str] = Field(None, description="Время алерта ISO", max_length=30)
+    time: Optional[str] = Field(None, description="Альтернативное поле времени", max_length=30)
+    secret: Optional[str] = Field(None, description="Секрет для валидации (опционально)", max_length=100)
     volume: Optional[float] = Field(None, description="Объём на свече")
-    exchange: Optional[str] = Field(None, description="Биржа")
+    exchange: Optional[str] = Field(None, description="Биржа", max_length=50)
 
 
 class TradingViewResponse(BaseModel):
