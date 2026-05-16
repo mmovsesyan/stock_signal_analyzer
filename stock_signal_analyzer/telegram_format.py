@@ -177,11 +177,6 @@ def _plain_language_summary(r: SignalReport) -> str:
     elif r.macro_dampening < 0.90:
         parts.append("Макро-фон умеренно неопределённый — учитывайте риск.")
 
-    # ── Аналитики ──
-    analyst = getattr(r, "analyst_detail", "") or ""
-    if analyst:
-        parts.append(f"🏦 Аналитики: {analyst}")
-
     # ── Совет по риск-менеджменту ──
     parts.append("")
     parts.append("🛡️ <b>Совет по риск-менеджменту</b>")
