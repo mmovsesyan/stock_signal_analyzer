@@ -1,4 +1,4 @@
-# 🚀 Быстрый старт
+# Быстрый старт
 
 ## Docker (рекомендуется)
 
@@ -28,6 +28,9 @@ curl http://localhost:8000/health
 
 # Анализ акции
 curl http://localhost:8000/analyze/AAPL
+
+# Анализ российской акции (авто-дописывание .ME)
+curl http://localhost:8000/analyze/SBER
 
 # Статус Docker
 docker compose ps
@@ -59,6 +62,57 @@ cd /path/to/stock_signal_analyzer
 ./scripts/deploy.sh update
 ```
 
+Или через GitHub Actions (auto-deploy):
+
+```bash
+git push origin main
+# Сервер обновится автоматически через 30-60 секунд
+```
+
+## Авто-детекция рынка
+
+Бот автоматически определяет российские тикеры и дописывает `.ME`:
+
+| Что ввели пользователь | Что анализируется |
+|------------------------|-------------------|
+| `SBER` | `SBER.ME` |
+| `GAZP` | `GAZP.ME` |
+| `AAPL` | `AAPL` (без изменений) |
+| `MSFT` | `MSFT` (без изменений) |
+
+Работает во всех командах: `/signal`, `/price`, `/dashboard`, webhook, API.
+
+## GitHub Actions — авто-деплой
+
+1. **Сгенерировать SSH-ключ** (на сервере или локально):
+   ```bash
+   ssh-keygen -t ed25519 -f /tmp/gh_deploy_key -N ""
+   cat /tmp/gh_deploy_key.pub
+   ```
+
+2. **Добавить публичный ключ на сервер**:
+   ```bash
+   ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' >> ~/.ssh/authorized_keys"
+   ```
+
+3. **Добавить секреты в GitHub** (Settings → Secrets and variables → Actions):
+   - `SERVER_HOST` — IP сервера (например `213.176.76.35`)
+   - `SERVER_USER` — `root`
+   - `SERVER_SSH_KEY` — содержимое приватного ключа (`cat /tmp/gh_deploy_key`)
+
+4. **Проверить** — при следующем `git push origin main` сервер обновится автоматически.
+
+## Безопасность .env
+
+`.env` уже в `.dockerignore` — токены не попадают в Docker-образ. Если раньше `.env` был в образе:
+
+```bash
+# Очистить старые образы с утечкой токенов
+docker system prune -a
+# Пересобрать
+./scripts/deploy.sh restart
+```
+
 ## Зависимости
 
 | Компонент | Обязательно | Описание |
@@ -66,6 +120,7 @@ cd /path/to/stock_signal_analyzer
 | PostgreSQL | да | Основная БД (поднимается в Docker) |
 | Redis | да | Cache + rate limiter + Celery (поднимается в Docker) |
 | Telegram Bot Token | да | `@BotFather` |
+| ADMIN_CHAT_ID | да | Telegram ID админа для уведомлений |
 | Polygon API Key | опц. | US котировки и новости |
 | Finnhub API Key | опц. | US real-time и макро |
 | T-Bank Token | опц. | MOEX котировки |

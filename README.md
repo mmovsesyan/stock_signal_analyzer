@@ -228,6 +228,9 @@ nano .env
 | `subscriptions.py` | Тарифы Free/Pro/Premium и лимиты |
 | `risk_manager.py` | Sizing: Kelly criterion, vol targeting, drawdown control |
 | `polygon_data.py` | Интеграция с Polygon API (котировки, новости) |
+| `admin_alerts.py` | Уведомления админу в Telegram при сбоях (circuit breaker, quant failures) |
+| `config_validator.py` | Валидация символов: regex `^[A-Z0-9.\-]{1,20}$` |
+| `universe.py` | Списки тикеров + автоопределение рынка (RU → `.ME`) |
 
 ---
 
@@ -296,7 +299,8 @@ docker compose exec api python3 -m pytest tests/ -v
 | Команда | Описание |
 |---------|----------|
 | `/signal AAPL` | Полный анализ с торговым планом (10-30 сек) |
-| `/signal SBER.ME` | Анализ российской акции |
+| `/signal SBER` | Анализ российской акции (авто `.ME`) |
+| `/signal SBER.ME` | Анализ российской акции (явный суффикс) |
 | `/price AAPL` | Быстрая котировка |
 | `/dashboard` | Свод по watchlist |
 
@@ -367,6 +371,33 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 
 ---
 
+## 🚀 GitHub Actions — авто-деплой
+
+При `git push origin main` код автоматически деплоится на сервер.
+
+**Настройка (один раз):**
+
+```bash
+# 1. Сгенерировать SSH-ключ
+ssh-keygen -t ed25519 -f /tmp/gh_deploy_key -N ""
+
+# 2. Добавить публичный ключ на сервер
+ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' >> ~/.ssh/authorized_keys"
+
+# 3. Добавить секреты в GitHub (Settings → Secrets and variables → Actions):
+#    SERVER_HOST=213.176.76.35
+#    SERVER_USER=root
+#    SERVER_SSH_KEY=<содержимое /tmp/gh_deploy_key>
+```
+
+После настройки каждый `git push origin main` триггерит:
+1. `git fetch origin main && git reset --hard origin/main`
+2. `docker compose build api bot worker`
+3. `docker compose up -d api bot worker`
+4. Health check (`curl /health` до 10 попыток)
+
+---
+
 ## 🐳 Docker сервисы
 
 | Сервис | Порт | Описание |
@@ -430,15 +461,20 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 
 ## ✅ Что нового
 
-### v2.5 (2026-05-16) — CI/CD, resilience, caching, миграции
+### v2.5 (2026-05-16) — CI/CD, resilience, caching, миграции, auto-deploy
 
-- **CI/CD pipeline** (GitHub Actions) — `ci.yml` (ruff, mypy, pytest, Docker build) + `deploy.yml` (auto-deploy на сервер по SSH)
+- **CI/CD pipeline** (GitHub Actions) — `ci.yml` (ruff, mypy, pytest, Docker build) + `deploy.yml` (auto-deploy на сервер по SSH с health check)
 - **Redis-backed cache** (`cache.py`) — TTL-кэш для expensive вычислений (analyze, и др.); fallback на in-memory при отсутствии Redis
-- **Circuit breaker** (`circuit_breaker.py`) — CLOSED/OPEN/HALF_OPEN state machine для всех внешних API (Polygon, Finnhub, Yahoo, T-Bank); совместим с `@retry_with_backoff`
+- **Circuit breaker** (`circuit_breaker.py`) — CLOSED/OPEN/HALF_OPEN state machine для всех внешних API (Polygon, Finnhub, Yahoo, T-Bank); threshold=15, recovery=180с; отдельная обработка data errors (delisted, no data) — не триггерит breaker
 - **Redis-backed rate limiter** (`rate_limiter.py`) — sliding-window rate limiter per client на sorted sets Redis; fallback на in-memory
 - **Alembic миграции** — production-ready schema management; startup пробует `alembic upgrade head`, fallback на `init_db()`
-- **Input validation** (`api/main.py`) — Pydantic validators: regex на символы, max_length=20, защита от path traversal (`..`, `/`, `\`)
+- **Input validation** (`api/main.py` + `config_validator.py`) — Pydantic validators: regex `^[A-Z0-9.\-]{1,20}$`, защита от path traversal (`..`, `/`, `\`)
 - **Cache layer для `/analyze`** — проверяет Redis перед `build_report`, сохраняет результат на 300с; ключ включает fast_mode и use_finnhub_ws
+- **Celery batch scan** (`tasks.py`) — массовый сбор через `celery.group` в параллельных задачах; scheduler не блокируется
+- **Auto market detection** (`universe.py`) — российские тикеры (SBER, GAZP, etc.) автоматически получают суффикс `.ME` во всех entry points
+- **Admin alerts** (`admin_alerts.py`) — Telegram уведомления админу при circuit breaker OPEN, quant model failures, LLM learning failures; rate limit 5 минут на тип
+- **Global error handler** (`telegram_bot.py`) — перехват всех необработанных исключений в боте с ответом пользователю
+- **.env security** — `.env` в `.dockerignore`; токены не попадают в Docker-образ
 - **pyproject.toml** — конфиг ruff с per-file-ignores для E402 (stenv import pattern)
 - Тесты: 106 → 132 passed
 
@@ -499,12 +535,14 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 
 ## 🛡️ Безопасность
 
+- `.env` в `.dockerignore` — токены не попадают в Docker-образ
 - `.env` хранится с правами `600` (только владелец)
 - PostgreSQL пароль генерируется автоматически
 - API rate limiting per IP + опциональный `X-API-Key` (Redis-backed sliding window)
-- Input validation на всех endpoints (Pydantic regex, max_length, path traversal защита)
-- Circuit breaker на внешних API (Polygon, Finnhub, Yahoo, T-Bank) — быстрый fail при долгих ответах
+- Input validation на всех endpoints (Pydantic regex `^[A-Z0-9.\-]{1,20}$`, max_length, path traversal защита)
+- Circuit breaker на внешних API (Polygon, Finnhub, Yahoo, T-Bank) — быстрый fail при долгих ответах; data errors (delisted, no data) не триггерят breaker
 - Redis cache для `/analyze` с TTL 300с — снижает нагрузку на повторные запросы
+- Admin alerts — Telegram уведомления админу при circuit breaker OPEN, quant model failures, LLM learning failures
 - Ollama Cloud API или локальный Ollama — данные не передаются третьим лицам
 - Токены не попадают в логи
 

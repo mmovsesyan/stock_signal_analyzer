@@ -1,159 +1,215 @@
-# 📝 ПАМЯТКА ДЛЯ ЗАПУСКА НА СЕРВЕРЕ
+# Памятка для запуска на сервере
 
-**Дата:** 2026-05-02
+**Дата:** 2026-05-16
 
 ---
 
-## 🚀 БЫСТРЫЙ СТАРТ (3 команды)
+## Быстрый старт (3 команды)
 
 ```bash
 # 1. Клонировать
 git clone git@github.com:username/stock_signal_analyzer.git
 cd stock_signal_analyzer
 
-# 2. Установить
-sudo ./install.sh
+# 2. Настроить .env
+cp .env.example .env
+nano .env   # TELEGRAM_BOT_TOKEN, ADMIN_CHAT_ID — обязательно
 
-# 3. Проверить
-sudo systemctl status stock-signal-bot.service
+# 3. Запустить
+./scripts/deploy.sh install   # → выбрать Docker
 ```
 
 ---
 
-## ❌ ЕСЛИ ОШИБКА: `python: not found`
+## GitHub Actions — авто-деплой
 
-**НЕ ПРАВИЛЬНО:**
+**Настройка (один раз):**
+
 ```bash
-python telegram_bot.py  # ❌ Не работает без venv
+# 1. Сгенерировать SSH-ключ
+ssh-keygen -t ed25519 -f /tmp/gh_deploy_key -N ""
+
+# 2. Добавить на сервер
+ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' >> ~/.ssh/authorized_keys"
+
+# 3. Добавить секреты в GitHub (Settings → Secrets → Actions):
+#    SERVER_HOST=213.176.76.35
+#    SERVER_USER=root
+#    SERVER_SSH_KEY=<содержимое /tmp/gh_deploy_key>
 ```
 
-**ПРАВИЛЬНО:**
-```bash
-# Вариант 1: Через venv
-source venv/bin/activate
-python telegram_bot.py
-
-# Вариант 2: Через скрипт
-./start.sh
-
-# Вариант 3: Через systemd (лучше всего)
-sudo systemctl start stock-signal-bot.service
-```
+**После настройки:** `git push origin main` → сервер обновляется автоматически.
 
 ---
 
-## 📋 ЧТО НУЖНО ДЛЯ РАБОТЫ
-
-1. **Python 3.10+** ✅
-2. **venv** (создаётся автоматически) ✅
-3. **Зависимости** (устанавливаются автоматически) ✅
-4. **.env файл** с ключами:
-   - TELEGRAM_BOT_TOKEN (обязательно)
-   - TINKOFF_TOKEN (опционально)
-   - FINNHUB_API_KEY (опционально)
-
----
-
-## 🎮 УПРАВЛЕНИЕ
+## Управление Docker
 
 ```bash
-# Статус
-sudo systemctl status stock-signal-bot.service
+# Статус всех сервисов
+docker compose ps
 
-# Логи
-sudo journalctl -u stock-signal-bot.service -f
+# Логи бота
+docker compose logs -f bot
+
+# Логи API
+docker compose logs -f api
 
 # Перезапуск
-sudo systemctl restart stock-signal-bot.service
+./scripts/deploy.sh restart
 
-# Остановка
-sudo systemctl stop stock-signal-bot.service
+# Полная пересборка
+docker compose build --no-cache
+docker compose up -d
 ```
 
 ---
 
-## 🔑 ГДЕ ВЗЯТЬ КЛЮЧИ
+## Что нужно для работы
+
+1. **Docker + Docker Compose** ✅ (проверить: `docker compose version`)
+2. **.env файл** с ключами:
+   - `TELEGRAM_BOT_TOKEN` (обязательно)
+   - `ADMIN_CHAT_ID` (обязательно — уведомления админу)
+   - `ADMIN_CONTACT_INFO` (опц. — контакт для новых пользователей)
+   - `POLYGON_API_KEY` (опц.)
+   - `FINNHUB_API_KEY` (опц.)
+   - `TINKOFF_INVEST_TOKEN` (опц.)
+
+---
+
+## Где взять ключи
 
 1. **Telegram Bot Token**
    - https://t.me/BotFather
    - Команда: `/newbot`
 
-2. **Tinkoff Token**
-   - https://www.tbank.ru/invest/settings/api/
-   - Права: "Только чтение"
+2. **Telegram Admin ID**
+   - https://t.me/userinfobot
+   - Отправьте `/start` — получите числовой ID
 
-3. **Finnhub API Key**
+3. **Polygon API Key**
+   - https://massive.com/dashboard/signup
+   - Free tier: 5 req/min
+
+4. **Finnhub API Key**
    - https://finnhub.io/register
    - Бесплатный план
 
+5. **T-Bank Token**
+   - https://www.tbank.ru/invest/settings/api/
+   - Права: "Только чтение"
+
 ---
 
-## 📂 СТРУКТУРА
+## Структура на сервере
 
 ```
 /root/stock_signal_analyzer/
-├── venv/                    # Виртуальное окружение
-├── .env                     # Ключи (создаётся install.sh)
-├── telegram_bot.py          # Основной бот
-├── install.sh               # Автоустановка
-├── start.sh                 # Ручной запуск
-└── ...
+├── docker-compose.yml       # Определение сервисов
+├── .env                     # Ключи (НЕ в git!)
+├── .dockerignore            # .env здесь — не попадает в образ
+├── telegram_bot.py          # Telegram бот
+├── api/main.py              # REST API
+├── stock_signal_analyzer/   # Основной пакет
+│   ├── engine.py            # Пайплайн анализа
+│   ├── circuit_breaker.py   # Защита API
+│   ├── admin_alerts.py      # Уведомления админу
+│   ├── scheduler.py         # Фоновые задачи
+│   └── tasks.py             # Celery задачи
+├── .github/workflows/
+│   ├── ci.yml               # Тесты, ruff, mypy
+│   └── deploy.yml           # Авто-деплой на сервер
+└── scripts/
+    └── deploy.sh            # Интерактивный деплой
 
 /var/lib/stock_signal_analyzer/
-└── signals.jsonl            # Логи сигналов
-
-/var/log/stock_signal/
-└── (логи systemd)
+└── signals.jsonl            # Лог сигналов (volume)
 ```
 
 ---
 
-## ✅ ПРОВЕРКА РАБОТЫ
+## Проверка работы
 
-### 1. Бот запущен
+### 1. API здоров
 ```bash
-sudo systemctl status stock-signal-bot.service
-# Active: active (running) ✅
+curl http://localhost:8000/health
+# {"status":"ok"} ✅
 ```
 
 ### 2. Telegram отвечает
-Отправить: `/start`
-Должен ответить с меню ✅
+Отправьте `/start` — должен ответить с меню ✅
 
-### 3. Логи без ошибок
+### 3. Анализ работает
 ```bash
-sudo journalctl -u stock-signal-bot.service -n 20
-# Нет ошибок ✅
+curl http://localhost:8000/analyze/AAPL
+# JSON с score, tier, trade_plan ✅
+```
+
+### 4. Российские акции (авто .ME)
+```bash
+curl http://localhost:8000/analyze/SBER
+# Должен вернуть анализ SBER.ME ✅
+```
+
+### 5. Логи без ошибок
+```bash
+docker compose logs -f bot | grep -i error
+# Нет критических ошибок ✅
 ```
 
 ---
 
-## 🐛 ЧАСТЫЕ ОШИБКИ
-
-### `python: not found`
-→ Запускай через venv: `source venv/bin/activate`
+## Частые ошибки
 
 ### `TELEGRAM_BOT_TOKEN not set`
-→ Создай .env: `sudo ./install.sh`
+→ Создай `.env`: `cp .env.example .env` и заполни
 
-### `externally-managed-environment`
-→ Используй venv: `python3 -m venv venv`
+### `ADMIN_CHAT_ID not set`
+→ Добавь `ADMIN_CHAT_ID=123456789` в `.env`, пересобери: `./scripts/deploy.sh restart`
+
+### `.env в Docker-образе` (старый токен)
+→ `.env` в `.dockerignore`, но старый образ может кэшировать:
+```bash
+docker system prune -a
+./scripts/deploy.sh restart
+```
 
 ### Бот не отвечает
-→ Проверь логи: `sudo journalctl -u stock-signal-bot.service -e`
+```bash
+docker compose logs -f bot | tail -20
+```
+
+### Circuit breaker OPEN спам
+→ Нормально при массовом сканировании. Порог=15, восстановление=180с. Если спам частый — проверьте rate limiting (`_YF_MIN_DELAY=0.25`).
 
 ---
 
-## 📚 ДОКУМЕНТАЦИЯ
+## Обновление токена Telegram
 
-- **HOW_TO_RUN.md** — как запустить (подробно)
+```bash
+# 1. Обновить .env
+nano .env
+# TELEGRAM_BOT_TOKEN=новый_токен
+
+# 2. Убедиться что .env в .dockerignore
+grep .env .dockerignore
+
+# 3. Пересобрать
+./scripts/deploy.sh restart
+
+# 4. Проверить в контейнере
+docker compose exec bot env | grep TELEGRAM
+```
+
+---
+
+## Документация
+
+- **README.md** — полная документация
 - **QUICKSTART.md** — быстрый старт
-- **INSTALLATION_COMPLETE.md** — полное описание
-- **FINAL_REPORT.md** — финальный отчёт
+- **CHANGELOG.md** — история версий
 
 ---
 
-**Версия:** 1.4.0  
-**Дата:** 2026-05-02  
-
-🚀 **ГОТОВО К ЗАПУСКУ!**
+**Версия:** 2.5.0
+**Дата:** 2026-05-16
