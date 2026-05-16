@@ -346,6 +346,32 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
         except Exception as e:
             _log.warning("MOEX ISS fallback failed for %s: %s", sym, e)
 
+    # Fallback на Yahoo Finance без суффикса .ME для РФ-тикеров (TCSG и др.)
+    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and sym.endswith(".ME"):
+        plain_sym = sym.replace(".ME", "")
+        _log.info("MOEX ISS недоступен для %s, пробуем Yahoo Finance (%s)…", sym, plain_sym)
+        try:
+            info_yf, hist_yf = _fetch_yf_data(plain_sym, period)
+            if hist_yf is not None and not hist_yf.empty and len(hist_yf) >= _MIN_CANDLES:
+                last = float(hist_yf["Close"].iloc[-1])
+                currency = str(info_yf.get("currency") or "RUB")
+                name = str(info_yf.get("longName") or info_yf.get("shortName") or sym)
+                snap = TickerSnapshot(
+                    symbol=sym,
+                    last_close=last,
+                    currency=currency,
+                    company_name=name,
+                    history=hist_yf,
+                )
+                result = (snap, info_yf, profile)
+                _cache_set(sym, result)
+                _log.info("Yahoo Finance (plain): загружено %d свечей для %s", len(hist_yf), sym)
+                return result
+        except CircuitOpenError:
+            _log.warning("Yahoo Finance circuit breaker OPEN for %s — skipping plain fallback.", plain_sym)
+        except Exception as e:
+            _log.warning("Yahoo Finance plain fallback failed for %s: %s", sym, e)
+
     # Fallback на Polygon.io для US-тикеров
     if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and not sym.endswith(".ME"):
         if _polygon_available():
