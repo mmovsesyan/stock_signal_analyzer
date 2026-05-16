@@ -43,6 +43,9 @@ services:
     environment:
       - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
       - STOCK_SIGNAL_DATA=/data
+      - TINKOFF_INVEST_TOKEN=${TINKOFF_INVEST_TOKEN}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -80,6 +83,9 @@ services:
     environment:
       - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
       - STOCK_SIGNAL_DATA=/data
+      - TINKOFF_INVEST_TOKEN=${TINKOFF_INVEST_TOKEN}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
@@ -187,6 +193,7 @@ services:
       - ADMIN_CONTACT_INFO=${ADMIN_CONTACT_INFO}
       - FINNHUB_API_KEY=${FINNHUB_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - TINKOFF_INVEST_TOKEN=${TINKOFF_INVEST_TOKEN}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
