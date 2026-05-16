@@ -24,31 +24,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import yfinance as yf
+from .price_fetcher import fetch_current_price, fetch_price_for_outcome
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 _log = logging.getLogger(__name__)
-
-# ── yfinance retry helpers ───────────────────────────────────────────────────
-
-
-def _yf_retry(func, max_retries: int = 3, backoff: float = 2.0):
-    """Выполнить функцию с exponential backoff при rate limit."""
-    last_err = None
-    for attempt in range(max_retries):
-        try:
-            return func()
-        except Exception as e:
-            last_err = e
-            msg = str(e).lower()
-            if "too many requests" in msg or "rate limited" in msg:
-                wait = backoff * (2 ** attempt)
-                _log.warning("yfinance rate limit (%s), retry in %.1fs (attempt %d/%d)",
-                             type(e).__name__, wait, attempt + 1, max_retries)
-                time.sleep(wait)
-            else:
-                raise
-    raise last_err
 
 
 @dataclass
@@ -186,18 +165,9 @@ class OutcomeTracker:
         return f"{signal['symbol']}_{signal['ts_utc']}"
 
     def _get_current_price(self, symbol: str) -> float | None:
-        """Получить текущую цену через yfinance с fallback и retry."""
+        """Получить текущую цену через unified price fetcher."""
         try:
-            def _fetch():
-                ticker = yf.Ticker(symbol)
-                data = ticker.history(period='5d', interval='1d')
-                if data.empty:
-                    _log.warning("Нет данных для %s", symbol)
-                    return None
-                return float(data['Close'].iloc[-1])
-
-            return _yf_retry(_fetch)
-
+            return fetch_current_price(symbol)
         except Exception as e:
             _log.error("Ошибка получения цены для %s: %s", symbol, e)
             return None
@@ -224,26 +194,15 @@ class OutcomeTracker:
             # Получить цену на момент истечения
             timeout_date = entry_date + timedelta(days=max_hold_days)
             try:
-                def _fetch_timeout():
-                    ticker = yf.Ticker(symbol)
-                    return ticker.history(start=timeout_date, end=timeout_date + timedelta(days=5))
-
-                hist = _yf_retry(_fetch_timeout)
-
-                if not hist.empty:
-                    exit_price = float(hist['Close'].iloc[0])
-                    actual_exit_date = hist.index[0]
-                    # Приводим дату к datetime aware
-                    if hasattr(actual_exit_date, 'to_pydatetime'):
-                        actual_exit_date = actual_exit_date.to_pydatetime()
+                exit_price = fetch_price_for_outcome(symbol, timeout_date)
+                if exit_price is not None:
                     pnl_pct = self._calculate_pnl(entry_price, exit_price, direction)
-
                     return SignalOutcome(
                         signal_id=signal_id,
                         symbol=symbol,
                         outcome='timeout',
                         exit_price=exit_price,
-                        exit_date=actual_exit_date if isinstance(actual_exit_date, datetime) else timeout_date,
+                        exit_date=timeout_date,
                         pnl_pct=pnl_pct,
                         hold_days=max_hold_days
                     )
@@ -252,13 +211,10 @@ class OutcomeTracker:
 
         # Получить историю с момента входа
         try:
-            def _fetch_hist():
-                ticker = yf.Ticker(symbol)
-                return ticker.history(start=entry_date, end=now, interval='1d')
+            from .price_fetcher import fetch_history
+            hist = fetch_history(symbol, entry_date, now)
 
-            hist = _yf_retry(_fetch_hist)
-
-            if hist.empty:
+            if hist is None or hist.empty:
                 return SignalOutcome(
                     signal_id=signal_id,
                     symbol=symbol,
