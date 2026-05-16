@@ -26,9 +26,9 @@ jobs:
           port: 22
           script: |
             cd /root/stock_signal_analyzer
-            git pull origin main
-            docker compose build api bot worker
-            docker compose up -d api bot worker
+            git pull origin main || { echo "git pull failed"; exit 1; }
+            docker compose build --no-cache api bot worker
+            docker compose up -d --force-recreate api bot worker
             docker compose ps
             echo "Deploy completed at $(date)"
 
