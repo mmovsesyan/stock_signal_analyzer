@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,27 @@ import yfinance as yf
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 _log = logging.getLogger(__name__)
+
+# ── yfinance retry helpers ───────────────────────────────────────────────────
+
+
+def _yf_retry(func, max_retries: int = 3, backoff: float = 2.0):
+    """Выполнить функцию с exponential backoff при rate limit."""
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            if "too many requests" in msg or "rate limited" in msg:
+                wait = backoff * (2 ** attempt)
+                _log.warning("yfinance rate limit (%s), retry in %.1fs (attempt %d/%d)",
+                             type(e).__name__, wait, attempt + 1, max_retries)
+                time.sleep(wait)
+            else:
+                raise
+    raise last_err
 
 
 @dataclass
@@ -164,19 +186,20 @@ class OutcomeTracker:
         return f"{signal['symbol']}_{signal['ts_utc']}"
 
     def _get_current_price(self, symbol: str) -> float | None:
-        """Получить текущую цену через yfinance с fallback."""
+        """Получить текущую цену через yfinance с fallback и retry."""
         try:
-            ticker = yf.Ticker(symbol)
-            data = ticker.history(period='5d', interval='1d')
+            def _fetch():
+                ticker = yf.Ticker(symbol)
+                data = ticker.history(period='5d', interval='1d')
+                if data.empty:
+                    _log.warning("Нет данных для %s", symbol)
+                    return None
+                return float(data['Close'].iloc[-1])
 
-            if data.empty:
-                _log.warning(f"Нет данных для {symbol}")
-                return None
-
-            return float(data['Close'].iloc[-1])
+            return _yf_retry(_fetch)
 
         except Exception as e:
-            _log.error(f"Ошибка получения цены для {symbol}: {e}")
+            _log.error("Ошибка получения цены для %s: %s", symbol, e)
             return None
 
     def _check_signal_outcome(self, signal: dict[str, Any]) -> SignalOutcome:
@@ -201,9 +224,11 @@ class OutcomeTracker:
             # Получить цену на момент истечения
             timeout_date = entry_date + timedelta(days=max_hold_days)
             try:
-                ticker = yf.Ticker(symbol)
-                # Используем окно 5 дней чтобы попасть на торговый день (избежать weekend gap)
-                hist = ticker.history(start=timeout_date, end=timeout_date + timedelta(days=5))
+                def _fetch_timeout():
+                    ticker = yf.Ticker(symbol)
+                    return ticker.history(start=timeout_date, end=timeout_date + timedelta(days=5))
+
+                hist = _yf_retry(_fetch_timeout)
 
                 if not hist.empty:
                     exit_price = float(hist['Close'].iloc[0])
@@ -223,12 +248,15 @@ class OutcomeTracker:
                         hold_days=max_hold_days
                     )
             except Exception as e:
-                _log.error(f"Ошибка получения цены для timeout {symbol}: {e}")
+                _log.error("Ошибка получения цены для timeout %s: %s", symbol, e)
 
         # Получить историю с момента входа
         try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(start=entry_date, end=now, interval='1d')
+            def _fetch_hist():
+                ticker = yf.Ticker(symbol)
+                return ticker.history(start=entry_date, end=now, interval='1d')
+
+            hist = _yf_retry(_fetch_hist)
 
             if hist.empty:
                 return SignalOutcome(
@@ -451,7 +479,7 @@ class OutcomeTracker:
         if outcome.outcome != 'open':
             self.checked_signals.add(outcome.signal_id)
 
-    def check_all_outcomes(self, max_workers: int = 8):
+    def check_all_outcomes(self, max_workers: int = 2):
         """Проверить все открытые сигналы (параллельно через ThreadPoolExecutor)."""
         signals = self._load_open_signals()
 

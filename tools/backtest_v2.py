@@ -93,8 +93,10 @@ class BacktestResult:
 
 
 def _fetch_history(symbol: str, days: int) -> pd.DataFrame | None:
-    """Загрузить историю для бэктеста."""
-    try:
+    """Загрузить историю для бэктеста с retry."""
+    import time
+
+    def _fetch():
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=days + 30)  # запас для индикаторов
         t = yf.Ticker(symbol)
@@ -104,9 +106,25 @@ def _fetch_history(symbol: str, days: int) -> pd.DataFrame | None:
         if hist is None or hist.empty or len(hist) < 60:
             return None
         return hist
-    except Exception as e:
-        print(f"  Ошибка загрузки {symbol}: {e}", file=sys.stderr)
-        return None
+
+    last_err = None
+    for attempt in range(3):
+        try:
+            result = _fetch()
+            return result
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            if "too many requests" in msg or "rate limited" in msg:
+                wait = 2.0 * (2 ** attempt)
+                print(f"  yfinance rate limit ({symbol}), retry in {wait:.1f}s...",
+                      file=sys.stderr)
+                time.sleep(wait)
+            else:
+                print(f"  Ошибка загрузки {symbol}: {e}", file=sys.stderr)
+                return None
+    print(f"  Ошибка загрузки {symbol} после 3 попыток: {last_err}", file=sys.stderr)
+    return None
 
 
 def _simulate_on_candles(
