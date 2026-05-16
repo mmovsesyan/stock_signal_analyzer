@@ -540,6 +540,16 @@ do_install() {
 
         do_start_docker
 
+        # Проверка T-Bank SDK
+        header "Проверка T-Bank SDK"
+        for svc in api worker bot; do
+            if docker compose exec -T "$svc" python -c "import tinkoff.invest" 2>/dev/null; then
+                ok "T-Bank SDK в $svc: OK"
+            else
+                warn "T-Bank SDK в $svc: не найден (entrypoint.sh попробует установить при старте)"
+            fi
+        done
+
         # Инициализация
         header "Инициализация"
         sleep 5

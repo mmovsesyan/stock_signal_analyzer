@@ -461,6 +461,13 @@ ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' 
 
 ## ✅ Что нового
 
+### v2.5.1 (2026-05-16) — Hotfix: learning state persistence + outcomes file bloat
+
+- **llm_learning.py** — сохраняет `learning_state.json` даже при 0 outcomes, устраняя бесконечный цикл сообщения «нет данных»
+- **outcome_tracker.py** — больше не перезаписывает открытые сигналы в `outcomes.jsonl` при каждом запуске (файл перестаёт раздуваться)
+- **deploy.sh** — `do_learning()` работает корректно через `docker compose exec`
+- **T-Bank SDK** — проверка импорта во всех Docker-контейнерах (`api`, `worker`, `bot`)
+
 ### v2.5 (2026-05-16) — CI/CD, resilience, caching, миграции, auto-deploy
 
 - **CI/CD pipeline** (GitHub Actions) — `ci.yml` (ruff, mypy, pytest, Docker build) + `deploy.yml` (auto-deploy на сервер по SSH с health check)
