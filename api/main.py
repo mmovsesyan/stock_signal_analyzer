@@ -538,11 +538,22 @@ async def webhook_tradingview(alert: TradingViewAlert):
 async def startup_event():
     """Инициализация при старте API."""
     validate_api_config()
-    # Создать таблицы если БД доступна
+    # Миграции Alembic (или fallback на init_db)
     try:
-        from stock_signal_analyzer.db import init_db
-        init_db()
-        log.info("Database tables initialized")
+        import subprocess
+        result = subprocess.run(
+            ["alembic", "upgrade", "head"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            log.info("Alembic migrations applied")
+        else:
+            log.warning("Alembic failed (%s), falling back to init_db", result.stderr.strip()[:200])
+            from stock_signal_analyzer.db import init_db
+            init_db()
+            log.info("Database tables initialized (fallback)")
     except Exception as e:
         log.warning("Database not available: %s", e)
 
