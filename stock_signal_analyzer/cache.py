@@ -78,7 +78,7 @@ class _MemoryCache(CacheBackend):
         if entry is None:
             return None
         value, expiry = entry
-        if expiry < __import__("time").time():
+        if expiry <= __import__("time").time():
             del self._store[key]
             return None
         return value
