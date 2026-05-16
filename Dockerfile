@@ -28,15 +28,16 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # T-Bank SDK (отдельно, может быть недоступен при сборке)
 RUN pip install --no-cache-dir tinkoff-investments 2>/dev/null || \
-    pip install --no-cache-dir --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments 2>/dev/null || \
+    pip install --no-cache-dir --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments || \
     echo "T-Bank SDK not available at build time - will retry at startup"
 
 # Скрипт автоустановки SDK при старте (если не установился при сборке)
 RUN echo '#!/bin/bash\n\
+set -e\n\
 if ! python -c "import tinkoff.invest" 2>/dev/null; then\n\
   echo "Installing T-Bank SDK..."\n\
-  pip install -q tinkoff-investments 2>/dev/null || \\\n\
-  pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments 2>/dev/null || true\n\
+  pip install -q tinkoff-investments 2>/dev/null || \\n\
+  pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments || true\n\
 fi\n\
 exec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
@@ -48,7 +49,6 @@ RUN mkdir -p /data/signals /data/outcomes /app/logs
 
 # Создать непривилегированного пользователя и передать права
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app /data
-USER appuser
 
 # Переменные окружения по умолчанию
 ENV SSA_SIGNAL_LOG=/data/signals/signals.jsonl
