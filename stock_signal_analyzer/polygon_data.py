@@ -305,7 +305,7 @@ def fetch_ticker_news(
     timeout: float = 10.0,
 ) -> list[NewsItem]:
     """
-    Новости по тикеру через /v3/reference/news.
+    Новости по тикеру через /v2/reference/news.
     """
     key = api_key or _api_key()
     if not key:
@@ -315,7 +315,7 @@ def fetch_ticker_news(
         return []
     r = _request_with_fallback(
         method="GET",
-        path_v3="/reference/news",
+        path_v2="/reference/news",
         api_key=key,
         params={
             "ticker": sym,
