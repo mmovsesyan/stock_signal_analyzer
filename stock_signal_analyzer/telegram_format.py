@@ -111,8 +111,8 @@ def _plain_language_summary(r: SignalReport) -> str:
             res_pct = res_m.group(2)
             parts.append(
                 f"📐 Ближайшие уровни:\n"
-                f"  🟢 Поддержка: {sup_price} {currency} ({sup_pct}) — если цена упадёт, здесь может остановиться\n"
-                f"  🔴 Сопротивление: {res_price} {currency} ({res_pct}) — если вырастет, здесь может затормозить"
+                f"  🟢 Поддержка: {sup_price} {currency} ({sup_pct}) — возможная остановка падения\n"
+                f"  🔴 Сопротивление: {res_price} {currency} ({res_pct}) — рост может замедлиться"
             )
 
     # ── Направление ──
@@ -320,8 +320,6 @@ def format_signal_report(r: SignalReport) -> str:
 
     lines.append(f"Макро ×{r.macro_dampening:.2f}")
     lines.append(_esc(r.macro_summary))
-    if hasattr(r, "levels_detail") and r.levels_detail:
-        lines.append(f"📐 Уровни: {_esc(r.levels_detail)}")
     lines.append("")
     # ── Аналитика ──
     analyst = getattr(r, "analyst_detail", "") or ""
