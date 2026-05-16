@@ -34,9 +34,25 @@ _YF_MIN_DELAY: float = 0.25  # 250 ms between YF requests
 _yf_rate_lock = threading.Lock()
 
 
+def _is_yf_data_error(exc: Exception) -> bool:
+    """Return True if exception is a 'no data' error (not a service failure)."""
+    msg = str(exc).lower()
+    data_phrases = (
+        "delisted", "no price data", "no timezone",
+        "not found", "no data found", "symbol may be delisted",
+        "404", "no data",
+    )
+    return any(p in msg for p in data_phrases)
+
+
 @_yf_circuit
 def _fetch_yf_data(ysym: str, period: str) -> tuple[dict[str, Any], pd.DataFrame]:
-    """Fetch Yahoo Finance info and history with circuit breaker protection."""
+    """Fetch Yahoo Finance info and history with circuit breaker protection.
+
+    Data errors (delisted, no price data) are caught and returned as empty
+    DataFrames so they do NOT trip the circuit breaker. Only service-level
+    failures (network, timeout, HTTP 5xx/429) propagate to the breaker.
+    """
     global _YF_LAST_CALL
     with _yf_rate_lock:
         elapsed = time.time() - _YF_LAST_CALL
@@ -50,7 +66,15 @@ def _fetch_yf_data(ysym: str, period: str) -> tuple[dict[str, Any], pd.DataFrame
         info = t.info or {}
     except Exception:
         pass
-    hist = t.history(period=period, interval="1d", auto_adjust=True)
+
+    try:
+        hist = t.history(period=period, interval="1d", auto_adjust=True)
+    except Exception as exc:
+        if _is_yf_data_error(exc):
+            _log.debug("YF: no data for %s (%s) — treated as empty", ysym, exc)
+            return info, pd.DataFrame()
+        _log.warning("YF: service error for %s: %s", ysym, exc)
+        raise
     return info, hist
 
 
