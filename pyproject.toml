@@ -1,0 +1,21 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # line too long — handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+"api/main.py" = ["E402"]
+"telegram_bot.py" = ["E402"]
+"stock_signal_analyzer/llm_learning.py" = ["E402"]
+"stock_signal_analyzer/llm_client.py" = ["E402"]
+"stock_signal_analyzer/llm_sentiment.py" = ["E402"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -3,13 +3,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from stock_signal_analyzer.cache import (
     _MemoryCache,
     _RedisCache,
     cache_analyze_key,
-    get_cache,
 )
 
 

@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
 import pytest
 
 from stock_signal_analyzer.circuit_breaker import (
     CircuitBreaker,
     CircuitOpenError,
-    State,
     circuit_breaker,
 )
 

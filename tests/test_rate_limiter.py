@@ -4,12 +4,10 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from stock_signal_analyzer.rate_limiter import (
+    _build_limiter,
     _MemoryLimiter,
     _RedisLimiter,
-    _build_limiter,
     is_allowed,
     reset_limiter,
 )

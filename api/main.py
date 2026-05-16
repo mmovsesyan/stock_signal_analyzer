@@ -21,12 +21,13 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 # Добавить корень проекта
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import stenv
+
 stenv.load_project_env()
 
 from fastapi import FastAPI, HTTPException, Request
@@ -34,14 +35,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from stock_signal_analyzer.engine import build_report, SignalReport
-from stock_signal_analyzer.market_data import fetch_snapshot_with_meta
-from stock_signal_analyzer.trade_plan import trade_plan_to_dict
+from stock_signal_analyzer.cache import cache_analyze_key, get_cache
+from stock_signal_analyzer.config_validator import validate_api_config
+from stock_signal_analyzer.engine import SignalReport, build_report
 from stock_signal_analyzer.live_price import fetch_live_price
-from stock_signal_analyzer.config_validator import validate_telegram_config, validate_api_config
-from stock_signal_analyzer.universe import RU_BLUE_CHIPS
+from stock_signal_analyzer.market_data import fetch_snapshot_with_meta
 from stock_signal_analyzer.rate_limiter import is_allowed
-from stock_signal_analyzer.cache import get_cache, cache_analyze_key
+from stock_signal_analyzer.trade_plan import trade_plan_to_dict
+from stock_signal_analyzer.universe import RU_BLUE_CHIPS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
@@ -197,7 +198,7 @@ async def get_quote(symbol: str):
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Internal error fetching quote")
 
     # Real-time price
@@ -268,7 +269,7 @@ async def analyze(req: AnalyzeRequest):
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
+    except Exception:
         log.exception("analyze error")
         raise HTTPException(status_code=500, detail="Internal analysis error")
 
@@ -291,7 +292,7 @@ async def get_subscription(telegram_id: int, request: Request):
     client = request.client.host if request.client else "unknown"
     if not is_allowed(client, limit=10):
         raise HTTPException(status_code=429, detail="Rate limit exceeded for subscription endpoint")
-    from stock_signal_analyzer.subscriptions import get_user_tier, get_tier_limits, format_subscription_info
+    from stock_signal_analyzer.subscriptions import get_tier_limits, get_user_tier
     tier = get_user_tier(telegram_id)
     limits = get_tier_limits(tier)
     return {
@@ -315,7 +316,7 @@ async def get_stats():
     def _gather_stats():
         stats = {}
         try:
-            from stock_signal_analyzer.db import get_session, User, Signal, Outcome
+            from stock_signal_analyzer.db import Outcome, Signal, User, get_session
             with get_session() as session:
                 stats["total_users"] = session.query(User).count()
                 stats["total_signals"] = session.query(Signal).count()
@@ -472,9 +473,9 @@ async def webhook_tradingview(alert: TradingViewAlert):
             None,
             lambda: build_report(sym, fast_mode=True),
         )
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(status_code=404, detail=f"Symbol not supported: {sym}")
-    except Exception as e:
+    except Exception:
         log.exception("TradingView webhook analysis error for %s", sym)
         raise HTTPException(status_code=500, detail="Analysis engine error")
 
@@ -486,7 +487,12 @@ async def webhook_tradingview(alert: TradingViewAlert):
 
     # Store in signal log for walk-forward validation
     try:
-        from stock_signal_analyzer.signal_log import build_record_from_report, append_signal_record, log_path_from_env, make_signal_id
+        from stock_signal_analyzer.signal_log import (
+            append_signal_record,
+            build_record_from_report,
+            log_path_from_env,
+            make_signal_id,
+        )
         path = log_path_from_env()
         if path:
             record = build_record_from_report(report, ref_price=report.ref_price, currency="USD")
