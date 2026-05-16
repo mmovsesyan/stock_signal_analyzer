@@ -46,6 +46,10 @@ COPY . .
 # Создать директории для данных
 RUN mkdir -p /data/signals /data/outcomes /app/logs
 
+# Создать непривилегированного пользователя и передать права
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app /data
+USER appuser
+
 # Переменные окружения по умолчанию
 ENV SSA_SIGNAL_LOG=/data/signals/signals.jsonl
 ENV STOCK_SIGNAL_DATA=/data

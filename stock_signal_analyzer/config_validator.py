@@ -54,12 +54,19 @@ def validate_api_config() -> None:
     secret = os.environ.get("API_SECRET_KEY", "").strip()
     allowed = os.environ.get("ALLOWED_ORIGINS", "").strip()
     if not secret:
-        _log.warning(
+        raise ValueError(
             "API_SECRET_KEY не задан — API эндпоинты открыты без аутентификации. "
-            "Задайте API_SECRET_KEY в .env для защиты."
+            "Задайте API_SECRET_KEY в .env и перезапустите."
         )
     if not allowed:
-        _log.warning(
+        raise ValueError(
             "ALLOWED_ORIGINS не задан — CORS разрешает все источники. "
-            "Задайте ALLOWED_ORIGINS в .env для продакшена."
+            "Задайте ALLOWED_ORIGINS в .env (например, ALLOWED_ORIGINS=https://yourdomain.com) и перезапустите."
+        )
+
+    allow_all = os.environ.get("ALLOW_ALL_USERS", "").strip().lower()
+    if allow_all in ("1", "true", "yes"):
+        _log.warning(
+            "⚠️ ALLOW_ALL_USERS включен — все пользователи имеют безлимитный доступ. "
+            "НИКОГДА не включайте это в продакшене."
         )

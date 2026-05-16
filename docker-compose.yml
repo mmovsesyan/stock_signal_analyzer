@@ -22,7 +22,7 @@ services:
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
       - NOTIFY_INTERVAL_SEC=${NOTIFY_INTERVAL_SEC:-3600}
       - NOTIFY_MIN_TIER=${NOTIFY_MIN_TIER:-A}
-      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -118,7 +118,7 @@ services:
       - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
       - API_RATE_LIMIT_PER_MIN=${API_RATE_LIMIT_PER_MIN:-30}
-      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
       - CELERY_BROKER_URL=redis://redis:6379/0
     volumes:
       - ./data:/data
@@ -145,7 +145,7 @@ services:
     environment:
       - POSTGRES_DB=stock_signals
       - POSTGRES_USER=ssa
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ssa_secret}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -187,7 +187,7 @@ services:
       - OLLAMA_CLOUD_API_KEY=${OLLAMA_CLOUD_API_KEY}
       - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
-      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
     volumes:
@@ -215,7 +215,7 @@ services:
     restart: unless-stopped
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
-      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD:-ssa_secret}@postgres:5432/stock_signals
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
     entrypoint: []
     command: celery -A stock_signal_analyzer.tasks beat --loglevel=info
     depends_on:

@@ -273,10 +273,31 @@ async def analyze_get(symbol: str, fast: bool = False):
 
 # ── Subscription & Stats endpoints ──────────────────────────────────────────
 
+# Stricter rate limit for subscription endpoint (enumeration protection)
+_SUB_RATE_LIMIT = 10
+_sub_rate_store: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_sub_rate_limit(client_id: str) -> bool:
+    now = time.time()
+    calls = _sub_rate_store.get(client_id, [])
+    recent = [t for t in calls if now - t < 60]
+    if not recent:
+        _sub_rate_store[client_id] = [now]
+        return True
+    if len(recent) >= _SUB_RATE_LIMIT:
+        return False
+    recent.append(now)
+    _sub_rate_store[client_id] = recent
+    return True
+
 
 @app.get("/subscription/{telegram_id}")
-async def get_subscription(telegram_id: int):
+async def get_subscription(telegram_id: int, request: Request):
     """Информация о подписке пользователя."""
+    client = request.client.host if request.client else "unknown"
+    if not _check_sub_rate_limit(client):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded for subscription endpoint")
     from stock_signal_analyzer.subscriptions import get_user_tier, get_tier_limits, format_subscription_info
     tier = get_user_tier(telegram_id)
     limits = get_tier_limits(tier)
