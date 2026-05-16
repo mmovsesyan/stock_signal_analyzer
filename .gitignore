@@ -188,3 +188,4 @@ cython_debug/
 
 # Marketing materials
 docs/reddit_post.md
+.gstack/

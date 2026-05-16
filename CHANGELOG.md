@@ -5,6 +5,45 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 и проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-05-16
+
+### Added
+- **CI/CD pipeline** (GitHub Actions):
+  - `ci.yml` — ruff (lint changed files only), mypy, pytest, Docker build
+  - `deploy.yml` — auto-deploy на сервер по SSH при push в main
+- **Redis-backed cache** (`stock_signal_analyzer/cache.py`):
+  - TTL-кэш для expensive вычислений; fallback на in-memory при отсутствии Redis
+  - Ключ: `analyze:{SYMBOL}:{fast_mode}:{use_finnhub_ws}`
+  - Используется в `/analyze` endpoint
+- **Circuit breaker** (`stock_signal_analyzer/circuit_breaker.py`):
+  - CLOSED/OPEN/HALF_OPEN state machine для внешних API
+  - Глобальные breakers: polygon, finnhub, yfinance, tbank
+  - Совместим с `@retry_with_backoff`
+- **Redis-backed rate limiter** (`stock_signal_analyzer/rate_limiter.py`):
+  - Sliding-window rate limiter per client на sorted sets Redis
+  - Fallback на in-memory при отсутствии Redis
+- **Alembic миграции** (`alembic/`):
+  - Production-ready schema management
+  - Startup: `alembic upgrade head`, fallback на `init_db()`
+- **Input validation** (`api/main.py`):
+  - Pydantic validators с regex и max_length
+  - Защита от path traversal (`..`, `/`, `\`)
+- **pyproject.toml** — конфиг ruff с per-file-ignores для E402 (stenv import pattern)
+- **Unit tests**: 106 → 132 passed
+  - `test_cache.py`, `test_circuit_breaker.py`, `test_rate_limiter.py`, `test_api_regression.py`
+
+### Changed
+- **Rate limiting**: in-memory `_rate_store` заменён на `is_allowed()` из `rate_limiter.py`
+- **Docker services**: добавлен `cron` и `redis_data` persistent volume
+- **Polygon API**: используется v2 endpoint для новостей (v3 возвращает 404)
+
+### Security
+- Rate limiting per IP с Redis-backed sliding window
+- Input validation на всех endpoints
+- Circuit breaker защищает от cascade failures при проблемах с внешними API
+
+---
+
 ## [1.1.0] - 2026-05-01
 
 ### Added

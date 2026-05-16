@@ -1,69 +1,75 @@
-# 🚀 Быстрый старт на сервере
+# 🚀 Быстрый старт
 
-## Одна команда для полной установки
+## Docker (рекомендуется)
 
 ```bash
-git clone git@github.com:username/stock_signal_analyzer.git && cd stock_signal_analyzer && sudo ./install.sh
+git clone git@github.com:username/stock_signal_analyzer.git
+cd stock_signal_analyzer
+cp .env.example .env
+# Отредактируйте .env — минимум TELEGRAM_BOT_TOKEN и ADMIN_CHAT_ID
+./scripts/deploy.sh install   # → выбрать Docker
 ```
 
----
+Сервисы поднимутся автоматически: API (8000), бот, worker, beat, postgres, redis.
 
-## Что произойдёт
+## systemd (VPS без Docker)
 
-1. ✅ Создаст venv
-2. ✅ Установит все зависимости (Python пакеты)
-3. ✅ Создаст директории для данных
-4. ✅ Запросит ключи:
-   - Telegram Bot Token
-   - Tinkoff Token
-   - Finnhub API Key (опционально)
-5. ✅ Создаст .env файл
-6. ✅ Настроит systemd сервис
-7. ✅ Запустит бота в фоновом режиме
-
----
+```bash
+git clone git@github.com:username/stock_signal_analyzer.git
+cd stock_signal_analyzer
+./scripts/deploy.sh install   # → выбрать systemd
+```
 
 ## Проверка
 
 ```bash
-# Статус бота
-sudo systemctl status stock-signal-bot.service
+# Health API
+curl http://localhost:8000/health
 
-# Логи в реальном времени
-sudo journalctl -u stock-signal-bot.service -f
+# Анализ акции
+curl http://localhost:8000/analyze/AAPL
 
-# Отправить в Telegram
-/start
+# Статус Docker
+docker compose ps
+
+# Логи бота
+docker compose logs -f bot
 ```
-
----
 
 ## Управление
 
 ```bash
 # Перезапуск
-sudo systemctl restart stock-signal-bot.service
-
-# Остановка
-sudo systemctl stop stock-signal-bot.service
+./scripts/deploy.sh restart
 
 # Логи
-sudo journalctl -u stock-signal-bot.service -n 50
-```
+./scripts/deploy.sh logs
 
----
+# Остановка
+./scripts/deploy.sh stop
+
+# Тесты
+./scripts/deploy.sh tests
+```
 
 ## Обновление
 
 ```bash
-cd /root/stock_signal_analyzer
-sudo systemctl stop stock-signal-bot.service
-git pull
-source venv/bin/activate
-pip install -r requirements.txt --upgrade
-sudo systemctl start stock-signal-bot.service
+cd /path/to/stock_signal_analyzer
+./scripts/deploy.sh update
 ```
+
+## Зависимости
+
+| Компонент | Обязательно | Описание |
+|-----------|:-----------:|----------|
+| PostgreSQL | да | Основная БД (поднимается в Docker) |
+| Redis | да | Cache + rate limiter + Celery (поднимается в Docker) |
+| Telegram Bot Token | да | `@BotFather` |
+| Polygon API Key | опц. | US котировки и новости |
+| Finnhub API Key | опц. | US real-time и макро |
+| T-Bank Token | опц. | MOEX котировки |
 
 ---
 
-**Полная документация:** READY_TO_RUN.md
+**Полная документация:** [README.md](README.md)

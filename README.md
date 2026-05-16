@@ -13,8 +13,8 @@
   <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker" alt="Docker">
   <img src="https://img.shields.io/badge/AI-Ollama_LLM-orange" alt="AI">
   <img src="https://img.shields.io/badge/Markets-US_&_RU-green" alt="Markets">
-  <img src="https://img.shields.io/badge/Tests-106_passed-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/Version-2.3.1-purple" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-132_passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-2.5.0-purple" alt="Version">
 </p>
 
 ---
@@ -131,6 +131,7 @@ nano .env
 
 | Переменная | По умолчанию | Описание |
 |-----------|:---:|----------|
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis для cache + rate limiter (при отсутствии — in-memory fallback) |
 | `CELERY_BROKER_URL` | `redis://localhost:6379/0` | Redis для очереди |
 | `CELERY_RESULT_BACKEND` | `redis://localhost:6379/1` | Redis для результатов |
 
@@ -220,9 +221,13 @@ nano .env
 | `adaptive_weights.py` | IC-адаптация весов: ранговая корреляция Спирмена компонент с реальным PnL |
 | `llm_learning.py` | Самообучение: числовой IC-анализ + LLM паттерн-анализ побед/поражений |
 | `scheduler.py` | Фоновые задачи: автосбор, outcome check, learning cycle |
+| `cache.py` | Redis-backed cache с TTL для expensive вычислений (analyze, и др.) |
+| `circuit_breaker.py` | Circuit breaker для внешних API (Polygon, Finnhub, Yahoo, T-Bank) |
+| `rate_limiter.py` | Redis-backed sliding-window rate limiter per client |
 | `db.py` | PostgreSQL через SQLAlchemy: пользователи, сигналы, outcomes |
 | `subscriptions.py` | Тарифы Free/Pro/Premium и лимиты |
 | `risk_manager.py` | Sizing: Kelly criterion, vol targeting, drawdown control |
+| `polygon_data.py` | Интеграция с Polygon API (котировки, новости) |
 
 ---
 
@@ -370,8 +375,10 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 | `api` | 8000 | REST API (FastAPI) |
 | `worker` | — | Celery workers |
 | `beat` | — | Периодические задачи |
+| `cron` | — | Периодические задачи через cron (альтернатива beat) |
 | `postgres` | 5432 | PostgreSQL 16 |
-| `redis` | 6379 | Redis 7 |
+| `redis` | 6379 | Redis 7 (cache, rate limiter, Celery) |
+| `redis_data` | — | Persistent volume для Redis |
 
 ---
 
@@ -397,20 +404,43 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 │   ├── llm_learning.py              # Самообучение
 │   ├── scheduler.py                 # Фоновые задачи
 │   ├── db.py                        # PostgreSQL (SQLAlchemy)
+│   ├── cache.py                     # Redis-backed cache с TTL
+│   ├── circuit_breaker.py           # Circuit breaker для внешних API
+│   ├── rate_limiter.py            # Redis-backed sliding-window rate limiter
+│   ├── polygon_data.py              # Интеграция с Polygon API
 │   └── ...                          # 30+ модулей
 │
 ├── api/main.py                      # REST API (FastAPI)
 ├── telegram_bot.py                  # Telegram бот
+├── alembic/                         # Alembic миграции БД
+│   ├── env.py
+│   └── versions/
 ├── tools/backtest.py                # Бэктест v1
 ├── tools/backtest_v2.py             # Бэктест v2 (candle replay)
+├── .github/workflows/               # GitHub Actions CI/CD
+│   ├── ci.yml
+│   └── deploy.yml
 ├── docker-compose.yml
 ├── Dockerfile
+├── pyproject.toml                 # Ruff, mypy конфиг
 └── requirements*.txt
 ```
 
 ---
 
 ## ✅ Что нового
+
+### v2.5 (2026-05-16) — CI/CD, resilience, caching, миграции
+
+- **CI/CD pipeline** (GitHub Actions) — `ci.yml` (ruff, mypy, pytest, Docker build) + `deploy.yml` (auto-deploy на сервер по SSH)
+- **Redis-backed cache** (`cache.py`) — TTL-кэш для expensive вычислений (analyze, и др.); fallback на in-memory при отсутствии Redis
+- **Circuit breaker** (`circuit_breaker.py`) — CLOSED/OPEN/HALF_OPEN state machine для всех внешних API (Polygon, Finnhub, Yahoo, T-Bank); совместим с `@retry_with_backoff`
+- **Redis-backed rate limiter** (`rate_limiter.py`) — sliding-window rate limiter per client на sorted sets Redis; fallback на in-memory
+- **Alembic миграции** — production-ready schema management; startup пробует `alembic upgrade head`, fallback на `init_db()`
+- **Input validation** (`api/main.py`) — Pydantic validators: regex на символы, max_length=20, защита от path traversal (`..`, `/`, `\`)
+- **Cache layer для `/analyze`** — проверяет Redis перед `build_report`, сохраняет результат на 300с; ключ включает fast_mode и use_finnhub_ws
+- **pyproject.toml** — конфиг ruff с per-file-ignores для E402 (stenv import pattern)
+- Тесты: 106 → 132 passed
 
 ### v2.4 (2026-05-15) — Интерактивные настройки + архитектурные улучшения
 
@@ -471,7 +501,10 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 
 - `.env` хранится с правами `600` (только владелец)
 - PostgreSQL пароль генерируется автоматически
-- API rate limiting per IP + опциональный `X-API-Key`
+- API rate limiting per IP + опциональный `X-API-Key` (Redis-backed sliding window)
+- Input validation на всех endpoints (Pydantic regex, max_length, path traversal защита)
+- Circuit breaker на внешних API (Polygon, Finnhub, Yahoo, T-Bank) — быстрый fail при долгих ответах
+- Redis cache для `/analyze` с TTL 300с — снижает нагрузку на повторные запросы
 - Ollama Cloud API или локальный Ollama — данные не передаются третьим лицам
 - Токены не попадают в логи
 
@@ -484,5 +517,5 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 ---
 
 <p align="center">
-  <strong>Version 2.4.0</strong> • Updated 2026-05-15
+  <strong>Version 2.5.0</strong> • Updated 2026-05-16
 </p>
