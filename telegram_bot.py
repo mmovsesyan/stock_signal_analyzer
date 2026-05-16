@@ -1222,7 +1222,7 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send_price_for_symbol(update.message, sym)
 
 
-async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
+async def _cmd_signal_message_with_args(message, args: list[str], user_id: int | None = None) -> None:
     if not message:
         return
     sym, tape, ws, bad = sanitize_command_args(args)
@@ -1263,7 +1263,7 @@ async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
     )
     await message.reply_chat_action(action=ChatAction.TYPING)
 
-    uid = int(message.from_user.id) if message.from_user else 0
+    uid = user_id if user_id is not None else (int(message.from_user.id) if message.from_user else 0)
     prefs = load_prefs(uid)
 
     loop = asyncio.get_running_loop()
@@ -1439,7 +1439,7 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         if mode == "sig":
             await msg.reply_chat_action(action=ChatAction.TYPING)
-            await _cmd_signal_message_with_args(msg, [sym])
+            await _cmd_signal_message_with_args(msg, [sym], user_id=_uid(update))
         elif mode == "price":
             await msg.reply_chat_action(action=ChatAction.TYPING)
             await _send_price_for_symbol(msg, sym)
@@ -1459,7 +1459,10 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             uid = _uid(update)
             await _cmd_dashboard_message_with_args(msg, uid, [sym])
 
-        await query.edit_message_reply_markup(reply_markup=_pick_actions_markup(sym, group_id, page))
+        try:
+            await query.edit_message_reply_markup(reply_markup=_pick_actions_markup(sym, group_id, page))
+        except Exception:
+            pass
         return
 
 
