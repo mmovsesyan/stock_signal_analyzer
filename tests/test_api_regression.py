@@ -51,21 +51,20 @@ def test_normalize_tv_symbol_exchange_prefix_stripped():
 def test_rate_limit_tracks_request_after_cleanup():
     """After 60s gap, the new request itself must be counted."""
     import time
-    from api.main import _check_rate_limit, _rate_store
+    from stock_signal_analyzer.rate_limiter import _MemoryLimiter
 
+    limiter = _MemoryLimiter()
     client = "test-client-cleanup"
-    # clean slate
-    _rate_store.pop(client, None)
 
     # first request → should be allowed and recorded
-    assert _check_rate_limit(client) is True
-    assert len(_rate_store[client]) == 1
+    assert limiter.is_allowed(client, limit=3) is True
+    assert len(limiter._store[client]) == 1
 
     # simulate 60s gap by manipulating timestamps
     old_ts = time.time() - 61
-    _rate_store[client] = [old_ts]
+    limiter._store[client] = [old_ts]
 
     # next request after gap → should be allowed and recorded (not lost)
-    assert _check_rate_limit(client) is True
-    assert len(_rate_store[client]) == 1
-    assert _rate_store[client][0] > old_ts
+    assert limiter.is_allowed(client, limit=3) is True
+    assert len(limiter._store[client]) == 1
+    assert limiter._store[client][0] > old_ts
