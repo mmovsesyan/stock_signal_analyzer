@@ -21,6 +21,7 @@ import requests
 
 from .news_feeds import NewsItem
 from .retry_utils import RateLimiter, retry_with_backoff
+from .circuit_breaker import circuit_breaker
 
 _log = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ class PolygonQuote:
     detail: str
 
 
+@circuit_breaker("polygon")
 @retry_with_backoff(max_retries=2, initial_delay=2.0, retry_on=(requests.RequestException,))
 def fetch_prev_close(symbol: str, api_key: str | None = None, timeout: float = 10.0) -> PolygonQuote:
     """
@@ -145,6 +147,7 @@ def fetch_prev_close(symbol: str, api_key: str | None = None, timeout: float = 1
     )
 
 
+@circuit_breaker("polygon")
 @retry_with_backoff(max_retries=2, initial_delay=2.0, retry_on=(requests.RequestException,))
 def fetch_snapshot(symbol: str, api_key: str | None = None, timeout: float = 10.0) -> PolygonQuote:
     """
@@ -193,6 +196,7 @@ def fetch_snapshot(symbol: str, api_key: str | None = None, timeout: float = 10.
 # ── Исторические свечи ───────────────────────────────────────────────────────
 
 
+@circuit_breaker("polygon")
 @retry_with_backoff(max_retries=2, initial_delay=2.0, retry_on=(requests.RequestException,))
 def fetch_daily_bars(
     symbol: str,
@@ -243,6 +247,7 @@ def fetch_daily_bars(
     return df
 
 
+@circuit_breaker("polygon")
 @retry_with_backoff(max_retries=2, initial_delay=2.0, retry_on=(requests.RequestException,))
 def fetch_intraday_bars(
     symbol: str,
@@ -297,6 +302,7 @@ def fetch_intraday_bars(
 # ── Новости ──────────────────────────────────────────────────────────────────
 
 
+@circuit_breaker("polygon")
 @retry_with_backoff(max_retries=2, initial_delay=2.0, retry_on=(requests.RequestException,))
 def fetch_ticker_news(
     symbol: str,
@@ -362,6 +368,7 @@ class PolygonTickerDetails:
     currency: str
 
 
+@circuit_breaker("polygon")
 @retry_with_backoff(max_retries=2, initial_delay=2.0, retry_on=(requests.RequestException,))
 def fetch_ticker_details(
     symbol: str,
