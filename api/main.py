@@ -40,6 +40,7 @@ from stock_signal_analyzer.market_data import fetch_snapshot_with_meta
 from stock_signal_analyzer.trade_plan import trade_plan_to_dict
 from stock_signal_analyzer.live_price import fetch_live_price
 from stock_signal_analyzer.config_validator import validate_telegram_config, validate_api_config
+from stock_signal_analyzer.universe import RU_BLUE_CHIPS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
@@ -85,14 +86,15 @@ _rate_store: dict[str, list[float]] = defaultdict(list)
 
 def _check_rate_limit(client_id: str) -> bool:
     now = time.time()
-    calls = _rate_store[client_id]
-    _rate_store[client_id] = [t for t in calls if now - t < 60]
-    if not _rate_store[client_id]:
-        del _rate_store[client_id]
+    calls = _rate_store.get(client_id, [])
+    recent = [t for t in calls if now - t < 60]
+    if not recent:
+        _rate_store[client_id] = [now]
         return True
-    if len(_rate_store[client_id]) >= _RATE_LIMIT:
+    if len(recent) >= _RATE_LIMIT:
         return False
-    _rate_store[client_id].append(now)
+    recent.append(now)
+    _rate_store[client_id] = recent
     return True
 
 
@@ -165,7 +167,7 @@ def _get_live_price(symbol: str) -> float | None:
 async def health():
     return HealthResponse(
         status="ok",
-        version="2.0.0",
+        version="1.0.0",
         uptime_sec=round(time.time() - _start_time, 1),
     )
 
@@ -395,8 +397,8 @@ def _normalize_tv_symbol(raw: str) -> str:
         return f"{base}-USD"
     if sym.endswith("USD") and not sym.endswith("-USD") and len(sym) > 3:
         return f"{sym}-USD" if sym != "USD" else sym
-    # Российские тикеры: SBER → SBER.ME
-    if sym.isalpha() and len(sym) <= 5 and sym not in ("AAPL", "MSFT", "GOOGL", "TSLA", "AMZN", "META", "NVDA"):
+    # Российские тикеры: только известные MOEX голубые фишки → .ME
+    if sym.isalpha() and len(sym) <= 5 and sym in RU_BLUE_CHIPS:
         return f"{sym}.ME"
     return sym
 
