@@ -126,13 +126,16 @@ do_configure() {
     header "Настройка API ключей и параметров"
 
     # Загрузить существующие
-    local cur_tg="" cur_pg="" cur_fh="" cur_tk="" cur_pgpass=""
+    local cur_tg="" cur_pg="" cur_fh="" cur_tk="" cur_pgpass="" cur_admin="" cur_admin_user="" cur_contact=""
     if [ -f "$ENV_FILE" ]; then
         cur_tg=$(grep -oP '(?<=^TELEGRAM_BOT_TOKEN=).+' "$ENV_FILE" 2>/dev/null || true)
         cur_pg=$(grep -oP '(?<=^POLYGON_API_KEY=).+' "$ENV_FILE" 2>/dev/null || true)
         cur_fh=$(grep -oP '(?<=^FINNHUB_API_KEY=).+' "$ENV_FILE" 2>/dev/null || true)
         cur_tk=$(grep -oP '(?<=^TINKOFF_INVEST_TOKEN=).+' "$ENV_FILE" 2>/dev/null || true)
         cur_pgpass=$(grep -oP '(?<=^POSTGRES_PASSWORD=).+' "$ENV_FILE" 2>/dev/null || true)
+        cur_admin=$(grep -oP '(?<=^ADMIN_CHAT_ID=).+' "$ENV_FILE" 2>/dev/null || true)
+        cur_admin_user=$(grep -oP '(?<=^ADMIN_USER_ID=).+' "$ENV_FILE" 2>/dev/null || true)
+        cur_contact=$(grep -oP '(?<=^ADMIN_CONTACT_INFO=).+' "$ENV_FILE" 2>/dev/null || true)
     fi
 
     echo "  Для каждого сервиса ниже указана ссылка для регистрации."
@@ -181,7 +184,22 @@ do_configure() {
     fi
     echo ""
 
-    # ── 1c. Admin Contact Info ──
+    # ── 1c. Admin User ID ──
+    echo -e "  ${BOLD}1c. Ваш Telegram User ID${NC} ${YELLOW}(для админ-команд бота)${NC}"
+    echo "     Зачем: бот распознаёт админа по этому ID для команд /approve, /deny, /users"
+    echo "     Как узнать: отправьте /start боту @userinfobot"
+    echo "     Ссылка: https://t.me/userinfobot"
+    echo ""
+    local cur_admin_user=""
+    if [ -f "$ENV_FILE" ]; then
+        cur_admin_user=$(grep -oP '(?<=^ADMIN_USER_ID=).+' "$ENV_FILE" 2>/dev/null || true)
+    fi
+    local new_admin_user
+    new_admin_user=$(ask_input "Ваш Telegram User ID (Enter = пропустить)" "$cur_admin_user")
+    if [ -n "$new_admin_user" ]; then cur_admin_user="$new_admin_user"; fi
+    echo ""
+
+    # ── 1d. Admin Contact Info ──
     echo -e "  ${BOLD}1c. Ваши контактные данные для новых пользователей${NC} ${YELLOW}(опционально)${NC}"
     echo "     Показываются новым пользователям при выборе плана."
     echo "     Формат: @username или t.me/username или email"
@@ -243,6 +261,18 @@ do_configure() {
     local new_tk
     new_tk=$(ask_input "T-Bank Token (Enter = пропустить)" "$mask_tk")
     if [[ "$new_tk" != "$mask_tk" ]] && [ -n "$new_tk" ]; then cur_tk="$new_tk"; fi
+    echo ""
+
+    # ── 4a. T-Bank Volume (доп. свечи для VWAP/POC) ──
+    local cur_tbank_vol="1"
+    if [ -f "$ENV_FILE" ]; then
+        cur_tbank_vol=$(grep -oP '(?<=^SSA_TBANK_VOLUME=).+' "$ENV_FILE" 2>/dev/null || echo "1")
+    fi
+    if ask_yes_no "Загружать доп. свечи через Т-Банк (VWAP/POC)?" "${cur_tbank_vol}"; then
+        cur_tbank_vol="1"
+    else
+        cur_tbank_vol="0"
+    fi
     echo ""
 
     # ── 4b. MAX мессенджер (опционально) ──
@@ -364,6 +394,7 @@ do_configure() {
             OLLAMA_HOST="http://ollama:11434"
             SIGNAL_LOG="/data/signals/signals.jsonl"
             DATA_DIR="/data"
+            SCHEDULER_MODE="celery"
             ;;
         1)  # systemd
             DB_HOST="localhost"
@@ -371,6 +402,7 @@ do_configure() {
             OLLAMA_HOST="http://localhost:11434"
             SIGNAL_LOG="/var/lib/stock_signal_analyzer/signals.jsonl"
             DATA_DIR="/var/lib/stock_signal_analyzer"
+            SCHEDULER_MODE="apscheduler"
             ;;
         *)  # test mode
             DB_HOST="localhost"
@@ -378,8 +410,13 @@ do_configure() {
             OLLAMA_HOST="http://localhost:11434"
             SIGNAL_LOG="$PROJECT_DIR/data/signals.jsonl"
             DATA_DIR="$PROJECT_DIR/data"
+            SCHEDULER_MODE="disabled"
             ;;
     esac
+
+    # Генерация секретов
+    local api_secret
+    api_secret=$(openssl rand -hex 32 2>/dev/null || date +%s | sha256sum | head -c 64)
 
     # Записать .env
     cat > "$ENV_FILE" << ENVEOF
@@ -389,6 +426,7 @@ do_configure() {
 # ── Telegram ──────────────────────────────────
 TELEGRAM_BOT_TOKEN=${cur_tg}
 ADMIN_CHAT_ID=${cur_admin}
+ADMIN_USER_ID=${cur_admin_user}
 ADMIN_CONTACT_INFO=${cur_contact}
 
 # ── API ключи ─────────────────────────────────
@@ -408,21 +446,36 @@ OLLAMA_MODEL=${ollama_model}
 OLLAMA_CLOUD_API_KEY=${ollama_cloud_key}
 OLLAMA_CLOUD_MODEL=${ollama_model}
 LLM_SENTIMENT=${llm_enabled}
+LLM_LEARNING=${llm_enabled}
+LLM_LEARNING_MIN=20
+LLM_CACHE_TTL=3600
 
 # ── Database ──────────────────────────────────
 POSTGRES_PASSWORD=${cur_pgpass}
 DATABASE_URL=postgresql://ssa:${cur_pgpass}@${DB_HOST}:5432/stock_signals
 
 # ── Redis ─────────────────────────────────────
+REDIS_URL=redis://${REDIS_HOST}:6379/0
 CELERY_BROKER_URL=redis://${REDIS_HOST}:6379/0
 CELERY_RESULT_BACKEND=redis://${REDIS_HOST}:6379/1
 
+# ── API (FastAPI) ─────────────────────────────
+API_SECRET_KEY=${api_secret}
+API_RATE_LIMIT_PER_MIN=30
+ALLOWED_ORIGINS=http://localhost:3000
+
 # ── Автоматизация ─────────────────────────────
+SCHEDULER_MODE=${SCHEDULER_MODE}
 COLLECT_INTERVAL_SEC=${collect_sec}
 NOTIFY_INTERVAL_SEC=3600
+OUTCOME_INTERVAL_SEC=3600
 LEARN_INTERVAL_SEC=21600
+CLEANUP_INTERVAL_SEC=86400
+HEALTH_CHECK_INTERVAL_SEC=300
 NOTIFY_MIN_TIER=A
-API_RATE_LIMIT_PER_MIN=30
+
+# ── Т-Банк ────────────────────────────────────
+SSA_TBANK_VOLUME=${cur_tbank_vol}
 
 # ── Пути ──────────────────────────────────────
 SSA_SIGNAL_LOG=${SIGNAL_LOG}
@@ -591,6 +644,19 @@ do_install() {
     else
         do_status_short
     fi
+
+    # ── GitHub Actions hint ──
+    echo ""
+    echo -e "  ${BOLD}GitHub Actions — авто-деплой (опционально):${NC}"
+    echo "    1) Сгенерируйте SSH-ключ: ssh-keygen -t ed25519 -f /tmp/gh_deploy_key -N \"\""
+    echo "    2) Добавьте публичный ключ на сервер:"
+    echo "       ssh root@ВАШ_СЕРВЕР \"mkdir -p ~/.ssh && echo '\$(cat /tmp/gh_deploy_key.pub)' >> ~/.ssh/authorized_keys\""
+    echo "    3) Добавьте секреты в GitHub (Settings → Secrets → Actions):"
+    echo "       SERVER_HOST=ВАШ_СЕРВЕР"
+    echo "       SERVER_USER=root"
+    echo "       SERVER_SSH_KEY=<содержимое /tmp/gh_deploy_key>"
+    echo "    После этого git push origin main → авто-деплой на сервер"
+    echo ""
 }
 
 do_install_systemd() {
