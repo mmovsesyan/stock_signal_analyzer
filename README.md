@@ -461,10 +461,14 @@ ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' 
 
 ## ✅ Что нового
 
-### v2.5.1 (2026-05-16) — Hotfix: learning state, outcomes bloat, yfinance rate limit
+### v2.5.1 (2026-05-16) — Hotfix: learning state, outcomes bloat, unified price fetcher
 
 - **llm_learning.py** — сохраняет `learning_state.json` даже при 0 outcomes, устраняя бесконечный цикл сообщения «нет данных»
-- **outcome_tracker.py** — больше не перезаписывает открытые сигналы в `outcomes.jsonl` при каждом запуске (файл перестаёт раздуваться); добавлен `_yf_retry()` с exponential backoff для yfinance rate limit; `max_workers` снижен с 8 до 2
+- **outcome_tracker.py** — больше не перезаписывает открытые сигналы в `outcomes.jsonl` при каждом запуске (файл перестаёт раздуваться); `max_workers` снижен с 8 до 2
+- **price_fetcher.py** — новый unified data source с fallback chain:
+  - `.ME` (российские): **Т-Банк (приоритет)** → yfinance
+  - `US`: Polygon → Finnhub → yfinance
+  - outcome_tracker.py теперь использует price_fetcher вместо прямых yfinance вызовов
 - **backtest_v2.py** — добавлен retry с exponential backoff при «Too Many Requests» от yfinance
 - **deploy.sh** — `do_learning()` работает корректно через `docker compose exec`; добавлена проверка T-Bank SDK после сборки образов
 - **T-Bank SDK** — проверка импорта во всех Docker-контейнерах (`api`, `worker`, `bot`)
