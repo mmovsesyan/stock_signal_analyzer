@@ -389,11 +389,13 @@ def run_learning_cycle(force: bool = False) -> LearningState:
 
     if len(records) < _MIN_OUTCOMES:
         _log.info("Learning: недостаточно outcomes (%d/%d)", len(records), _MIN_OUTCOMES)
-        return LearningState(
+        state = LearningState(
             total_outcomes_analyzed=len(records),
             last_updated=datetime.now(timezone.utc).isoformat(),
             recommendations=[f"Нужно минимум {_MIN_OUTCOMES} закрытых сигналов для обучения"],
         )
+        _save_learning_state(state)
+        return state
 
     # Проверяем, изменились ли данные
     current_hash = _data_hash(records)

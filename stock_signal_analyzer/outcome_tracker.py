@@ -487,18 +487,18 @@ class OutcomeTracker:
                     )
 
         # Последовательно сохраняем результаты (файловая запись — не thread-safe)
+        # Сохраняем только закрытые сигналы, чтобы не раздувать файл.
         closed_count = 0
         for signal in signals:
             signal_id = self._get_signal_id(signal)
             outcome = outcomes_map.get(signal_id)
-            if outcome:
+            if outcome and outcome.outcome != 'open':
                 self._save_outcome(outcome, signal)
-                if outcome.outcome != 'open':
-                    closed_count += 1
-                    _log.info(
-                        f"✓ {outcome.symbol}: {outcome.outcome} "
-                        f"(PnL: {outcome.pnl_pct:+.2f}%, {outcome.hold_days} дней)"
-                    )
+                closed_count += 1
+                _log.info(
+                    f"✓ {outcome.symbol}: {outcome.outcome} "
+                    f"(PnL: {outcome.pnl_pct:+.2f}%, {outcome.hold_days} дней)"
+                )
 
         _log.info(f"Закрыто сигналов: {closed_count}/{len(signals)}")
 
