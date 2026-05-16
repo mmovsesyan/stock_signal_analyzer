@@ -93,6 +93,10 @@ def analyze_ticker(self, symbol: str, user_id: int | None = None, fast_mode: boo
 
         # Сохранить в БД (если доступна)
         try:
+            from .signal_log import build_record_from_report
+            record = build_record_from_report(report, report.ref_price, "USD")
+            if user_id is not None:
+                record["user_id"] = user_id
             _save_signal_to_db(record, user_id)
         except Exception:
             pass
