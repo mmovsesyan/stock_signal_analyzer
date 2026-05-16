@@ -32,14 +32,8 @@ RUN pip install --no-cache-dir tinkoff-investments 2>/dev/null || \
     echo "T-Bank SDK not available at build time - will retry at startup"
 
 # Скрипт автоустановки SDK при старте (если не установился при сборке)
-RUN echo '#!/bin/bash\n\
-set -e\n\
-if ! python -c "import tinkoff.invest" 2>/dev/null; then\n\
-  echo "Installing T-Bank SDK..."\n\
-  pip install -q tinkoff-investments 2>/dev/null || \\n\
-  pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments || true\n\
-fi\n\
-exec "$@"' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Копировать код приложения
 COPY . .
