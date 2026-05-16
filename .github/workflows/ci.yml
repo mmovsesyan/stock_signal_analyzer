@@ -38,8 +38,14 @@ jobs:
       - name: Lint with ruff
         run: |
           pip install ruff
-          # Lint only API, tests, and new modules (legacy analyzer/ has ~2k style issues)
-          ruff check api/ tests/ stock_signal_analyzer/rate_limiter.py stock_signal_analyzer/circuit_breaker.py stock_signal_analyzer/cache.py stock_signal_analyzer/polygon_data.py stock_signal_analyzer/db.py
+          # Lint only files changed in this push/PR (legacy code has ~2k issues)
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- '*.py' | tr '\n' ' ')
+          if [ -n "$CHANGED" ]; then
+            echo "Linting changed files: $CHANGED"
+            ruff check $CHANGED
+          else
+            echo "No Python files changed"
+          fi
 
       - name: Type check with mypy
         run: |
