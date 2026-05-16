@@ -54,7 +54,7 @@ from stock_signal_analyzer.outside_signals import scan_strong_outside_watchlist
 from stock_signal_analyzer.signal_log import log_path_from_env
 from stock_signal_analyzer.outcome_tracker import OutcomeTracker
 from stock_signal_analyzer.live_price import fetch_live_price
-from stock_signal_analyzer.config_validator import validate_telegram_config
+from stock_signal_analyzer.config_validator import validate_symbol, validate_telegram_config
 from stock_signal_analyzer.adaptive_weights import compute_adaptive_weights
 from stock_signal_analyzer.telegram_format import (
     esc_html as _esc,
@@ -1148,6 +1148,11 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def _send_price_for_symbol(message, sym: str) -> None:
     if not message:
         return
+    try:
+        sym = validate_symbol(sym)
+    except ValueError as exc:
+        await message.reply_text(f"⚠️ {exc}", parse_mode=ParseMode.HTML)
+        return
     loop = asyncio.get_running_loop()
     try:
         snap, _info, profile = await loop.run_in_executor(
@@ -1211,6 +1216,8 @@ async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=_reply_markup_for_action("price"),
         )
         return
+    from stock_signal_analyzer.universe import resolve_symbol_market
+    sym = resolve_symbol_market(sym)
     _clear_pending_action(context)
     await _send_price_for_symbol(update.message, sym)
 
@@ -1225,27 +1232,30 @@ async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
             parse_mode=ParseMode.HTML,
         )
         return
+    try:
+        sym = validate_symbol(sym)
+    except ValueError as exc:
+        await message.reply_text(f"⚠️ {exc}", parse_mode=ParseMode.HTML)
+        return
 
-    # Автодетекция рынка: если тикер без суффикса — проверить РФ и US списки
-    from stock_signal_analyzer.universe import RU_BLUE_CHIPS, US_BLUE_CHIPS, BOND_ETFS_AND_FUNDS
-    if "." not in sym and "-" not in sym:
-        base = sym.upper()
-        if base in RU_BLUE_CHIPS:
-            # Российский тикер без .ME — добавить автоматически
-            sym = f"{base}.ME"
-            args = [sym] + args[1:]
-        elif base not in US_BLUE_CHIPS and base not in BOND_ETFS_AND_FUNDS:
-            # Неизвестный тикер — предложить варианты
-            suggestions = []
-            if f"{base}.ME" != sym:
-                suggestions.append(f"<code>{base}.ME</code> (Мосбиржа)")
-            suggestions.append(f"<code>{base}</code> (US)")
-            await message.reply_text(
-                f"🔍 Тикер <code>{_esc(base)}</code> не найден в списках.\n"
-                f"Попробуйте: {' или '.join(suggestions)}",
-                parse_mode=ParseMode.HTML,
-            )
-            return
+    # Автодетекция рынка: добавить .ME для российских тикеров
+    from stock_signal_analyzer.universe import (
+        BOND_ETFS_AND_FUNDS,
+        RU_BLUE_CHIPS,
+        US_BLUE_CHIPS,
+        resolve_symbol_market,
+    )
+    sym = resolve_symbol_market(sym)
+    base = sym.replace(".ME", "").upper()
+    if "." not in sym and "-" not in sym and base not in US_BLUE_CHIPS and base not in BOND_ETFS_AND_FUNDS:
+        # Неизвестный тикер без суффикса — предложить варианты
+        suggestions = [f"<code>{base}.ME</code> (Мосбиржа)", f"<code>{base}</code> (US)"]
+        await message.reply_text(
+            f"🔍 Тикер <code>{_esc(base)}</code> не найден в списках.\n"
+            f"Попробуйте: {' или '.join(suggestions)}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     status_msg = await message.reply_text(
         f"⏳ Анализирую <b>{_esc(sym)}</b>… Это займёт 10-30 секунд.",
@@ -1789,6 +1799,8 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
         _clear_pending_action(context)
+        from stock_signal_analyzer.universe import resolve_symbol_market
+        sym = resolve_symbol_market(sym)
         await _send_price_for_symbol(update.message, sym)
         return
 
@@ -1804,7 +1816,9 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
         _clear_pending_action(context)
-        await _cmd_signal_message_with_args(update.message, args)
+        from stock_signal_analyzer.universe import resolve_symbol_market
+        sym = resolve_symbol_market(sym)
+        await _cmd_signal_message_with_args(update.message, [sym])
         return
 
     if pending == "add_custom":
@@ -1812,11 +1826,12 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not uid:
             return
 
-        # Нормализуем и добавляем тикеры
+        # Нормализуем и добавляем тикеры (автодетекция рынка)
         prefs = load_prefs(uid)
         added = []
+        from stock_signal_analyzer.universe import resolve_symbol_market
         for arg in args:
-            normalized = normalize_symbol(arg)
+            normalized = resolve_symbol_market(normalize_symbol(arg) or arg)
             if normalized and normalized not in prefs.autocollect_tickers:
                 prefs.autocollect_tickers.append(normalized)
                 added.append(normalized)
@@ -2673,6 +2688,18 @@ async def post_init(application: Application) -> None:
         log.info("JobQueue: самообучение каждые %s с", learn_sec)
 
 
+async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler: log all unhandled exceptions and notify the user."""
+    log.error("Telegram update caused error: %s (update: %s)", context.error, update)
+    if update and isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Произошла ошибка при обработке запроса. Команда не выполнена."
+            )
+        except Exception:
+            pass
+
+
 def main() -> int:
     import signal as _sig
 
@@ -2698,6 +2725,7 @@ def main() -> int:
         log.info("Telegram API через SOCKS5 прокси: %s", proxy_url.split("@")[-1] if "@" in proxy_url else "***")
 
     app = builder.build()
+    app.add_error_handler(_error_handler)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("menu", cmd_start))

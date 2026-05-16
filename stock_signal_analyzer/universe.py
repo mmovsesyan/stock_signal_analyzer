@@ -157,6 +157,22 @@ def _base_symbol(sym: str) -> str:
     return s
 
 
+def resolve_symbol_market(symbol: str) -> str:
+    """Auto-detect market and append .ME suffix for Russian tickers if missing.
+
+    Rules:
+        - If suffix already present (.ME / -) → return as-is.
+        - If base ticker is in RU_BLUE_CHIPS → append .ME.
+        - Otherwise → return unchanged (assumed US / global).
+    """
+    sym = symbol.strip().upper()
+    if "." in sym or "-" in sym:
+        return sym
+    if sym in RU_BLUE_CHIPS:
+        return f"{sym}.ME"
+    return sym
+
+
 def classify_instrument(symbol: str, info: dict[str, Any] | None = None) -> InstrumentProfile:
     sym = symbol.strip().upper()
     base = _base_symbol(sym)

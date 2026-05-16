@@ -18,6 +18,7 @@ import stenv
 
 stenv.load_project_env()
 
+from stock_signal_analyzer.config_validator import validate_symbol
 from stock_signal_analyzer.engine import build_report
 
 
@@ -115,6 +116,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Добавить к анализу объёма ленту сделок Finnhub (tick rule; нужен ключ; US)",
     )
     args = p.parse_args(argv)
+
+    try:
+        args.symbol = validate_symbol(args.symbol)
+    except ValueError as exc:
+        print(f"Ошибка: {exc}", file=sys.stderr)
+        return 1
 
     if args.interval < 60:
         print("Интервал < 60 с не рекомендуется: ленты и котировки могут блокировать частые запросы.", file=sys.stderr)

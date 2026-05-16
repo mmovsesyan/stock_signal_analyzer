@@ -13,9 +13,33 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from .circuit_breaker import CircuitBreaker, CircuitOpenError
 from .universe import InstrumentProfile, classify_instrument, history_period_for_profile
 
 _log = logging.getLogger(__name__)
+
+# Circuit breaker for Yahoo Finance (primary data source)
+_yf_circuit = CircuitBreaker(
+    name="yahoo_finance",
+    failure_threshold=3,
+    recovery_timeout=60.0,
+    expected_exception=(Exception,),
+)
+
+
+@_yf_circuit
+def _fetch_yf_data(ysym: str, period: str) -> tuple[dict[str, Any], pd.DataFrame]:
+    """Fetch Yahoo Finance info and history with circuit breaker protection."""
+    t = yf.Ticker(ysym)
+    info: dict[str, Any] = {}
+    try:
+        info = t.info or {}
+    except Exception:
+        pass
+    hist = t.history(period=period, interval="1d", auto_adjust=True)
+    return info, hist
+
+
 _CACHE_MAX_SIZE = 200
 _CACHE: dict[str, tuple[tuple[Any, Any, Any], float]] = {}
 _CACHE_TTL = 300  # 5 минут
@@ -222,14 +246,26 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
             _cache_set(sym, result)
             return result
 
-    t = yf.Ticker(ysym)
+    info: dict[str, Any] = {}
+    hist = pd.DataFrame()
     try:
-        info = t.info or {}
-    except Exception:
-        pass
+        info, hist = _fetch_yf_data(ysym, "1y")
+    except CircuitOpenError:
+        _log.warning("Yahoo Finance circuit breaker OPEN for %s — skipping YF.", sym)
+        from .admin_alerts import notify_admin
+        notify_admin(
+            f"Yahoo Finance circuit breaker OPEN for {sym}. Data source degraded.",
+            alert_type="yf_circuit_open",
+        )
+
     profile = classify_instrument(sym, info)
     period = history_period_for_profile(profile)
-    hist = t.history(period=period, interval="1d", auto_adjust=True)
+    if hist.empty or period != "1y":
+        try:
+            info, hist = _fetch_yf_data(ysym, period)
+        except CircuitOpenError:
+            _log.warning("Yahoo Finance circuit breaker OPEN for %s (period=%s) — skipping YF.", sym, period)
+            info, hist = {}, pd.DataFrame()
 
     # Fallback на T-Bank API для РФ-тикеров
     if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and sym.endswith(".ME"):
@@ -328,21 +364,20 @@ def fetch_history(symbol: str, period: str = "6mo", interval: str = "1d") -> Tic
                 history=tb_hist,
             )
 
-    t = yf.Ticker(ysym)
-    hist = t.history(period=period, interval=interval, auto_adjust=True)
+    info: dict[str, Any] = {}
+    hist = pd.DataFrame()
+    try:
+        info, hist = _fetch_yf_data(ysym, period)
+    except CircuitOpenError:
+        _log.warning("Yahoo Finance circuit breaker OPEN for %s — skipping YF.", sym)
+
     if hist is None or hist.empty:
         raise ValueError(
             f"Нет данных по тикеру {sym}. Проверьте биржу/суффикс (например SBER.ME для Мосбиржи)."
         )
     last = float(hist["Close"].iloc[-1])
-    currency = "USD"
-    name = sym
-    try:
-        info = t.info or {}
-        currency = str(info.get("currency") or currency)
-        name = str(info.get("longName") or info.get("shortName") or name)
-    except Exception:
-        pass
+    currency = str(info.get("currency") or "USD")
+    name = str(info.get("longName") or info.get("shortName") or sym)
     return TickerSnapshot(
         symbol=sym,
         last_close=last,

@@ -5,10 +5,31 @@
 """
 from __future__ import annotations
 
-import os
 import logging
+import os
+import re
 
 _log = logging.getLogger(__name__)
+
+_SYMBOL_RE = re.compile(r"^[A-Z0-9.\-]{1,20}$", re.IGNORECASE)
+
+
+def validate_symbol(symbol: str) -> str:
+    """Validate and normalize a ticker symbol.
+
+    Raises:
+        ValueError: if symbol is empty, too long, or contains illegal characters.
+    """
+    sym = symbol.strip().upper()
+    if not sym:
+        raise ValueError("Symbol cannot be empty.")
+    if not _SYMBOL_RE.match(sym):
+        raise ValueError(
+            f"Invalid symbol: {sym}. Only letters, numbers, dot, and hyphen allowed (max 20 chars)."
+        )
+    if ".." in sym or sym.startswith(("-", ".")) or sym.endswith("-"):
+        raise ValueError(f"Invalid symbol format: {sym}.")
+    return sym
 
 _REQUIRED_VARS = [
     "TELEGRAM_BOT_TOKEN",

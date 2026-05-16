@@ -462,29 +462,51 @@ def _gather_inputs(
     levels = compute_key_levels(hist)
 
     # ── Quant models ──
+    quant_failures: list[str] = []
     try:
         mtf_mom = analyze_mtf_momentum(close)
     except Exception as exc:
-        _log.debug("MTF momentum failed: %s", exc)
-        mtf_mom = None
+        _log.warning("MTF momentum failed for %s: %s", symbol, exc)
+        quant_failures.append(f"MTF momentum: {exc}")
+        mtf_mom = MtfMomentumResult(
+            score=0.0, mom_1m=0.0, mom_3m=0.0, mom_6m=0.0, mom_12m=0.0,
+            consistency=0.0, detail=f"MTF momentum unavailable: {exc}",
+        )
     try:
         zscore_res = analyze_zscore(close)
     except Exception as exc:
-        _log.debug("Z-score failed: %s", exc)
-        zscore_res = None
+        _log.warning("Z-score failed for %s: %s", symbol, exc)
+        quant_failures.append(f"Z-score: {exc}")
+        zscore_res = ZScoreResult(
+            z_20=0.0, z_50=0.0, composite=0.0, extreme=False,
+            detail=f"Z-score unavailable: {exc}",
+        )
     try:
         vol_regime_res = analyze_vol_regime(close)
     except Exception as exc:
-        _log.debug("Vol regime failed: %s", exc)
-        vol_regime_res = None
+        _log.warning("Vol regime failed for %s: %s", symbol, exc)
+        quant_failures.append(f"Vol regime: {exc}")
+        vol_regime_res = VolRegimeResult(
+            current_vol=0.0, median_vol=0.0, vol_ratio=1.0, regime="normal",
+            risk_scalar=1.0, detail=f"Vol regime unavailable: {exc}",
+        )
 
     trend_str_res: TrendStrengthResult | None = None
     if all(c in hist.columns for c in ("High", "Low")):
         try:
             trend_str_res = analyze_trend_strength(close, hist["High"], hist["Low"])
         except Exception as exc:
-            _log.debug("Trend strength failed: %s", exc)
-            trend_str_res = None
+            _log.warning("Trend strength failed for %s: %s", symbol, exc)
+            quant_failures.append(f"Trend strength: {exc}")
+            trend_str_res = TrendStrengthResult(
+                score=0.0, breakout_20=False, breakout_55=False, ma_stack=0.0, detail=f"Trend strength unavailable: {exc}",
+            )
+    if quant_failures:
+        from .admin_alerts import notify_admin
+        notify_admin(
+            f"Quant model failures for {symbol}:\n" + "\n".join(quant_failures),
+            alert_type="quant_models",
+        )
 
     try:
         market_regime = detect_market_regime(hist)
@@ -529,8 +551,12 @@ def _gather_inputs(
             wn *= _learning_adj.get("news", 1.0)
             # volume не в основных весах, но можно скорректировать news/tech
             wt, wm, wn, wi = _normalize_weights(wt, wm, wn, wi)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning("LLM learning weight adjustments failed for %s: %s", symbol, exc)
+        from .admin_alerts import notify_admin
+        notify_admin(
+            f"LLM learning failed for {symbol}: {exc}", alert_type="llm_learning"
+        )
 
     # ── Актуальная цена (real-time) ──
     live_price = fetch_live_price(snap.symbol)
