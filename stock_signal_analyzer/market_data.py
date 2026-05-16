@@ -19,17 +19,31 @@ from .universe import InstrumentProfile, classify_instrument, history_period_for
 _log = logging.getLogger(__name__)
 
 # Circuit breaker for Yahoo Finance (primary data source)
+# Tuned for batch scans: higher threshold + longer recovery to survive
+# rate-limit spikes during scheduler collection of ~30 tickers.
 _yf_circuit = CircuitBreaker(
     name="yahoo_finance",
-    failure_threshold=3,
-    recovery_timeout=60.0,
+    failure_threshold=15,
+    recovery_timeout=180.0,
     expected_exception=(Exception,),
 )
+
+# Global YF request throttle to avoid rate-limiting during batch scans
+_YF_LAST_CALL: float = 0.0
+_YF_MIN_DELAY: float = 0.25  # 250 ms between YF requests
+_yf_rate_lock = threading.Lock()
 
 
 @_yf_circuit
 def _fetch_yf_data(ysym: str, period: str) -> tuple[dict[str, Any], pd.DataFrame]:
     """Fetch Yahoo Finance info and history with circuit breaker protection."""
+    global _YF_LAST_CALL
+    with _yf_rate_lock:
+        elapsed = time.time() - _YF_LAST_CALL
+        if elapsed < _YF_MIN_DELAY:
+            time.sleep(_YF_MIN_DELAY - elapsed)
+        _YF_LAST_CALL = time.time()
+
     t = yf.Ticker(ysym)
     info: dict[str, Any] = {}
     try:

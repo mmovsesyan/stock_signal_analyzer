@@ -140,6 +140,8 @@ def run_signal_collection() -> dict[str, Any]:
                 collected += 1
             except Exception:
                 errors += 1
+            # Throttle to avoid hammering Yahoo Finance during batch scans
+            time.sleep(0.3)
 
         _health_update(last_collect=datetime.now(timezone.utc).isoformat())
         _log.info("Scheduler: collection done (%d collected, %d errors)", collected, errors)
