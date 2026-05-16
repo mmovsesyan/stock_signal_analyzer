@@ -244,10 +244,16 @@ def compute_adaptive_weights() -> AdaptiveWeightsResult:
     ic_sum = sum(max(0.01, abs(v)) for v in ic_scores.values())
     if ic_sum > 0:
         for name in ic_scores:
-            ic_val = abs(ic_scores[name])
+            ic_val = ic_scores[name]
             raw_w = _BASE_WEIGHTS.get(name, 0.1)
-            boost = 1.0 + 2.0 * (ic_val / ic_sum)
-            weights[name] = raw_w * boost
+            if ic_val > 0:
+                boost = 1.0 + 2.0 * (ic_val / ic_sum)
+                weights[name] = raw_w * boost
+            else:
+                # Negative IC: component predicts opposite of reality.
+                # Penalise instead of boosting (abs would have boosted it).
+                penalty = max(0.3, 1.0 - 2.0 * (abs(ic_val) / ic_sum))
+                weights[name] = raw_w * penalty
 
     w_sum = sum(weights.values())
     if w_sum > 0:
