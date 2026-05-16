@@ -118,6 +118,7 @@ services:
       - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
       - LLM_SENTIMENT=${LLM_SENTIMENT:-1}
       - API_RATE_LIMIT_PER_MIN=${API_RATE_LIMIT_PER_MIN:-30}
+      - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
       - CELERY_BROKER_URL=redis://redis:6379/0
     volumes:
