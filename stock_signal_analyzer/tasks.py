@@ -204,10 +204,16 @@ def analyze_batch(symbols: list[str], user_id: int | None = None) -> list[dict]:
 def _save_signal_to_db(record: dict, user_id: int | None) -> None:
     """Сохранить сигнал в PostgreSQL."""
     try:
-        from .db import get_session, Signal
+        from .db import get_session, Signal, User as DbUser
+        db_user_id = None
+        if user_id is not None:
+            with get_session(read_only=True) as session:
+                user = session.query(DbUser).filter_by(telegram_id=user_id).first()
+                if user:
+                    db_user_id = user.id
         with get_session() as session:
             sig = Signal(
-                user_id=user_id,
+                user_id=db_user_id,
                 symbol=record.get("symbol", ""),
                 score=record.get("score", 0),
                 score_before_macro=record.get("score_before_macro"),
