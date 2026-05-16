@@ -33,7 +33,7 @@ stenv.load_project_env()
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from stock_signal_analyzer.cache import cache_analyze_key, get_cache
 from stock_signal_analyzer.config_validator import validate_api_config
@@ -269,6 +269,8 @@ async def analyze(req: AnalyzeRequest):
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
     except Exception:
         log.exception("analyze error")
         raise HTTPException(status_code=500, detail="Internal analysis error")
@@ -281,6 +283,7 @@ async def analyze(req: AnalyzeRequest):
 @app.get("/analyze/{symbol}", response_model=SignalResponse)
 async def analyze_get(symbol: str, fast: bool = False):
     """GET-вариант анализа (удобно для браузера)."""
+    symbol = _validate_symbol_path(symbol)
     return await analyze(AnalyzeRequest(symbol=symbol, fast_mode=fast))
 
 
