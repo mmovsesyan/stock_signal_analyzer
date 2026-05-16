@@ -41,6 +41,7 @@ from stock_signal_analyzer.live_price import fetch_live_price
 from stock_signal_analyzer.config_validator import validate_telegram_config, validate_api_config
 from stock_signal_analyzer.universe import RU_BLUE_CHIPS
 from stock_signal_analyzer.rate_limiter import is_allowed
+from stock_signal_analyzer.cache import get_cache, cache_analyze_key
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
@@ -221,9 +222,40 @@ async def get_quote(symbol: str):
     )
 
 
+def _report_to_dict(report: SignalReport) -> dict:
+    tp_dict = None
+    if report.trade_plan and report.trade_plan.direction != "none":
+        tp_dict = trade_plan_to_dict(report.trade_plan)
+    return {
+        "symbol": report.symbol,
+        "company": report.company,
+        "score": round(report.score, 4),
+        "signal_tier": report.signal_tier,
+        "direction": report.trade_plan.direction if report.trade_plan else "none",
+        "confidence": round(report.confidence, 3),
+        "verdict": report.verdict,
+        "technical_score": round(report.technical_score, 4),
+        "momentum_score": round(report.momentum_score, 4),
+        "news_score": round(report.news_score, 4),
+        "volume_score": round(report.volume_score, 4),
+        "trade_plan": tp_dict,
+        "macro_dampening": round(report.macro_dampening, 3),
+        "regime": report.regime_label,
+        "adx14": round(report.adx14, 1),
+        "atr_pct": round(report.atr_pct, 3) if report.atr_pct else None,
+    }
+
+
 @app.post("/analyze", response_model=SignalResponse)
 async def analyze(req: AnalyzeRequest):
     """Полный анализ тикера с торговым планом."""
+    cache = get_cache()
+    key = cache_analyze_key(req.symbol, req.fast_mode, req.use_finnhub_ws)
+    cached = cache.get(key)
+    if cached is not None:
+        log.debug("Cache hit for %s", req.symbol)
+        return cached
+
     loop = asyncio.get_running_loop()
     try:
         report = await loop.run_in_executor(
@@ -240,28 +272,9 @@ async def analyze(req: AnalyzeRequest):
         log.exception("analyze error")
         raise HTTPException(status_code=500, detail="Internal analysis error")
 
-    tp_dict = None
-    if report.trade_plan and report.trade_plan.direction != "none":
-        tp_dict = trade_plan_to_dict(report.trade_plan)
-
-    return SignalResponse(
-        symbol=report.symbol,
-        company=report.company,
-        score=round(report.score, 4),
-        signal_tier=report.signal_tier,
-        direction=report.trade_plan.direction if report.trade_plan else "none",
-        confidence=round(report.confidence, 3),
-        verdict=report.verdict,
-        technical_score=round(report.technical_score, 4),
-        momentum_score=round(report.momentum_score, 4),
-        news_score=round(report.news_score, 4),
-        volume_score=round(report.volume_score, 4),
-        trade_plan=tp_dict,
-        macro_dampening=round(report.macro_dampening, 3),
-        regime=report.regime_label,
-        adx14=round(report.adx14, 1),
-        atr_pct=round(report.atr_pct, 3) if report.atr_pct else None,
-    )
+    result = _report_to_dict(report)
+    cache.set(key, result, ttl=300)
+    return result
 
 
 @app.get("/analyze/{symbol}", response_model=SignalResponse)
