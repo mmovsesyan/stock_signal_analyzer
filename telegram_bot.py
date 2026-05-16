@@ -967,11 +967,6 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
     fi = filter_icon.get(prefs.signal_filter_type, "⚖️")
     fl = filter_label.get(prefs.signal_filter_type, "Сбалансированный")
 
-    lang_icon = {"ru": "🇷🇺", "en": "🇬🇧"}
-    lang_label = {"ru": "Русский", "en": "English"}
-    li = lang_icon.get(prefs.language, "🇷🇺")
-    ll = lang_label.get(prefs.language, "Русский")
-
     def _feat(val: bool, available: bool) -> str:
         if not available:
             return "🔒"
@@ -985,8 +980,6 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
 
 🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
    Порог: |score| ≥ {prefs.strong_threshold:.2f}
-
-🌐 <b>Язык:</b> {li} {ll}
 
 📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
 
@@ -1005,10 +998,6 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
         [
             InlineKeyboardButton("🔔 Уведомления: ON" if prefs.notify_strong_outside else "🔕 Уведомления: OFF",
                                callback_data=f"set|notify|{('off' if prefs.notify_strong_outside else 'on')}|{uid}"),
-        ],
-        [
-            InlineKeyboardButton("🇷🇺 Русский", callback_data=f"set|lang|ru|{uid}"),
-            InlineKeyboardButton("🇬🇧 English", callback_data=f"set|lang|en|{uid}"),
         ],
     ]
 
@@ -1090,8 +1079,6 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
         prefs.signal_filter_type = value
     elif key == "notify":
         prefs.notify_strong_outside = (value == "on")
-    elif key == "lang":
-        prefs.language = value
     elif key == "learning":
         if not limits.learning_report:
             await query.answer("Learning report доступен с тарифа Pro", show_alert=True)
@@ -1121,11 +1108,6 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
     fi = filter_icon.get(prefs.signal_filter_type, "⚖️")
     fl = filter_label.get(prefs.signal_filter_type, "Сбалансированный")
 
-    lang_icon = {"ru": "🇷🇺", "en": "🇬🇧"}
-    lang_label = {"ru": "Русский", "en": "English"}
-    li = lang_icon.get(prefs.language, "🇷🇺")
-    ll = lang_label.get(prefs.language, "Русский")
-
     def _feat(val: bool, available: bool) -> str:
         if not available:
             return "🔒"
@@ -1145,9 +1127,6 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
 🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
 
    Порог: |score| ≥ {prefs.strong_threshold:.2f}
-
-
-🌐 <b>Язык:</b> {li} {ll}
 
 
 📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
@@ -1171,10 +1150,6 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
         [
             InlineKeyboardButton("🔔 Уведомления: ON" if prefs.notify_strong_outside else "🔕 Уведомления: OFF",
                                callback_data=f"set|notify|{('off' if prefs.notify_strong_outside else 'on')}|{uid}"),
-        ],
-        [
-            InlineKeyboardButton("🇷🇺 Русский", callback_data=f"set|lang|ru|{uid}"),
-            InlineKeyboardButton("🇬🇧 English", callback_data=f"set|lang|en|{uid}"),
         ],
     ]
 
