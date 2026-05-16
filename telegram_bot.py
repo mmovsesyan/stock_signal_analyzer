@@ -133,15 +133,37 @@ def _is_admin(user_id: int) -> bool:
 
 
 def _is_approved(user_id: int) -> bool:
-    """Проверить, одобрен ли пользователь (или он админ)."""
+    """Проверить, одобрен ли пользователь (или он админ).
+
+    Приоритет:
+    1. ALLOW_ALL_USERS — доступ всем (для дебага)
+    2. Админ — всегда доступ
+    3. БД: is_active=True
+    4. Legacy: approved_users.json
+    5. Без ADMIN_CHAT_ID — доступ закрыт
+    """
     if _ALLOW_ALL:
         return True
-    if not _ADMIN_CHAT_ID:
-        return False  # Без ADMIN_CHAT_ID доступ закрыт
     if _is_admin(user_id):
         return True
+    # Проверка БД (primary source)
+    try:
+        from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+        if db_available():
+            with get_session(read_only=True) as session:
+                user = session.query(DbUser).filter_by(telegram_id=user_id).first()
+                if user and user.is_active:
+                    return True
+    except Exception:
+        pass
+    # Fallback на JSON
     approved = _load_approved_users()
-    return user_id in approved
+    if user_id in approved:
+        return True
+    # Без ADMIN_CHAT_ID доступ закрыт
+    if not _ADMIN_CHAT_ID:
+        return False
+    return False
 
 
 def _normalize_menu_symbols(items: list[str]) -> list[str]:
@@ -684,6 +706,18 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         approved.add(target_uid)
         _save_approved_users(approved)
 
+        # Активировать в БД
+        try:
+            from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+            if db_available():
+                with get_session() as session:
+                    user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                    if user:
+                        user.is_active = True
+                        user.tier = plan
+        except Exception:
+            pass
+
         # Сохранить тариф
         prefs = load_prefs(target_uid)
         prefs.tier = plan
@@ -712,6 +746,17 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
 
     elif action == "deny":
+        # Деактивировать в БД
+        try:
+            from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+            if db_available():
+                with get_session() as session:
+                    user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                    if user:
+                        user.is_active = False
+        except Exception:
+            pass
+
         # Уведомить пользователя
         try:
             await context.bot.send_message(
@@ -756,6 +801,18 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     approved.add(target_uid)
     _save_approved_users(approved)
 
+    # Активировать в БД
+    try:
+        from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+        if db_available():
+            with get_session() as session:
+                user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                if user:
+                    user.is_active = True
+                    user.tier = plan
+    except Exception:
+        pass
+
     # Сохранить тариф
     prefs = load_prefs(target_uid)
     prefs.tier = plan
@@ -799,6 +856,17 @@ async def cmd_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     approved = _load_approved_users()
     approved.discard(target_uid)
     _save_approved_users(approved)
+
+    # Деактивировать в БД
+    try:
+        from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+        if db_available():
+            with get_session() as session:
+                user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                if user:
+                    user.is_active = False
+    except Exception:
+        pass
 
     try:
         await context.bot.send_message(

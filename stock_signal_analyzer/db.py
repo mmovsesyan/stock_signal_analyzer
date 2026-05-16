@@ -74,7 +74,7 @@ class User(Base):
     telegram_id = Column(Integer, unique=True, nullable=False, index=True)
     username = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=False)
 
     # Subscription
     tier = Column(String(20), default="free")  # free, pro, premium

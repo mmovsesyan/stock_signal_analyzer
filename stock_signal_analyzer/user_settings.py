@@ -81,9 +81,9 @@ def ensure_user_exists(user_id: int, username: str | None = None) -> None:
         with get_session() as session:
             user = session.query(DbUser).filter_by(telegram_id=user_id).first()
             if not user:
-                user = DbUser(telegram_id=user_id, username=username or "")
+                user = DbUser(telegram_id=user_id, username=username or "", is_active=False)
                 session.add(user)
-                _log.info("Created DB user %d", user_id)
+                _log.info("Created DB user %d (pending approval)", user_id)
     except Exception:
         _log.exception("ensure_user_exists failed for %d", user_id)
 
