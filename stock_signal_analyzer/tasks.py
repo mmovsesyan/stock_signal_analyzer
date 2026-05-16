@@ -156,28 +156,24 @@ def run_learning(self) -> dict:
         self.retry(exc=exc)
 
 
-@app.task(bind=True, max_retries=1, soft_time_limit=300, time_limit=360)
+@app.task(bind=True, max_retries=1, soft_time_limit=60, time_limit=120)
 def run_collect_all(self) -> dict:
-    """Массовый сбор сигналов по дефолтному списку."""
+    """Массовый сбор сигналов — отправляет каждый тикер в отдельную Celery-задачу.
+
+    Не блокирует worker: запускает group и сразу возвращает task_id группы.
+    Результат можно проверить через Celery result backend.
+    """
     try:
+        from celery import group
         from .universe import RU_BLUE_CHIPS, US_BLUE_CHIPS
-        from .engine import build_report
-        from .signal_log import build_record_from_report, append_signal_record, log_path_from_env
 
         symbols = list(US_BLUE_CHIPS)[:15] + [f"{s}.ME" for s in list(RU_BLUE_CHIPS)[:15]]
-        collected = 0
-        errors = 0
 
-        for sym in symbols:
-            try:
-                report = build_report(sym, fast_mode=True)
-                record = build_record_from_report(report, report.ref_price, "USD")
-                append_signal_record(log_path_from_env(), record)
-                collected += 1
-            except Exception:
-                errors += 1
+        job = group(analyze_ticker.s(sym, fast_mode=True) for sym in symbols)
+        result = job.apply_async()
 
-        return {"status": "ok", "collected": collected, "errors": errors}
+        _log.info("collect_all: queued %d tickers (group_id=%s)", len(symbols), result.id)
+        return {"status": "ok", "queued": len(symbols), "group_task_id": result.id}
     except Exception as exc:
         _log.exception("collect_all failed")
         self.retry(exc=exc)

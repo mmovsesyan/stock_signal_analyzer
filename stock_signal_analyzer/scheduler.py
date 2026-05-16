@@ -120,34 +120,17 @@ def run_learning_cycle() -> dict[str, Any]:
 
 
 def run_signal_collection() -> dict[str, Any]:
-    """Массовый сбор сигналов."""
-    _log.info("Scheduler: running signal collection...")
+    """Массовый сбор сигналов через Celery (не блокирует scheduler)."""
+    _log.info("Scheduler: queuing signal collection...")
     try:
-        from .universe import RU_BLUE_CHIPS, US_BLUE_CHIPS
-        from .engine import build_report
-        from .signal_log import build_record_from_report, append_signal_record, log_path_from_env
-
-        symbols = list(US_BLUE_CHIPS)[:15] + [f"{s}.ME" for s in list(RU_BLUE_CHIPS)[:15]]
-        collected = 0
-        errors = 0
-
-        for sym in symbols:
-            try:
-                report = build_report(sym, fast_mode=True)
-                currency = "RUB" if sym.endswith(".ME") else "USD"
-                record = build_record_from_report(report, report.ref_price, currency)
-                append_signal_record(log_path_from_env(), record)
-                collected += 1
-            except Exception:
-                errors += 1
-            # Throttle to avoid hammering Yahoo Finance during batch scans
-            time.sleep(0.3)
-
+        from .tasks import run_collect_all
+        # Асинхронная отправка — scheduler не ждёт выполнения
+        task = run_collect_all.delay()
         _health_update(last_collect=datetime.now(timezone.utc).isoformat())
-        _log.info("Scheduler: collection done (%d collected, %d errors)", collected, errors)
-        return {"collected": collected, "errors": errors}
+        _log.info("Scheduler: collection queued (task_id=%s)", task.id)
+        return {"queued": True, "task_id": task.id}
     except Exception as e:
-        _log.exception("Scheduler: collection failed")
+        _log.exception("Scheduler: collection queuing failed")
         _health_update(last_collect=datetime.now(timezone.utc).isoformat())
         with _health_lock:
             _health_state["errors"].append(f"collect: {e}")
