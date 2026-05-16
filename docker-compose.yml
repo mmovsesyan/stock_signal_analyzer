@@ -199,8 +199,7 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/app/logs
-    entrypoint: []
-    command: celery -A stock_signal_analyzer.tasks worker --loglevel=info --concurrency=4
+    command: -m celery -A stock_signal_analyzer.tasks worker --loglevel=info --concurrency=4
     depends_on:
       postgres:
         condition: service_healthy
@@ -222,8 +221,7 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
-    entrypoint: []
-    command: celery -A stock_signal_analyzer.tasks beat --loglevel=info
+    command: -m celery -A stock_signal_analyzer.tasks beat --loglevel=info
     depends_on:
       redis:
         condition: service_healthy
