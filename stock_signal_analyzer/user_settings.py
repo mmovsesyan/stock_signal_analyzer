@@ -20,11 +20,13 @@ from stock_signal_analyzer.user_store import (
     UserPrefs,
     load_prefs as _json_load_prefs,
     save_prefs as _json_save_prefs,
+    normalize_symbol,
 )
 from stock_signal_analyzer.db import (
     db_available,
     get_session,
     User as DbUser,
+    Watchlist as DbWatchlist,
     init_db,
 )
 
@@ -114,6 +116,20 @@ def load_user_settings(user_id: int) -> UserPrefs:
     return UserPrefs()
 
 
+def _sync_watchlist_db(session, user: DbUser, watchlist: list[str]) -> None:
+    """Синхронизировать watchlist пользователя в БД."""
+    existing = {w.symbol for w in user.watchlist}
+    wanted = {normalize_symbol(s) for s in watchlist}
+    # Удалить лишние
+    for w in list(user.watchlist):
+        if w.symbol not in wanted:
+            session.delete(w)
+    # Добавить новые
+    for sym in wanted:
+        if sym and sym not in existing:
+            user.watchlist.append(DbWatchlist(symbol=sym))
+
+
 def save_user_settings(user_id: int, prefs: UserPrefs, username: str | None = None) -> None:
     """Сохранить настройки пользователя.
 
@@ -131,6 +147,7 @@ def save_user_settings(user_id: int, prefs: UserPrefs, username: str | None = No
                     session.add(user)
                 for key, value in _prefs_to_db_dict(prefs).items():
                     setattr(user, key, value)
+                _sync_watchlist_db(session, user, prefs.watchlist)
                 _log.info("Saved settings for user %d to DB", user_id)
                 return
         except Exception:
