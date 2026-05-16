@@ -69,10 +69,23 @@ class TestCircuitBreaker:
         assert cb.state == "closed"
 
     def test_shared_breaker_decorator(self):
-        cb1 = circuit_breaker("polygon", failure_threshold=5)
-        cb2 = circuit_breaker("polygon", failure_threshold=5)
-        # Should reuse same underlying breaker instance
-        f1 = cb1(lambda: "ok")
-        f2 = cb2(lambda: "ok")
-        # Both decorators wrap the same breaker state
-        assert f1.__wrapped__ == f2.__wrapped__
+        # Reuse the global polygon breaker (threshold=5, shared)
+        cb1 = circuit_breaker("polygon")
+        cb2 = circuit_breaker("polygon")
+
+        @cb1
+        def fail():
+            raise ValueError("boom")
+
+        @cb2
+        def also_fail():
+            raise ValueError("boom")
+
+        # Trigger 5 failures to open the shared breaker
+        for _ in range(5):
+            with pytest.raises(ValueError):
+                fail()
+
+        # Now cb2 should fast-fail because the shared breaker is OPEN
+        with pytest.raises(CircuitOpenError):
+            also_fail()

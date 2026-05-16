@@ -53,7 +53,7 @@ class CircuitBreaker:
     ):
         self.name = name
         self.failure_threshold = max(1, failure_threshold)
-        self.recovery_timeout = max(1.0, recovery_timeout)
+        self.recovery_timeout = max(0.0, recovery_timeout)
         self.expected_exception = expected_exception
 
         self._state = State.CLOSED
