@@ -79,15 +79,17 @@ def analyze_ticker(self, symbol: str, user_id: int | None = None, fast_mode: boo
     """
     try:
         from .engine import build_report
-        from .signal_log import build_record_from_report, append_signal_record, log_path_from_env
+        from .user_settings import load_prefs
 
-        report = build_report(symbol, fast_mode=fast_mode)
+        filter_type = "balanced"
+        if user_id is not None:
+            try:
+                prefs = load_prefs(user_id)
+                filter_type = prefs.signal_filter_type
+            except Exception:
+                pass
 
-        # Сохранить в signal log
-        record = build_record_from_report(report, report.ref_price, "USD")
-        if user_id:
-            record["user_id"] = user_id
-        append_signal_record(log_path_from_env(), record)
+        report = build_report(symbol, fast_mode=fast_mode, filter_type=filter_type, user_id=user_id)
 
         # Сохранить в БД (если доступна)
         try:

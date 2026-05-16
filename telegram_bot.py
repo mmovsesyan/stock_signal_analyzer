@@ -1262,6 +1262,10 @@ async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
         parse_mode=ParseMode.HTML,
     )
     await message.reply_chat_action(action=ChatAction.TYPING)
+
+    uid = int(message.from_user.id) if message.from_user else 0
+    prefs = load_prefs(uid)
+
     loop = asyncio.get_running_loop()
     try:
         report = await loop.run_in_executor(
@@ -1271,6 +1275,8 @@ async def _cmd_signal_message_with_args(message, args: list[str]) -> None:
                 volume_tape_ws=tape,
                 use_finnhub_ws=ws,
                 ws_seconds=8.0,
+                filter_type=prefs.signal_filter_type,
+                user_id=uid,
             ),
         )
     except ValueError as e:
@@ -2091,7 +2097,7 @@ def _collect_signals_smart(tickers: list[str]) -> tuple[int, int, list[str], lis
 _SIGNAL_COLLECT_TIMEOUT_SEC = int(os.environ.get("SIGNAL_COLLECT_TIMEOUT_SEC", "60"))
 
 
-def _collect_signals_sync(tickers: list[str]) -> tuple[int, int, list[str]]:
+def _collect_signals_sync(tickers: list[str], filter_type: str = "balanced") -> tuple[int, int, list[str]]:
     """
     Анализирует каждый тикер через build_report (который сам пишет в SSA_SIGNAL_LOG).
     Каждый тикер имеет таймаут — зависший не блокирует остальные.
@@ -2103,7 +2109,7 @@ def _collect_signals_sync(tickers: list[str]) -> tuple[int, int, list[str]]:
     for sym in tickers:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(build_report, sym)
+                future = executor.submit(build_report, sym, fast_mode=True, filter_type=filter_type)
                 future.result(timeout=_SIGNAL_COLLECT_TIMEOUT_SEC)
             ok += 1
         except concurrent.futures.TimeoutError:
@@ -2144,9 +2150,11 @@ async def _cmd_collect_with_args(update: Update, args: list[str]) -> None:
     )
     await update.message.reply_chat_action(action=ChatAction.TYPING)
 
+    prefs = load_prefs(uid)
+
     loop = asyncio.get_running_loop()
     ok, errs, err_list = await loop.run_in_executor(
-        None, lambda: _collect_signals_sync(tickers),
+        None, lambda: _collect_signals_sync(tickers, filter_type=prefs.signal_filter_type),
     )
 
     lines = [f"✅ Сбор завершён: {ok} сигналов записано, {errs} ошибок."]
@@ -2558,7 +2566,7 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             try:
                 rep = await loop.run_in_executor(
                     None,
-                    lambda s=sym: build_report(s, fast_mode=True),
+                    lambda s=sym, ft=prefs.signal_filter_type: build_report(s, fast_mode=True, filter_type=ft),
                 )
             except Exception:
                 continue

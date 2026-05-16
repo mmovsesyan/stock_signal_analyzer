@@ -43,7 +43,7 @@ from .risk_manager import (
     load_drawdown_state,
 )
 from .sentiment import SentimentResult, score_headlines
-from .signal_log import append_signal_record, build_record_from_report, log_path_from_env
+from .signal_log import append_signal_record, build_record_from_report, log_path_from_env, recent_signal_exists
 from .technical import TechnicalScore, analyze_technical
 from .timing_context import (
     build_timing_context,
@@ -917,6 +917,8 @@ def build_report(
     ws_seconds: float = 8.0,
     volume_tape_ws: bool = False,
     fast_mode: bool = False,
+    filter_type: str = 'balanced',
+    user_id: int | None = None,
 ) -> SignalReport:
     """
     Построить полный отчёт по тикеру.
@@ -928,6 +930,7 @@ def build_report(
         ws_seconds: Длительность сбора данных через WebSocket
         volume_tape_ws: Использовать ленту сделок для анализа объёма
         fast_mode: Быстрый режим - пропустить новости и real-time данные
+        filter_type: Тип фильтра ('conservative', 'balanced', 'aggressive')
     """
     key = finnhub_api_key or os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
 
@@ -1042,20 +1045,55 @@ def build_report(
         ("\n" + rep.analyst_detail) if rep.analyst_detail else ""
     )
 
+    # ── Фильтрация + дедупликация перед записью в лог ─────────────────────────────
     log_p = log_path_from_env()
     if log_p:
-        rec = build_record_from_report(rep, rep.ref_price, inputs.snap.currency)
-        rec.update(trade_plan_to_dict(tp))
-        rec["quant_score"] = quant_sc
-        rec["mtf_mom_score"] = inputs.mtf_mom.score if inputs.mtf_mom else 0.0
-        rec["zscore_composite"] = inputs.zscore.composite if inputs.zscore else 0.0
-        rec["trend_score"] = inputs.trend_str.score if inputs.trend_str else 0.0
-        rec["vol_regime"] = inputs.vol_regime.regime if inputs.vol_regime else "unknown"
-        rec["vol_regime_scalar"] = inputs.vol_regime.risk_scalar if inputs.vol_regime else 1.0
-        rec["cross_asset_regime"] = inputs.cross_asset.risk_regime if inputs.cross_asset else "unknown"
-        rec["cross_asset_mult"] = ca_rm
-        rec["position_size_final"] = pos_size_res.final_pct
-        append_signal_record(log_p, rec)
+        # 1. Дедупликация: не записывать, если уже есть сигнал на этот тикер за последние 7 дней
+        is_duplicate = recent_signal_exists(log_p, rep.symbol, days=7)
+        if is_duplicate:
+            _log.debug("Signal for %s skipped: duplicate within 7 days", rep.symbol)
+        else:
+            # 2. Фильтр: применить выбранный режим (conservative/balanced/aggressive)
+            try:
+                from .signal_filter import filter_signal_with_reason
+                filt = filter_signal_with_reason(rep, filter_type=filter_type)
+                if filt.should_trade:
+                    rec = build_record_from_report(rep, rep.ref_price, inputs.snap.currency)
+                    rec.update(trade_plan_to_dict(tp))
+                    if user_id is not None:
+                        rec["user_id"] = user_id
+                    rec["quant_score"] = quant_sc
+                    rec["mtf_mom_score"] = inputs.mtf_mom.score if inputs.mtf_mom else 0.0
+                    rec["zscore_composite"] = inputs.zscore.composite if inputs.zscore else 0.0
+                    rec["trend_score"] = inputs.trend_str.score if inputs.trend_str else 0.0
+                    rec["vol_regime"] = inputs.vol_regime.regime if inputs.vol_regime else "unknown"
+                    rec["vol_regime_scalar"] = inputs.vol_regime.risk_scalar if inputs.vol_regime else 1.0
+                    rec["cross_asset_regime"] = inputs.cross_asset.risk_regime if inputs.cross_asset else "unknown"
+                    rec["cross_asset_mult"] = ca_rm
+                    rec["position_size_final"] = pos_size_res.final_pct
+                    append_signal_record(log_p, rec)
+                    _log.info("Signal logged for %s (tier=%s, score=%.3f, filter=%s)",
+                              rep.symbol, rep.signal_tier, rep.score, filter_type)
+                else:
+                    _log.debug("Signal for %s filtered out: %s (filter=%s)",
+                               rep.symbol, filt.reason, filter_type)
+            except Exception as e:
+                _log.warning("Filter error for %s: %s, logging anyway", rep.symbol, e)
+                # Fallback: записываем, если фильтр сломался
+                rec = build_record_from_report(rep, rep.ref_price, inputs.snap.currency)
+                rec.update(trade_plan_to_dict(tp))
+                if user_id is not None:
+                    rec["user_id"] = user_id
+                rec["quant_score"] = quant_sc
+                rec["mtf_mom_score"] = inputs.mtf_mom.score if inputs.mtf_mom else 0.0
+                rec["zscore_composite"] = inputs.zscore.composite if inputs.zscore else 0.0
+                rec["trend_score"] = inputs.trend_str.score if inputs.trend_str else 0.0
+                rec["vol_regime"] = inputs.vol_regime.regime if inputs.vol_regime else "unknown"
+                rec["vol_regime_scalar"] = inputs.vol_regime.risk_scalar if inputs.vol_regime else 1.0
+                rec["cross_asset_regime"] = inputs.cross_asset.risk_regime if inputs.cross_asset else "unknown"
+                rec["cross_asset_mult"] = ca_rm
+                rec["position_size_final"] = pos_size_res.final_pct
+                append_signal_record(log_p, rec)
 
     # ── Backtest validation: проверить историческую прибыльность ──
     try:

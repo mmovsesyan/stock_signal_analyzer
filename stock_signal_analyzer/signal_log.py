@@ -51,6 +51,32 @@ def make_signal_id(symbol: str, ts_utc: str) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
+def recent_signal_exists(path: str | None, symbol: str, days: int = 7) -> bool:
+    """Проверить, был ли сигнал на этот тикер за последние N дней."""
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get("symbol", "").upper() == symbol.upper():
+                        ts_str = rec.get("ts_utc", "")
+                        if ts_str:
+                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            if ts >= cutoff:
+                                return True
+                except (json.JSONDecodeError, ValueError):
+                    continue
+    except OSError:
+        pass
+    return False
+
+
 def build_record_from_report(
     report: "SignalReport",
     ref_price: float,
