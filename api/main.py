@@ -20,7 +20,6 @@ import logging
 import os
 import sys
 import time
-from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -41,6 +40,7 @@ from stock_signal_analyzer.trade_plan import trade_plan_to_dict
 from stock_signal_analyzer.live_price import fetch_live_price
 from stock_signal_analyzer.config_validator import validate_telegram_config, validate_api_config
 from stock_signal_analyzer.universe import RU_BLUE_CHIPS
+from stock_signal_analyzer.rate_limiter import is_allowed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
@@ -81,27 +81,13 @@ if _API_SECRET_KEY:
 # ── Rate Limiting ────────────────────────────────────────────────────────────
 
 _RATE_LIMIT = int(os.environ.get("API_RATE_LIMIT_PER_MIN", "30"))
-_rate_store: dict[str, list[float]] = defaultdict(list)
-
-
-def _check_rate_limit(client_id: str) -> bool:
-    now = time.time()
-    calls = _rate_store.get(client_id, [])
-    recent = [t for t in calls if now - t < 60]
-    if not recent:
-        _rate_store[client_id] = [now]
-        return True
-    if len(recent) >= _RATE_LIMIT:
-        return False
-    recent.append(now)
-    _rate_store[client_id] = recent
-    return True
+_SUB_RATE_LIMIT = 10
 
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     client = request.client.host if request.client else "unknown"
-    if not _check_rate_limit(client):
+    if not is_allowed(client, limit=_RATE_LIMIT):
         return JSONResponse(
             status_code=429,
             content={"error": "Rate limit exceeded", "limit": _RATE_LIMIT},
@@ -273,30 +259,11 @@ async def analyze_get(symbol: str, fast: bool = False):
 
 # ── Subscription & Stats endpoints ──────────────────────────────────────────
 
-# Stricter rate limit for subscription endpoint (enumeration protection)
-_SUB_RATE_LIMIT = 10
-_sub_rate_store: dict[str, list[float]] = defaultdict(list)
-
-
-def _check_sub_rate_limit(client_id: str) -> bool:
-    now = time.time()
-    calls = _sub_rate_store.get(client_id, [])
-    recent = [t for t in calls if now - t < 60]
-    if not recent:
-        _sub_rate_store[client_id] = [now]
-        return True
-    if len(recent) >= _SUB_RATE_LIMIT:
-        return False
-    recent.append(now)
-    _sub_rate_store[client_id] = recent
-    return True
-
-
 @app.get("/subscription/{telegram_id}")
 async def get_subscription(telegram_id: int, request: Request):
     """Информация о подписке пользователя."""
     client = request.client.host if request.client else "unknown"
-    if not _check_sub_rate_limit(client):
+    if not is_allowed(client, limit=10):
         raise HTTPException(status_code=429, detail="Rate limit exceeded for subscription endpoint")
     from stock_signal_analyzer.subscriptions import get_user_tier, get_tier_limits, format_subscription_info
     tier = get_user_tier(telegram_id)
