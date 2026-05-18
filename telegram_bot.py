@@ -2403,19 +2403,20 @@ async def cmd_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     try:
         import asyncio
-        msg = await update.message.reply_text("🔄 Проверяю исходы сигналов…", parse_mode=ParseMode.HTML)
+        msg = await update.message.reply_text("🔄 Проверяю исходы сигналов…")
         from stock_signal_analyzer.outcome_tracker import OutcomeTracker
         from stock_signal_analyzer.llm_learning import run_learning_cycle, format_learning_report
         tracker = OutcomeTracker()
         # Run blocking outcome check in thread pool so Telegram event loop stays responsive
         await asyncio.to_thread(tracker.check_all_outcomes)
-        await msg.edit_text("🔄 Обучаю модель…", parse_mode=ParseMode.HTML)
+        await msg.edit_text("🔄 Обучаю модель…")
         state = await asyncio.to_thread(run_learning_cycle, force=True)
         if state:
             report = await asyncio.to_thread(format_learning_report)
-            await msg.edit_text(report if report else "✅ Обучение завершено.", parse_mode=ParseMode.HTML)
+            # Reports may contain raw < > from LLM patterns — send as plain text
+            await msg.edit_text(report if report else "✅ Обучение завершено.")
         else:
-            await msg.edit_text("✅ Обучение завершено (недостаточно данных).", parse_mode=ParseMode.HTML)
+            await msg.edit_text("✅ Обучение завершено (недостаточно данных).")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
 
