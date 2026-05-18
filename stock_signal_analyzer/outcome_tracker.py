@@ -452,7 +452,7 @@ class OutcomeTracker:
             return
 
         if max_workers is None:
-            max_workers = int(os.environ.get("OUTCOME_MAX_WORKERS", "8"))
+            max_workers = int(os.environ.get("OUTCOME_MAX_WORKERS", "3"))
         total_timeout = int(os.environ.get("OUTCOME_TOTAL_TIMEOUT", "900"))
         per_future_timeout = int(os.environ.get("OUTCOME_PER_FUTURE_TIMEOUT", "60"))
         _log.info(f"Проверка {len(signals)} сигналов (workers={max_workers}, total_timeout={total_timeout})...")
