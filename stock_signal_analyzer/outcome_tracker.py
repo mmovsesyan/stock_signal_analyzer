@@ -147,7 +147,12 @@ class OutcomeTracker:
 
     def _extract_trade_plan(self, signal: dict[str, Any]) -> dict[str, Any]:
         """Собрать trade_plan из плоских tp_* ключей signal log."""
-        direction = signal.get('tp_direction') or signal.get('direction', '')
+        tp_dir = signal.get('tp_direction')
+        # Если tp_direction не задан (None/null в JSON) или явно 'none'/'neutral' —
+        # торгового плана нет, независимо от основного direction сигнала.
+        if tp_dir is None or tp_dir in ('none', 'neutral'):
+            return {}
+        direction = tp_dir or signal.get('direction', '')
         if not direction or direction in ('none', 'neutral'):
             return {}
         entry = self._safe_price(signal.get('tp_entry')) or self._safe_price(signal.get('ref_price'))
