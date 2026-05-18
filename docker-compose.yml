@@ -23,6 +23,8 @@ services:
       - NOTIFY_INTERVAL_SEC=${NOTIFY_INTERVAL_SEC:-3600}
       - NOTIFY_MIN_TIER=${NOTIFY_MIN_TIER:-A}
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -46,6 +48,8 @@ services:
       - TINKOFF_INVEST_TOKEN=${TINKOFF_INVEST_TOKEN}
       - FINNHUB_API_KEY=${FINNHUB_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -93,6 +97,8 @@ services:
       - OLLAMA_CLOUD_MODEL=${OLLAMA_CLOUD_MODEL:-qwen2.5:1.5b}
       - LLM_LEARNING=${LLM_LEARNING:-1}
       - LLM_LEARNING_MIN=${LLM_LEARNING_MIN:-20}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
     volumes:
       - ./data:/data
       - ./logs:/app/logs
