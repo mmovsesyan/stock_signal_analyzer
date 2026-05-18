@@ -70,6 +70,8 @@ class OutcomeTracker:
 
         # Загрузить уже проверенные сигналы
         self.checked_signals = self._load_checked_signals()
+        # Track which open signals we already wrote to avoid duplicate records
+        self._open_written = set()
 
     def _get_signals_log_path(self) -> str | None:
         """Получить путь к логу сигналов из переменных окружения."""
@@ -428,14 +430,20 @@ class OutcomeTracker:
         # Создать директорию если нужно
         self.outcomes_file.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(self.outcomes_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        # Skip duplicate "open" entries to prevent log bloat
+        if outcome.outcome == 'open' and outcome.signal_id in self._open_written:
+            pass
+        else:
+            with open(self.outcomes_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + '\n')
+            if outcome.outcome == 'open':
+                self._open_written.add(outcome.signal_id)
 
         # Добавить в checked если закрыт
         if outcome.outcome != 'open':
             self.checked_signals.add(outcome.signal_id)
 
-    def check_all_outcomes(self, max_workers: int = 2):
+    def check_all_outcomes(self, max_workers: int = None):
         """Проверить все открытые сигналы (параллельно через ThreadPoolExecutor)."""
         signals = self._load_open_signals()
 
@@ -443,7 +451,11 @@ class OutcomeTracker:
             _log.info("Нет открытых сигналов для проверки")
             return
 
-        _log.info(f"Проверка {len(signals)} сигналов (workers={max_workers})...")
+        if max_workers is None:
+            max_workers = int(os.environ.get("OUTCOME_MAX_WORKERS", "8"))
+        total_timeout = int(os.environ.get("OUTCOME_TOTAL_TIMEOUT", "900"))
+        per_future_timeout = int(os.environ.get("OUTCOME_PER_FUTURE_TIMEOUT", "60"))
+        _log.info(f"Проверка {len(signals)} сигналов (workers={max_workers}, total_timeout={total_timeout})...")
 
         # Параллельно проверяем каждый сигнал
         outcomes_map: dict[str, SignalOutcome] = {}
@@ -452,10 +464,10 @@ class OutcomeTracker:
                 executor.submit(self._check_signal_outcome, sig): sig
                 for sig in signals
             }
-            for future in as_completed(future_to_signal, timeout=300):
+            for future in as_completed(future_to_signal, timeout=total_timeout):
                 sig = future_to_signal[future]
                 try:
-                    outcome = future.result(timeout=30)
+                    outcome = future.result(timeout=per_future_timeout)
                     outcomes_map[self._get_signal_id(sig)] = outcome
                 except Exception as e:
                     _log.error("Outcome check failed for %s: %s", sig['symbol'], e)

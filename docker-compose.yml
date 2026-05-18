@@ -227,6 +227,7 @@ services:
     restart: unless-stopped
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
     command: -m celery -A stock_signal_analyzer.tasks beat --loglevel=info
     depends_on:
