@@ -43,7 +43,7 @@ except Exception:
 
 _OLLAMA_CLOUD_URL = "https://ollama.com/v1/chat/completions"
 
-_REQUEST_TIMEOUT = 30.0
+_REQUEST_TIMEOUT = 60.0
 
 
 def llm_available() -> bool:
