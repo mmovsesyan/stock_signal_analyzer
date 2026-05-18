@@ -64,6 +64,7 @@ _SIDEWAYS_TARGET_SCALE = 0.90
 
 # Минимальный R:R для генерации торгового плана
 _MIN_RR = 1.5
+_MIN_RR_C_CLASS = 1.2  # для C классов (наблюдение)
 
 
 def _position_size(confidence: float, atr_pct: float | None, market_regime: MarketRegime | None = None) -> float:
@@ -94,6 +95,7 @@ def _position_size(confidence: float, atr_pct: float | None, market_regime: Mark
 
 
 def _none_plan(ref_price: float, reason: str) -> TradePlan:
+    """План без направления (не торговать)."""
     return TradePlan(
         direction="none",
         entry_price=ref_price,
@@ -114,6 +116,86 @@ def _none_plan(ref_price: float, reason: str) -> TradePlan:
     )
 
 
+def _simple_plan(ref_price: float, atr_pct: float, score: float, tier: str, confidence: float = 0.3, adx14: float = 20.0, has_pattern: bool = False) -> TradePlan:
+    """
+    Упрощённый торговый план для C классов и слабых сигналов.
+    Генерирует минимальный план для проверки исходов.
+
+    Args:
+        ref_price: Цена входа
+        atr_pct: ATR в процентах
+        score: Итоговый score сигнала
+        tier: Класс сигнала (A/B/C)
+        confidence: Уверенность
+        adx14: Значение ADX(14) для проверки боковика
+        has_pattern: Есть ли паттерн на графике
+    """
+    direction = "long" if score > 0 else "short"
+
+    # Консервативные множители для C классов
+    stop_mult = 1.2
+    t1_mult = 2.0
+    t2_mult = 3.0
+    max_hold = 3  # короткое удержание для C классов
+
+    # ADX 16-20 без тренда: шире стопы, уже цели
+    # Для C классов используем упрощённые множители (без боковик-коррекции)
+    if tier != "C" and adx14 < 20.0:
+        stop_mult *= _SIDEWAYS_STOP_SCALE
+        t1_mult *= _SIDEWAYS_TARGET_SCALE
+        t2_mult *= _SIDEWAYS_TARGET_SCALE
+
+    atr_abs = ref_price * atr_pct / 100.0
+    sign = 1.0 if direction == "long" else -1.0
+    slippage = 0.3 * atr_abs
+
+    stop_price = ref_price - sign * (stop_mult * atr_abs + slippage)
+    target1_price = ref_price + sign * (t1_mult * atr_abs)
+    target2_price = ref_price + sign * (t2_mult * atr_abs)
+
+    stop_pct = (stop_price / ref_price - 1.0) * 100.0
+    target1_pct = (target1_price / ref_price - 1.0) * 100.0
+    target2_pct = (target2_price / ref_price - 1.0) * 100.0
+
+    risk = abs(ref_price - stop_price)
+    rr1 = abs(target1_price - ref_price) / risk if risk > 0 else 0
+    rr2 = abs(target2_price - ref_price) / risk if risk > 0 else 0
+
+    # Проверяем минимальный R:R — если не достигается, возвращаем none_plan
+    min_rr = _MIN_RR_C_CLASS if tier == "C" else _MIN_RR
+    if rr1 < min_rr:
+        return _none_plan(
+            ref_price,
+            f"Нет торгового плана (R:R={rr1:.2f} < {min_rr:.1f} — риск/доходность неприемлемы).",
+        )
+
+    pos_size = 10.0 if tier == "C" else max(5.0, confidence * 20.0)
+
+    plan_text = (
+        f"C класс (наблюдение) — упрощённый план.\n"
+        f"Для C классов: короткое удержание ({max_hold} дней), небольшая позиция ({pos_size:.0f}%)."
+    )
+
+    return TradePlan(
+        direction=direction,
+        entry_price=round(ref_price, 4),
+        stop_price=round(stop_price, 4),
+        stop_pct=round(stop_pct, 2),
+        target1_price=round(target1_price, 4),
+        target1_pct=round(target1_pct, 2),
+        target2_price=round(target2_price, 4),
+        target2_pct=round(target2_pct, 2),
+        risk_reward_1=round(rr1, 2),
+        risk_reward_2=round(rr2, 2),
+        max_hold_days=max_hold,
+        trailing_activation_pct=round(atr_pct, 2),
+        trailing_step_pct=round(atr_pct, 2),
+        position_size_pct=round(pos_size, 0),
+        partial_exit_pct=50.0,
+        plan_text=plan_text,
+    )
+
+
 def build_trade_plan(
     score: float,
     ref_price: float,
@@ -130,11 +212,14 @@ def build_trade_plan(
     market_regime: MarketRegime | None = None,
     hist: pd.DataFrame | None = None,
 ) -> TradePlan:
-    if abs(score) < _DIR_THRESHOLD or atr_pct is None or atr_pct <= 0 or ref_price <= 0:
-        return _none_plan(ref_price, _no_plan_text(signal_tier))
+    if atr_pct is None or atr_pct <= 0 or ref_price <= 0:
+        return _none_plan(ref_price, "Нет торгового плана (нет ATR или нулевая цена).")
 
-    if signal_tier == "C":
-        return _none_plan(ref_price, "Нет торгового плана (класс C — наблюдение).")
+    # --- Генерация торгового плана для всех классов (A/B/C) ---
+    # Для C классов генерируем упрощённый план для проверки исходов
+    if abs(score) < _DIR_THRESHOLD:
+        # Слабый сигнал — всё ещё генерируем план, но с осторожными параметрами
+        return _simple_plan(ref_price, atr_pct, score, signal_tier, confidence, adx14, has_pattern)
 
     # --- Фильтр боковика ---
     if adx14 < 16.0 and not has_pattern:
@@ -228,10 +313,11 @@ def build_trade_plan(
     rr2 = abs(target2_price - ref_price) / risk
 
     # Проверяем минимальный R:R — если не достигается, план не генерируем
-    if rr1 < _MIN_RR:
+    min_rr = _MIN_RR_C_CLASS if signal_tier == "C" else _MIN_RR
+    if rr1 < min_rr:
         return _none_plan(
             ref_price,
-            f"Нет торгового плана (R:R={rr1:.2f} < {_MIN_RR:.1f} — риск/доходность неприемлемы).",
+            f"Нет торгового плана (R:R={rr1:.2f} < {min_rr:.1f} — риск/доходность неприемлемы).",
         )
 
     max_hold = hold_trend if adx14 > 25.0 else hold_base

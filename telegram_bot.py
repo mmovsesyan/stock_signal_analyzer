@@ -1345,6 +1345,19 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
         await status_msg.delete()
     except Exception:
         pass
+
+    # Фильтрация класса C — не показывать слабые сигналы
+    if report.signal_tier == "C":
+        await message.reply_text(
+            f"⚠️ <b>{_esc(sym)}</b> — {report.company}\n\n"
+            f"<b>Класс C: слабый/противоречивый сигнал</b>\n\n"
+            f"Этот сигнал не имеет торгового плана и не рекомендуется для торговли.\n\n"
+            f"Почему: {report.tier_rationale}\n\n"
+            f"<i>Лучше наблюдать и не торговать. Подождите более сильного сигнала (класс A или B).</i>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     html_text = format_signal_report(report)
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
@@ -1626,7 +1639,8 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
         )
         outside = await asyncio.wait_for(outside_task, timeout=outside_timeout)
         mset = {normalize_symbol(x) for x in merged}
-        outside = [(s, r) for s, r in outside if normalize_symbol(s) not in mset]
+        # Фильтрация C классов — не показывать слабые сигналы
+        outside = [(s, r) for s, r in outside if normalize_symbol(s) not in mset and r.signal_tier != "C"]
         if outside:
             preview = ", ".join(f"{s} ({r.score:+.2f})" for s, r in outside[:3])
             await message.reply_text(

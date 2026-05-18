@@ -1053,11 +1053,15 @@ def build_report(
         if is_duplicate:
             _log.debug("Signal for %s skipped: duplicate within 7 days", rep.symbol)
         else:
-            # 2. Фильтр: применить выбранный режим (conservative/balanced/aggressive)
+            # Записываем все сигналы с торговым планом (для проверки исходов)
+            # Фильтр используется только для логирования/отладки, не для блокировки
             try:
                 from .signal_filter import filter_signal_with_reason
                 filt = filter_signal_with_reason(rep, filter_type=filter_type)
-                if filt.should_trade:
+                if not filt.should_trade:
+                    _log.debug("Signal for %s filtered: %s (filter=%s)", rep.symbol, filt.reason, filter_type)
+                # Всегда записываем сигнал с торговым планом
+                if tp and tp.direction != "none":
                     rec = build_record_from_report(rep, rep.ref_price, inputs.snap.currency)
                     rec.update(trade_plan_to_dict(tp))
                     if user_id is not None:
@@ -1072,28 +1076,26 @@ def build_report(
                     rec["cross_asset_mult"] = ca_rm
                     rec["position_size_final"] = pos_size_res.final_pct
                     append_signal_record(log_p, rec)
-                    _log.info("Signal logged for %s (tier=%s, score=%.3f, filter=%s)",
-                              rep.symbol, rep.signal_tier, rep.score, filter_type)
-                else:
-                    _log.debug("Signal for %s filtered out: %s (filter=%s)",
-                               rep.symbol, filt.reason, filter_type)
+                    _log.info("Signal logged for %s (tier=%s, score=%.3f, direction=%s, filter=%s)",
+                              rep.symbol, rep.signal_tier, rep.score, tp.direction, filter_type)
             except Exception as e:
-                _log.warning("Filter error for %s: %s, logging anyway", rep.symbol, e)
+                _log.warning("Filter error for %s: %s", rep.symbol, e)
                 # Fallback: записываем, если фильтр сломался
-                rec = build_record_from_report(rep, rep.ref_price, inputs.snap.currency)
-                rec.update(trade_plan_to_dict(tp))
-                if user_id is not None:
-                    rec["user_id"] = user_id
-                rec["quant_score"] = quant_sc
-                rec["mtf_mom_score"] = inputs.mtf_mom.score if inputs.mtf_mom else 0.0
-                rec["zscore_composite"] = inputs.zscore.composite if inputs.zscore else 0.0
-                rec["trend_score"] = inputs.trend_str.score if inputs.trend_str else 0.0
-                rec["vol_regime"] = inputs.vol_regime.regime if inputs.vol_regime else "unknown"
-                rec["vol_regime_scalar"] = inputs.vol_regime.risk_scalar if inputs.vol_regime else 1.0
-                rec["cross_asset_regime"] = inputs.cross_asset.risk_regime if inputs.cross_asset else "unknown"
-                rec["cross_asset_mult"] = ca_rm
-                rec["position_size_final"] = pos_size_res.final_pct
-                append_signal_record(log_p, rec)
+                if tp and tp.direction != "none":
+                    rec = build_record_from_report(rep, rep.ref_price, inputs.snap.currency)
+                    rec.update(trade_plan_to_dict(tp))
+                    if user_id is not None:
+                        rec["user_id"] = user_id
+                    rec["quant_score"] = quant_sc
+                    rec["mtf_mom_score"] = inputs.mtf_mom.score if inputs.mtf_mom else 0.0
+                    rec["zscore_composite"] = inputs.zscore.composite if inputs.zscore else 0.0
+                    rec["trend_score"] = inputs.trend_str.score if inputs.trend_str else 0.0
+                    rec["vol_regime"] = inputs.vol_regime.regime if inputs.vol_regime else "unknown"
+                    rec["vol_regime_scalar"] = inputs.vol_regime.risk_scalar if inputs.vol_regime else 1.0
+                    rec["cross_asset_regime"] = inputs.cross_asset.risk_regime if inputs.cross_asset else "unknown"
+                    rec["cross_asset_mult"] = ca_rm
+                    rec["position_size_final"] = pos_size_res.final_pct
+                    append_signal_record(log_p, rec)
 
     # ── Backtest validation: проверить историческую прибыльность ──
     try:

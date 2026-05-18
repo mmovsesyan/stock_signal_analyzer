@@ -148,22 +148,43 @@ class OutcomeTracker:
     def _extract_trade_plan(self, signal: dict[str, Any]) -> dict[str, Any]:
         """Собрать trade_plan из плоских tp_* ключей signal log."""
         tp_dir = signal.get('tp_direction')
-        # Если tp_direction не задан (None/null в JSON) или явно 'none'/'neutral' —
-        # торгового плана нет, независимо от основного direction сигнала.
-        if tp_dir is None or tp_dir in ('none', 'neutral'):
-            return {}
-        direction = tp_dir or signal.get('direction', '')
-        if not direction or direction in ('none', 'neutral'):
-            return {}
+        # Если tp_direction задан (не None) и не 'none'/'neutral' — используем его
+        if tp_dir is not None and tp_dir not in ('none', 'neutral'):
+            direction = tp_dir
+        else:
+            # Иначе используем direction из сигнала
+            direction = signal.get('direction', '')
+            if not direction or direction in ('none', 'neutral'):
+                return {}  # без направления трекать невозможно
+
+        # Проверка цены входа
         entry = self._safe_price(signal.get('tp_entry')) or self._safe_price(signal.get('ref_price'))
         if not entry:
             return {}  # без цены входа трекать невозможно
+
+        # Собрать все уровни из tp_* ключей (могут быть None для старых сигналов)
+        stop_price = self._safe_price(signal.get('tp_stop'))
+        target1_price = self._safe_price(signal.get('tp_target1'))
+        target2_price = self._safe_price(signal.get('tp_target2'))
+
+        # Если уровней нет, сгенерируем их из ATR
+        if stop_price is None or target1_price is None:
+            atr_pct = signal.get('atr_pct')
+            if atr_pct and atr_pct > 0:
+                ref_price = signal.get('ref_price', entry)
+                atr_abs = ref_price * atr_pct / 100.0
+                sign = 1.0 if direction == 'long' else -1.0
+                # Консервативные множители
+                stop_price = ref_price - sign * (1.5 * atr_abs)
+                target1_price = ref_price + sign * (2.5 * atr_abs)
+                target2_price = ref_price + sign * (4.0 * atr_abs)
+
         return {
             'direction': direction,
             'entry_price': entry,
-            'stop_price': self._safe_price(signal.get('tp_stop')) or 0.0,
-            'target1_price': self._safe_price(signal.get('tp_target1')) or 0.0,
-            'target2_price': self._safe_price(signal.get('tp_target2')) or 0.0,
+            'stop_price': stop_price or 0.0,
+            'target1_price': target1_price or 0.0,
+            'target2_price': target2_price or 0.0,
             'max_hold_days': int(signal.get('tp_max_hold_days') or 5),
         }
 
@@ -448,13 +469,13 @@ class OutcomeTracker:
         if outcome.outcome != 'open':
             self.checked_signals.add(outcome.signal_id)
 
-    def check_all_outcomes(self, max_workers: int = None):
+    def check_all_outcomes(self, max_workers: int = None) -> dict[str, int]:
         """Проверить все открытые сигналы (параллельно через ThreadPoolExecutor)."""
         signals = self._load_open_signals()
 
         if not signals:
             _log.info("Нет открытых сигналов для проверки")
-            return
+            return {'closed': 0, 'pending': 0, 'total': 0}
 
         if max_workers is None:
             max_workers = int(os.environ.get("OUTCOME_MAX_WORKERS", "3"))
@@ -502,6 +523,7 @@ class OutcomeTracker:
                 )
 
         _log.info(f"Закрыто сигналов: {closed_count}/{len(signals)}")
+        return {'closed': closed_count, 'pending': len(signals) - closed_count, 'total': len(signals)}
 
     def get_statistics(self, tier: str | None = None) -> dict[str, Any]:
         """Получить статистику по результатам."""
