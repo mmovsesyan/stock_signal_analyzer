@@ -34,7 +34,7 @@ from typing import Any
 
 import numpy as np
 
-from .llm_client import llm_available, llm_chat_json
+from .llm_client import llm_available, llm_chat_json, current_provider
 
 _log = logging.getLogger(__name__)
 
@@ -99,6 +99,9 @@ class LearningState:
     data_hash: str = ""
     # IC scores (числовые, из adaptive_weights)
     ic_scores: dict[str, float] = field(default_factory=dict)
+    # LLM статус для отчёта
+    llm_used: bool = False
+    llm_provider: str = ""
 
 
 def _load_outcomes() -> list[OutcomeRecord]:
@@ -413,19 +416,27 @@ def run_learning_cycle(force: bool = False) -> LearningState:
     # 2. LLM анализ (если доступен)
     llm_result: dict[str, Any] | None = None
     llm_adj: dict[str, float] | None = None
+    llm_used = False
+    llm_provider = ""
 
     if _LLM_LEARNING_ENABLED:
         try:
             if llm_available():
+                llm_provider = current_provider()
                 prompt = _build_llm_analysis_prompt(records, numeric)
                 llm_result = _call_llm_learning(prompt)
                 if llm_result:
                     llm_adj = llm_result.get("weight_recommendations")
-                    _log.info("Learning: LLM анализ завершён")
+                    llm_used = True
+                    _log.info("Learning: LLM анализ завершён (%s)", llm_provider)
+                else:
+                    _log.info("Learning: LLM не вернул результат, только числовой анализ")
             else:
                 _log.info("Learning: LLM недоступен, только числовой анализ")
         except Exception as e:
             _log.warning("Learning: LLM failed: %s", e)
+    else:
+        _log.info("Learning: LLM обучение отключено (LLM_LEARNING=0)")
 
     # 3. Совместить
     merged_adj = _merge_adjustments(numeric_adj, llm_adj)
@@ -448,6 +459,8 @@ def run_learning_cycle(force: bool = False) -> LearningState:
         last_updated=datetime.now(timezone.utc).isoformat(),
         data_hash=current_hash,
         ic_scores={},
+        llm_used=llm_used,
+        llm_provider=llm_provider,
     )
 
     # IC scores из adaptive_weights
@@ -556,11 +569,21 @@ def format_learning_report() -> str:
     if state is None:
         return "Обучение: нет данных. Запустите: python -m stock_signal_analyzer.llm_learning"
 
+    if not _LLM_LEARNING_ENABLED:
+        llm_status = "⏸️ выключен (LLM_LEARNING=0)"
+    elif state.llm_used:
+        llm_status = f"✅ {state.llm_provider}"
+    elif state.llm_provider:
+        llm_status = f"❌ {state.llm_provider} (не ответил)"
+    else:
+        llm_status = "❌ недоступен"
+
     lines = [
         "📊 Отчёт об обучении",
         f"Outcomes: {state.total_outcomes_analyzed}",
         f"Win rate: {state.win_rate*100:.1f}%",
         f"Avg win: +{state.avg_win_pct:.2f}% | Avg loss: {state.avg_loss_pct:.2f}%",
+        f"LLM: {llm_status}",
         f"Обновлено: {state.last_updated[:16]}",
         "",
     ]
