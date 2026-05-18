@@ -48,7 +48,7 @@ def _format_trade_plan_html(r: SignalReport) -> str:
         return "<i>Нет торгового плана (|score| &lt; порога или нет ATR).</i>"
     bold = r.signal_tier == "A"
     d_icon = "🟢" if tp.direction == "long" else "🔴"
-    d_label = "LONG" if tp.direction == "long" else "SHORT"
+    d_label = "ПОКУПКА" if tp.direction == "long" else "ПРОДАЖА"
     head = f"{d_icon} <b>{d_label} {_esc(r.symbol)} @ {tp.entry_price:.2f}</b>" if bold else (
         f"{d_icon} {d_label} {_esc(r.symbol)} @ {tp.entry_price:.2f}"
     )

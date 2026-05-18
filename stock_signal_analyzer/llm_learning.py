@@ -241,34 +241,34 @@ def _numeric_analysis(records: list[OutcomeRecord]) -> dict[str, Any]:
 
 # ── LLM анализ ───────────────────────────────────────────────────────────────
 
-_LLM_SYSTEM_PROMPT = """You are a quantitative trading analyst. You analyze historical trading signal outcomes to find patterns.
+_LLM_SYSTEM_PROMPT = """Ты — опытный трейдер-аналитик. Твоя задача — проанализировать историю торговых сигналов и найти закономерности.
 
-Given statistics about winning and losing trades, identify:
-1. What component combinations lead to wins (e.g., "high technical + high momentum = strong win")
-2. What conditions lead to losses (e.g., "high news but low volume = false signal")
-3. Weight adjustment recommendations (which components to trust more/less)
-4. Optimal thresholds for signal quality
+По статистике прибыльных и убыточных сделок определи:
+1. Какие сочетания факторов ведут к прибыли (например: «сильная техника + импульс = хороший рост»)
+2. При каких условиях сигналы обманывают (например: «новости позитивные, но объёма нет — ложный сигнал»)
+3. Какие факторы доверять больше, какие меньше (корректировки весов)
+4. Оптимальные пороги качества сигнала
 
-Return ONLY valid JSON with this structure:
+Ответь ТОЛЬКО валидным JSON со структурой:
 {
-  "win_patterns": ["pattern1", "pattern2", "pattern3"],
-  "loss_patterns": ["pattern1", "pattern2"],
+  "win_patterns": ["паттерн1", "паттерн2", "паттерн3"],
+  "loss_patterns": ["паттерн1", "паттерн2"],
   "weight_recommendations": {
     "technical": 1.0,
     "momentum": 1.0,
     "news": 1.0,
     "volume": 1.0
   },
-  "recommendations": ["recommendation1", "recommendation2"],
-  "confidence_note": "brief assessment of data quality"
+  "recommendations": ["совет1", "совет2"],
+  "confidence_note": "краткая оценка качества данных"
 }
 
-Rules:
-- weight_recommendations are multipliers (1.0 = no change, 1.2 = increase 20%, 0.8 = decrease 20%)
-- Keep multipliers between 0.7 and 1.3
-- Be specific about patterns (mention score ranges, component values)
-- Maximum 5 patterns each, 3 recommendations
-- Be concise"""
+Правила:
+- weight_recommendations — множители (1.0 = без изменений, 1.2 = увеличить на 20%, 0.8 = уменьшить на 20%)
+- Держи множители в диапазоне 0.7–1.3
+- Будь конкретен в паттернах (указывай диапазоны оценок, значения компонентов)
+- Не больше 5 паттернов успеха, 5 паттернов неудачи, 3 совета
+- Пиши кратко и по делу на русском языке"""
 
 
 def _build_llm_analysis_prompt(records: list[OutcomeRecord], numeric: dict[str, Any]) -> str:
@@ -282,45 +282,51 @@ def _build_llm_analysis_prompt(records: list[OutcomeRecord], numeric: dict[str, 
     top_losses = sorted_by_pnl[-5:]
 
     lines = [
-        f"Total outcomes: {len(records)} ({len(wins)} wins, {len(losses)} losses)",
-        f"Win rate: {len(wins)/len(records)*100:.1f}%",
-        f"Avg win: +{np.mean([r.pnl_pct for r in wins]):.2f}%",
-        f"Avg loss: {np.mean([r.pnl_pct for r in losses]):.2f}%",
+        f"Всего сделок: {len(records)} ({len(wins)} прибыльных, {len(losses)} убыточных)",
+        f"Доля успешных: {len(wins)/len(records)*100:.1f}%",
+        f"Средний плюс: +{np.mean([r.pnl_pct for r in wins]):.2f}%",
+        f"Средний минус: {np.mean([r.pnl_pct for r in losses]):.2f}%",
         "",
-        "Component means (wins vs losses):",
+        "Средние значения факторов (прибыльные vs убыточные):",
     ]
 
+    comp_ru = {
+        "technical_score": "техника",
+        "momentum_score": "импульс",
+        "news_score": "новости",
+        "volume_score": "объём",
+    }
     for comp in ("technical_score", "momentum_score", "news_score", "volume_score"):
         d = numeric.get(comp, {})
-        lines.append(f"  {comp}: wins={d.get('win_mean', 0):.3f}, losses={d.get('loss_mean', 0):.3f}, delta={d.get('delta', 0):.3f}")
+        lines.append(f"  {comp_ru[comp]}: прибыльные={d.get('win_mean', 0):.3f}, убыточные={d.get('loss_mean', 0):.3f}, разница={d.get('delta', 0):.3f}")
 
     lines.append("")
-    lines.append("Top 5 winning trades:")
+    lines.append("Топ-5 лучших сделок:")
     for r in top_wins:
-        lines.append(f"  {r.symbol} tier={r.tier} score={r.score:.3f} conf={r.confidence:.2f} "
-                     f"tech={r.technical_score:.3f} mom={r.momentum_score:.3f} "
-                     f"news={r.news_score:.3f} vol={r.volume_score:.3f} → PnL={r.pnl_pct:+.2f}%")
+        lines.append(f"  {r.symbol} класс={r.tier} оценка={r.score:.3f} уверенность={r.confidence:.2f} "
+                     f"тех={r.technical_score:.3f} имп={r.momentum_score:.3f} "
+                     f"нов={r.news_score:.3f} об={r.volume_score:.3f} → результат={r.pnl_pct:+.2f}%")
 
     lines.append("")
-    lines.append("Top 5 losing trades:")
+    lines.append("Топ-5 худших сделок:")
     for r in top_losses:
-        lines.append(f"  {r.symbol} tier={r.tier} score={r.score:.3f} conf={r.confidence:.2f} "
-                     f"tech={r.technical_score:.3f} mom={r.momentum_score:.3f} "
-                     f"news={r.news_score:.3f} vol={r.volume_score:.3f} → PnL={r.pnl_pct:+.2f}%")
+        lines.append(f"  {r.symbol} класс={r.tier} оценка={r.score:.3f} уверенность={r.confidence:.2f} "
+                     f"тех={r.technical_score:.3f} имп={r.momentum_score:.3f} "
+                     f"нов={r.news_score:.3f} об={r.volume_score:.3f} → результат={r.pnl_pct:+.2f}%")
 
     # Tier breakdown
     tier_stats = numeric.get("tier_stats", {})
     if tier_stats:
         lines.append("")
-        lines.append("By signal tier:")
+        lines.append("По классам сигналов:")
         for tier, stats in sorted(tier_stats.items()):
-            lines.append(f"  {tier}: {stats['count']} trades, win_rate={stats['win_rate']*100:.1f}%, avg_pnl={stats['avg_pnl']:+.2f}%")
+            lines.append(f"  {tier}: {stats['count']} сделок, успешных={stats['win_rate']*100:.1f}%, средний результат={stats['avg_pnl']:+.2f}%")
 
     lines.append("")
-    lines.append(f"Optimal score threshold (from numeric): {numeric.get('optimal_score_threshold', 0.25):.2f} "
-                 f"(win_rate={numeric.get('best_score_win_rate', 0)*100:.1f}%)")
-    lines.append(f"Optimal confidence threshold: {numeric.get('optimal_confidence_threshold', 0.55):.2f} "
-                 f"(win_rate={numeric.get('best_conf_win_rate', 0)*100:.1f}%)")
+    lines.append(f"Оптимальный порог оценки: {numeric.get('optimal_score_threshold', 0.25):.2f} "
+                 f"(успешных={numeric.get('best_score_win_rate', 0)*100:.1f}%)")
+    lines.append(f"Оптимальный порог уверенности: {numeric.get('optimal_confidence_threshold', 0.55):.2f} "
+                 f"(успешных={numeric.get('best_conf_win_rate', 0)*100:.1f}%)")
 
     return "\n".join(lines)
 
@@ -582,43 +588,59 @@ def format_learning_report() -> str:
     else:
         llm_status = "❌ недоступен"
 
+    comp_names = {
+        "technical": "Технический анализ",
+        "momentum": "Импульс",
+        "news": "Новости",
+        "volume": "Объём",
+    }
+
     lines = [
         "📊 Отчёт об обучении",
-        f"Outcomes: {state.total_outcomes_analyzed}",
-        f"Win rate: {state.win_rate*100:.1f}%",
-        f"Avg win: +{state.avg_win_pct:.2f}% | Avg loss: {state.avg_loss_pct:.2f}%",
-        f"LLM: {llm_status}",
+        f"Проанализировано сигналов: {state.total_outcomes_analyzed}",
+        f"Доля успешных: {state.win_rate*100:.1f}%",
+        f"Средний плюс: +{state.avg_win_pct:.2f}% | Средний минус: {state.avg_loss_pct:.2f}%",
+        f"Нейросеть (LLM): {llm_status}",
         f"Обновлено: {state.last_updated[:16]}",
         "",
     ]
 
     if state.weight_adjustments:
-        lines.append("Корректировки весов:")
+        lines.append("Насколько доверять каждому фактору:")
         for comp, mult in sorted(state.weight_adjustments.items()):
             arrow = "↑" if mult > 1.02 else ("↓" if mult < 0.98 else "→")
-            lines.append(f"  {arrow} {comp}: ×{mult:.2f}")
+            name = comp_names.get(comp, comp)
+            if mult > 1.02:
+                comment = "доверять больше"
+            elif mult < 0.98:
+                comment = "доверять меньше"
+            else:
+                comment = "без изменений"
+            lines.append(f"  {arrow} {name}: ×{mult:.2f} ({comment})")
         lines.append("")
 
     if state.ic_scores:
-        lines.append("IC (Information Coefficient):")
+        lines.append("Предсказательная сила факторов (чем дальше от нуля, тем точнее):")
         for comp, ic in sorted(state.ic_scores.items(), key=lambda x: abs(x[1]), reverse=True):
-            lines.append(f"  {comp}: {ic:+.3f}")
+            name = comp_names.get(comp, comp)
+            strength = "сильная" if abs(ic) > 0.1 else ("средняя" if abs(ic) > 0.05 else "слабая")
+            lines.append(f"  {name}: {ic:+.3f} ({strength})")
         lines.append("")
 
     if state.win_patterns:
-        lines.append("Паттерны успеха:")
+        lines.append("Что работает (паттерны успеха):")
         for p in state.win_patterns[:3]:
             lines.append(f"  ✓ {p}")
         lines.append("")
 
     if state.loss_patterns:
-        lines.append("Паттерны неудачи:")
+        lines.append("Что не работает (паттерны неудачи):")
         for p in state.loss_patterns[:3]:
             lines.append(f"  ✗ {p}")
         lines.append("")
 
     if state.recommendations:
-        lines.append("Рекомендации:")
+        lines.append("Советы:")
         for r in state.recommendations[:3]:
             lines.append(f"  • {r}")
 

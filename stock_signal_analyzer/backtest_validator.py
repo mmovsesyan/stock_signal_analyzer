@@ -510,18 +510,18 @@ def format_validation_result(result: ValidationResult) -> str:
         lines.append("")
         lines.append(f"📊 <b>История: {gs.tier}/{gs.direction}/{gs.market}</b>")
         lines.append(f"  Сделок: {gs.total_trades}")
-        lines.append(f"  Win rate: {gs.win_rate:.0%}")
-        lines.append(f"  Avg PnL: {gs.avg_pnl_pct:+.2f}%")
+        lines.append(f"  Доля прибыльных: {gs.win_rate:.0%}")
+        lines.append(f"  Средний результат: {gs.avg_pnl_pct:+.2f}%")
         if gs.profit_factor > 0:
-            lines.append(f"  Profit factor: {gs.profit_factor:.2f}")
+            lines.append(f"  Прибыльность: {gs.profit_factor:.2f}")
 
     if result.overall_stats:
         oa = result.overall_stats
         lines.append("")
         lines.append(f"📈 <b>Общая статистика</b>")
         lines.append(f"  Всего сделок: {oa.total_trades}")
-        lines.append(f"  Общий win rate: {oa.win_rate:.0%}")
-        lines.append(f"  Общий PnL: {oa.total_pnl_pct:+.2f}%")
+        lines.append(f"  Доля прибыльных: {oa.win_rate:.0%}")
+        lines.append(f"  Общий результат: {oa.total_pnl_pct:+.2f}%")
 
     return "\n".join(lines)
 
@@ -534,26 +534,26 @@ def format_backtest_report(report: BacktestReport) -> str:
 
     o = report.overall
     lines.append(f"Всего сделок: <b>{report.total_trades}</b>")
-    lines.append(f"Общий win rate: <b>{o.win_rate:.0%}</b>")
-    lines.append(f"Общий PnL: <b>{report.total_return_pct:+.2f}%</b>")
-    lines.append(f"Max drawdown: {report.max_drawdown_pct:.1f}%")
+    lines.append(f"Прибыльных: <b>{o.win_rate:.0%}</b>")
+    lines.append(f"Общая доходность: <b>{report.total_return_pct:+.2f}%</b>")
+    lines.append(f"Максимальная просадка: {report.max_drawdown_pct:.1f}%")
     lines.append("")
 
-    lines.append("<b>По тирам:</b>")
+    lines.append("<b>По классам сигналов:</b>")
     for tier, gs in sorted(report.by_tier.items()):
         emoji = "✅" if gs.win_rate >= 0.6 else "⚠️"
-        lines.append(f"  {emoji} Tier {tier}: WR={gs.win_rate:.0%}, PnL={gs.total_pnl_pct:+.2f}%")
+        lines.append(f"  {emoji} Класс {tier}: прибыльных={gs.win_rate:.0%}, доходность={gs.total_pnl_pct:+.2f}%")
     lines.append("")
 
     lines.append("<b>По рынкам:</b>")
     for market, gs in sorted(report.by_market.items()):
         label = "🇷🇺 РФ" if market == "ru" else "🇺🇸 US"
-        lines.append(f"  {label}: WR={gs.win_rate:.0%}, PnL={gs.total_pnl_pct:+.2f}%")
+        lines.append(f"  {label}: прибыльных={gs.win_rate:.0%}, доходность={gs.total_pnl_pct:+.2f}%")
     lines.append("")
 
     lines.append("<b>По направлениям:</b>")
     for direction, gs in sorted(report.by_direction.items()):
-        label = "📈 Long" if direction == "long" else "📉 Short"
-        lines.append(f"  {label}: WR={gs.win_rate:.0%}, PnL={gs.total_pnl_pct:+.2f}%")
+        label = "📈 Покупка" if direction == "long" else "📉 Продажа"
+        lines.append(f"  {label}: прибыльных={gs.win_rate:.0%}, доходность={gs.total_pnl_pct:+.2f}%")
 
     return "\n".join(lines)
