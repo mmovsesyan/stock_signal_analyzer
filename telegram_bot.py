@@ -2402,14 +2402,17 @@ async def cmd_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("⛔ Только для администратора.")
         return
     try:
-        msg = await update.message.reply_text("🔄 Запускаю обучение…", parse_mode=ParseMode.HTML)
+        import asyncio
+        msg = await update.message.reply_text("🔄 Проверяю исходы сигналов…", parse_mode=ParseMode.HTML)
         from stock_signal_analyzer.outcome_tracker import OutcomeTracker
         from stock_signal_analyzer.llm_learning import run_learning_cycle, format_learning_report
         tracker = OutcomeTracker()
-        tracker.check_all_outcomes()
-        state = run_learning_cycle(force=True)
+        # Run blocking outcome check in thread pool so Telegram event loop stays responsive
+        await asyncio.to_thread(tracker.check_all_outcomes)
+        await msg.edit_text("🔄 Обучаю модель…", parse_mode=ParseMode.HTML)
+        state = await asyncio.to_thread(run_learning_cycle, force=True)
         if state:
-            report = format_learning_report()
+            report = await asyncio.to_thread(format_learning_report)
             await msg.edit_text(report if report else "✅ Обучение завершено.", parse_mode=ParseMode.HTML)
         else:
             await msg.edit_text("✅ Обучение завершено (недостаточно данных).", parse_mode=ParseMode.HTML)
