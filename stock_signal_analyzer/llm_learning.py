@@ -505,6 +505,8 @@ def load_learning_state() -> LearningState | None:
             last_updated=data.get("last_updated", ""),
             data_hash=data.get("data_hash", ""),
             ic_scores=data.get("ic_scores", {}),
+            llm_used=data.get("llm_used", False),
+            llm_provider=data.get("llm_provider", ""),
         )
     except (json.JSONDecodeError, OSError) as e:
         _log.warning("Failed to load learning state: %s", e)
@@ -529,6 +531,8 @@ def _save_learning_state(state: LearningState) -> None:
         "last_updated": state.last_updated,
         "data_hash": state.data_hash,
         "ic_scores": state.ic_scores,
+        "llm_used": state.llm_used,
+        "llm_provider": state.llm_provider,
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
