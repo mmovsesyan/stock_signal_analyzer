@@ -224,6 +224,8 @@ class DailyUsage(Base):
     user_id = Column(Integer, nullable=False, index=True)
     date = Column(String(10), nullable=False)  # YYYY-MM-DD
     count = Column(Integer, default=0)
+    us_count = Column(Integer, default=0)  # анализов US тикеров
+    ru_count = Column(Integer, default=0)  # анализов RU тикеров
 
     __table_args__ = (
         Index("ix_daily_usage_user_date", "user_id", "date", unique=True),

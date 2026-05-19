@@ -22,8 +22,8 @@ _log = logging.getLogger(__name__)
 SUBSCRIPTIONS_ENABLED = os.environ.get("SUBSCRIPTION_ENABLED", "0").strip() == "1"
 
 # ── LRU-кэш дневных лимитов (обновляется из БД, переживает краткие restart-и) ──
-# Формат: {user_id: (date_str, count)}
-_usage_cache: dict[int, tuple[str, int]] = {}
+# Формат: {user_id: (date_str, total, us_count, ru_count)}
+_usage_cache: dict[int, tuple[str, int, int, int]] = {}
 
 # Кэш последнего известного тарифа (переживает кратковременные ошибки БД)
 _tier_cache: dict[int, tuple[str, float]] = {}  # user_id: (tier, timestamp)
@@ -34,20 +34,22 @@ def _today_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _get_usage_db(user_id: int, today: str) -> int:
-    """Получить счётчик из БД (fallback → 0)."""
+def _get_usage_db(user_id: int, today: str) -> tuple[int, int, int]:
+    """Получить счётчики из БД (fallback → 0,0,0)."""
     try:
         from .db import get_session, DailyUsage
         with get_session(read_only=True) as session:
             row = session.query(DailyUsage).filter_by(
                 user_id=user_id, date=today
             ).first()
-            return row.count if row else 0
+            if row:
+                return row.count, row.us_count, row.ru_count
+            return 0, 0, 0
     except Exception:
-        return 0
+        return 0, 0, 0
 
 
-def _increment_usage_db(user_id: int, today: str) -> None:
+def _increment_usage_db(user_id: int, today: str, is_us: bool, is_ru: bool) -> None:
     """Атомарно инкрементировать счётчик (UPSERT)."""
     try:
         from .db import get_session, DailyUsage
@@ -57,30 +59,38 @@ def _increment_usage_db(user_id: int, today: str) -> None:
             ).first()
             if row:
                 row.count += 1
+                if is_us:
+                    row.us_count += 1
+                if is_ru:
+                    row.ru_count += 1
             else:
-                session.add(DailyUsage(user_id=user_id, date=today, count=1))
+                session.add(DailyUsage(
+                    user_id=user_id, date=today, count=1,
+                    us_count=1 if is_us else 0,
+                    ru_count=1 if is_ru else 0,
+                ))
     except Exception:
         pass  # fail-open: если БД недоступна, лимит не блокирует
 
 
-def _usage_for(user_id: int) -> int:
+def _usage_for(user_id: int) -> tuple[int, int, int]:
     """Получить текущий дневной счётчик (кэш + БД fallback)."""
     today = _today_key()
     cached = _usage_cache.get(user_id)
     if cached and cached[0] == today:
-        return cached[1]
+        return cached[1], cached[2], cached[3]
     # Cache miss или новый день — грузим из БД
-    count = _get_usage_db(user_id, today)
-    _usage_cache[user_id] = (today, count)
-    return count
+    total, us_count, ru_count = _get_usage_db(user_id, today)
+    _usage_cache[user_id] = (today, total, us_count, ru_count)
+    return total, us_count, ru_count
 
 
-def _bump_usage(user_id: int) -> None:
+def _bump_usage(user_id: int, is_us: bool, is_ru: bool) -> None:
     """Инкрементировать счётчик (кэш + БД)."""
     today = _today_key()
-    _, count = _usage_cache.get(user_id, (today, 0))
-    _usage_cache[user_id] = (today, count + 1)
-    _increment_usage_db(user_id, today)
+    _, total, us_count, ru_count = _usage_cache.get(user_id, (today, 0, 0, 0))
+    _usage_cache[user_id] = (today, total + 1, us_count + (1 if is_us else 0), ru_count + (1 if is_ru else 0))
+    _increment_usage_db(user_id, today, is_us, is_ru)
 
 
 @dataclass
@@ -88,6 +98,8 @@ class TierLimits:
     """Лимиты тарифа."""
     name: str
     daily_analyses: int
+    daily_us_analyses: int
+    daily_ru_analyses: int
     markets: list[str]  # ["US"], ["US", "RU"], ["US", "RU", "all"]
     llm_sentiment: bool
     per_user_learning: bool
@@ -104,8 +116,10 @@ class TierLimits:
 TIERS: dict[str, TierLimits] = {
     "free": TierLimits(
         name="Free",
-        daily_analyses=5,
-        markets=["US"],
+        daily_analyses=4,
+        daily_us_analyses=2,
+        daily_ru_analyses=2,
+        markets=["US", "RU"],
         llm_sentiment=False,
         per_user_learning=False,
         priority_queue=False,
@@ -119,7 +133,9 @@ TIERS: dict[str, TierLimits] = {
     ),
     "pro": TierLimits(
         name="Pro",
-        daily_analyses=50,
+        daily_analyses=20,
+        daily_us_analyses=10,
+        daily_ru_analyses=10,
         markets=["US", "RU"],
         llm_sentiment=True,
         per_user_learning=False,
@@ -135,6 +151,8 @@ TIERS: dict[str, TierLimits] = {
     "premium": TierLimits(
         name="Premium",
         daily_analyses=999,
+        daily_us_analyses=999,
+        daily_ru_analyses=999,
         markets=["US", "RU", "all"],
         llm_sentiment=True,
         per_user_learning=True,
@@ -198,9 +216,9 @@ def get_tier_limits(tier: str) -> TierLimits:
     return TIERS.get(tier, TIERS["free"])
 
 
-def check_rate_limit(user_id: int) -> tuple[bool, str]:
+def check_rate_limit(user_id: int, symbol: str) -> tuple[bool, str]:
     """
-    Проверить, не превышен ли дневной лимит.
+    Проверить, не превышен ли дневной лимит (с разбивкой по рынкам).
     Возвращает (allowed, message).
     Счётчик хранится в БД (persistent across restarts) + LRU-кэш in-memory.
     """
@@ -209,15 +227,31 @@ def check_rate_limit(user_id: int) -> tuple[bool, str]:
 
     tier = get_user_tier(user_id)
     limits = get_tier_limits(tier)
-    used = _usage_for(user_id)
+    total, us_count, ru_count = _usage_for(user_id)
 
-    if used >= limits.daily_analyses:
+    is_ru = symbol.strip().upper().endswith(".ME")
+    is_us = not is_ru
+
+    # Общий лимит
+    if total >= limits.daily_analyses:
         return False, (
             f"Достигнут дневной лимит ({limits.daily_analyses} анализов для тарифа {limits.name}). "
             f"Обновите подписку для увеличения лимита."
         )
 
-    _bump_usage(user_id)
+    # Лимит по рынку
+    if is_us and us_count >= limits.daily_us_analyses:
+        return False, (
+            f"Достигнут дневной лимит US анализов ({limits.daily_us_analyses} для тарифа {limits.name}). "
+            f"Обновите подписку для увеличения лимита."
+        )
+    if is_ru and ru_count >= limits.daily_ru_analyses:
+        return False, (
+            f"Достигнут дневной лимит RU анализов ({limits.daily_ru_analyses} для тарифа {limits.name}). "
+            f"Обновите подписку для увеличения лимита."
+        )
+
+    _bump_usage(user_id, is_us, is_ru)
     return True, ""
 
 
@@ -243,11 +277,12 @@ def format_subscription_info(user_id: int) -> str:
     """Форматировать информацию о подписке для Telegram."""
     tier = get_user_tier(user_id)
     limits = get_tier_limits(tier)
-    used = _usage_for(user_id)
+    total, us_count, ru_count = _usage_for(user_id)
 
     lines = [
         f"📋 Подписка: <b>{limits.name}</b>",
-        f"Анализов сегодня: {used}/{limits.daily_analyses}",
+        f"Всего: {total}/{limits.daily_analyses}",
+        f"US: {us_count}/{limits.daily_us_analyses}  |  RU: {ru_count}/{limits.daily_ru_analyses}",
         f"Рынки: {', '.join(limits.markets)}",
         f"LLM sentiment: {'✅' if limits.llm_sentiment else '❌'}",
         f"Автосбор: {'✅' if limits.autocollect else '❌'}",
