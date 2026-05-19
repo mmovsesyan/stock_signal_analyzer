@@ -63,33 +63,33 @@ def classify_signal_tier(
     reasons_a: list[str] = []
 
     # Dynamic thresholds based on directional regime
-    # Neutral defaults: conservative (validated by backtest for quality)
-    score_thr = 0.46
-    conf_thr = 0.60
+    # Neutral defaults: calibrated for typical score distribution
+    score_thr = 0.40
+    conf_thr = 0.55
     adx_thr = 20.0
 
     if directional_regime is not None:
         if directional_regime.regime == "bull":
             if total > 0:
-                score_thr = 0.40  # easier for long
-                conf_thr = 0.52
+                score_thr = 0.35  # aligned long
+                conf_thr = 0.50
                 adx_thr = 16.0
             else:
-                score_thr = 0.50  # harder for short
-                conf_thr = 0.60
+                score_thr = 0.42  # counter-trend short
+                conf_thr = 0.55
                 adx_thr = 20.0
         elif directional_regime.regime == "bear":
             if total < 0:
-                score_thr = 0.40  # easier for short
-                conf_thr = 0.52
+                score_thr = 0.35  # aligned short
+                conf_thr = 0.50
                 adx_thr = 16.0
             else:
-                score_thr = 0.50  # harder for long
-                conf_thr = 0.60
+                score_thr = 0.42  # counter-trend long
+                conf_thr = 0.55
                 adx_thr = 20.0
         elif directional_regime.regime == "sideways":
-            score_thr = 0.42
-            conf_thr = 0.60
+            score_thr = 0.38
+            conf_thr = 0.55
             adx_thr = 20.0
 
     if abs_t < score_thr:
@@ -118,8 +118,8 @@ def classify_signal_tier(
         )
 
     # Tier B: динамические пороги ADX (строже в боковике/нейтрале, мягче в тренде)
-    tier_b_score_thr = 0.32
-    tier_b_conf_thr = 0.50
+    tier_b_score_thr = 0.26
+    tier_b_conf_thr = 0.45
     tier_b_adx_thr = 20.0
     if directional_regime is not None and directional_regime.regime in ("bull", "bear"):
         aligned = (
@@ -127,8 +127,8 @@ def classify_signal_tier(
             or (directional_regime.regime == "bear" and total < 0)
         )
         if aligned:
-            tier_b_score_thr = 0.28
-            tier_b_conf_thr = 0.45
+            tier_b_score_thr = 0.24
+            tier_b_conf_thr = 0.40
             tier_b_adx_thr = 18.0
     if (
         abs_t >= tier_b_score_thr

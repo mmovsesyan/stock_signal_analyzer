@@ -163,7 +163,7 @@ def _simple_plan(ref_price: float, atr_pct: float, score: float, tier: str, conf
 
     # Проверяем минимальный R:R — если не достигается, возвращаем none_plan
     min_rr = _MIN_RR_C_CLASS if tier == "C" else _MIN_RR
-    if rr1 < min_rr:
+    if rr1 + 1e-9 < min_rr:
         return _none_plan(
             ref_price,
             f"Нет торгового плана (R:R={rr1:.2f} < {min_rr:.1f} — риск/доходность неприемлемы).",
@@ -317,7 +317,7 @@ def build_trade_plan(
 
     # Проверяем минимальный R:R — если не достигается, план не генерируем
     min_rr = _MIN_RR_C_CLASS if signal_tier == "C" else _MIN_RR
-    if rr1 < min_rr:
+    if rr1 + 1e-9 < min_rr:
         return _none_plan(
             ref_price,
             f"Нет торгового плана (R:R={rr1:.2f} < {min_rr:.1f} — риск/доходность неприемлемы).",
