@@ -262,9 +262,9 @@ def _simulate_on_candles(
             has_pat = bool(tech.pattern_summary and tech.pattern_summary.strip())
             tier, _ = classify_signal_tier(
                 total=score, confidence=confidence, macro_dampening=1.0,
-                adx14=tech.adx14, news_score=0.0, liq_mult=1.0,
-                vol_align_mult=1.0, has_chart_pattern=has_pat,
+                adx14=tech.adx14, news_score=0.0, has_chart_pattern=has_pat,
                 weekly_aligned=True, earnings_window=False, index_headwind=False,
+                market_regime="normal",
             )
 
             tier_idx = tier_order.get(tier, 2)

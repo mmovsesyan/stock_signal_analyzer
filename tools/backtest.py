@@ -117,6 +117,11 @@ def _simulate_trade(
     except (ValueError, TypeError):
         return None
 
+    # Сигналы из будущего или сегодняшние — ещё не отыгрались
+    today = datetime.now().date()
+    if dt_signal.date() >= today:
+        return None
+
     # Загружаем на 1 день больше: первый день — для Open (реальный вход)
     start = (dt_signal + timedelta(days=1)).strftime("%Y-%m-%d")
     end = (dt_signal + timedelta(days=max_hold + 7)).strftime("%Y-%m-%d")
@@ -401,9 +406,18 @@ def main() -> int:
     print(f"Загружено {len(signals)} сигналов. Комиссия: {args.commission}% на сделку. Загрузка истории...")
 
     stats = Stats()
+    skipped_recent = 0
     for i, row in enumerate(signals, 1):
         result = _simulate_trade(row, target_n=args.target, commission_pct=args.commission)
         if result is None:
+            # Проверяем, был ли скип из-за свежести сигнала
+            ts_utc = str(row.get("ts_utc", ""))
+            try:
+                dt = datetime.fromisoformat(ts_utc.replace("Z", "+00:00"))
+                if dt.date() >= datetime.now().date():
+                    skipped_recent += 1
+            except Exception:
+                pass
             continue
         stats.total += 1
         stats.pnl_list.append(result.pnl_pct)
@@ -422,6 +436,9 @@ def main() -> int:
             stats.by_month[month_key].append(result.pnl_pct)
         if i % 10 == 0:
             print(f"  обработано {i}/{len(signals)}...")
+
+    if skipped_recent:
+        print(f"  ⚠ {skipped_recent} сигналов пропущено — слишком свежие (ещё не отыгрались).")
 
     _print_stats(stats)
 
