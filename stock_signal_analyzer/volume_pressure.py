@@ -155,7 +155,8 @@ def _moex_volume_score(
         return sc, detail
 
     ratio = snap.voltoday / avg
-    sc = float(max(-1.0, min(1.0, math.tanh(math.log(max(ratio, 1e-6)) * 0.9))))
+    # Коэффициент 0.5 вместо 0.9 — менее агрессивная реакция на отклонения объёма
+    sc = float(max(-1.0, min(1.0, math.tanh(math.log(max(ratio, 1e-6)) * 0.5))))
     detail = (
         f"MOEX: {snap.detail}, отн. к ср. дневн. объёму ≈ {ratio:.2f}x → score={sc:+.3f}"
     )

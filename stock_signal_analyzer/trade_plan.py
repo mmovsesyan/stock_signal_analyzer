@@ -116,7 +116,7 @@ def _none_plan(ref_price: float, reason: str) -> TradePlan:
     )
 
 
-def _simple_plan(ref_price: float, atr_pct: float, score: float, tier: str, confidence: float = 0.3, adx14: float = 20.0, has_pattern: bool = False) -> TradePlan:
+def _simple_plan(ref_price: float, atr_pct: float, score: float, tier: str, confidence: float = 0.3, adx14: float = 20.0, has_pattern: bool = False, hist: pd.DataFrame | None = None) -> TradePlan:
     """
     Упрощённый торговый план для C классов и слабых сигналов.
     Генерирует минимальный план для проверки исходов.
@@ -176,6 +176,8 @@ def _simple_plan(ref_price: float, atr_pct: float, score: float, tier: str, conf
         f"Для C классов: короткое удержание ({max_hold} дней), небольшая позиция ({pos_size:.0f}%)."
     )
 
+    chand_stop = chandelier_stop(hist, direction) if hist is not None else None
+
     return TradePlan(
         direction=direction,
         entry_price=round(ref_price, 4),
@@ -193,6 +195,7 @@ def _simple_plan(ref_price: float, atr_pct: float, score: float, tier: str, conf
         position_size_pct=round(pos_size, 0),
         partial_exit_pct=50.0,
         plan_text=plan_text,
+        chandelier_stop_price=round(chand_stop, 4) if chand_stop is not None else None,
     )
 
 
@@ -219,7 +222,7 @@ def build_trade_plan(
     # Для C классов генерируем упрощённый план для проверки исходов
     if abs(score) < _DIR_THRESHOLD:
         # Слабый сигнал — всё ещё генерируем план, но с осторожными параметрами
-        return _simple_plan(ref_price, atr_pct, score, signal_tier, confidence, adx14, has_pattern)
+        return _simple_plan(ref_price, atr_pct, score, signal_tier, confidence, adx14, has_pattern, hist)
 
     # --- Фильтр боковика ---
     if adx14 < 16.0 and not has_pattern:
