@@ -1371,6 +1371,18 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
         )
         return
 
+    # Уведомление о сильном сигнале при ручном анализе
+    if report.signal_tier == "A":
+        tp = report.trade_plan
+        direction = "📈 ПОКУПКА" if tp and tp.direction == "long" else ("📉 ПРОДАЖА" if tp and tp.direction == "short" else "🔄 Направление")
+        await message.reply_text(
+            f"✅ <b>Класс A — сильный сигнал!</b>\n"
+            f"{direction} {_esc(sym)} @ {report.ref_price:.2f}\n"
+            f"Итог: <b>{report.score:+.3f}</b>  |  R:R {tp.risk_reward_1:.1f}  |  Стоп: {tp.stop_pct:+.1f}%\n"
+            f"Ниже полный отчёт ⬇️",
+            parse_mode=ParseMode.HTML,
+        )
+
     html_text = format_signal_report(report)
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
