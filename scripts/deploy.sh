@@ -1074,7 +1074,7 @@ do_backtest() {
     case $choice in
         0)
             local log_path
-            log_path=$(ask_input "Путь к signals.jsonl" "data/signals.jsonl")
+            log_path=$(ask_input "Путь к signals.jsonl" "/data/signals/signals.jsonl")
             local tier
             tier=$(ask_input "Минимальный класс (A/B/C)" "B")
             docker compose exec -T api python tools/backtest.py "$log_path" --min-tier "$tier"

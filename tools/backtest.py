@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -384,7 +385,8 @@ def _print_forward_metrics(fm: ForwardMetrics) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Бэктест сигналов из JSONL.")
-    p.add_argument("path", help="Файл .jsonl (SSA_SIGNAL_LOG)")
+    default_path = os.environ.get("SSA_SIGNAL_LOG", "/data/signals/signals.jsonl")
+    p.add_argument("path", nargs="?", default=default_path, help="Файл .jsonl (SSA_SIGNAL_LOG)")
     p.add_argument("--min-tier", default=None, choices=["A", "B", "C"], help="Минимальный класс (A = только A)")
     p.add_argument("--target", type=int, default=1, choices=[1, 2], help="Какую цель проверять (1 или 2)")
     p.add_argument("--commission", type=float, default=0.1, help="Комиссия за сделку в %% (по умолчанию 0.1%%)")
