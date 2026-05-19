@@ -47,6 +47,21 @@ def _format_trade_plan_html(r: SignalReport) -> str:
             return "<i>Нет торгового плана (класс C — наблюдение).</i>"
         return "<i>Нет торгового плана (|score| &lt; порога или нет ATR).</i>"
     bold = r.signal_tier == "A"
+    tier = r.signal_tier
+    if tier == "C":
+        d_icon = "⚪"
+        d_label = "НАБЛЮДЕНИЕ"
+        head = f"{d_icon} {d_label} {_esc(r.symbol)} @ {tp.entry_price:.2f}"
+        lines = [
+            "ТОРГОВЫЙ ПЛАН (класс C — наблюдение, не вход)",
+            head,
+            f"Стоп-ориентир: {tp.stop_price:.2f} ({tp.stop_pct:+.2f}%)",
+            f"Цель 1 (ориентир): {tp.target1_price:.2f} ({tp.target1_pct:+.2f}%)  R:R {tp.risk_reward_1:.1f}",
+            f"Цель 2 (ориентир): {tp.target2_price:.2f} ({tp.target2_pct:+.2f}%)  R:R {tp.risk_reward_2:.1f}",
+            f"Удержание: до {tp.max_hold_days} дней  |  Позиция: {tp.position_size_pct:.0f}%",
+            f"Класс: <b>C</b> (не входить — только наблюдать)",
+        ]
+        return "\n".join(lines)
     d_icon = "🟢" if tp.direction == "long" else "🔴"
     d_label = "ПОКУПКА" if tp.direction == "long" else "ПРОДАЖА"
     head = f"{d_icon} <b>{d_label} {_esc(r.symbol)} @ {tp.entry_price:.2f}</b>" if bold else (
@@ -187,7 +202,7 @@ def _plain_language_summary(r: SignalReport) -> str:
     if r.macro_dampening < 0.85:
         parts.append("Макро-фон неблагоприятный — сократите риск или отложите вход.")
     tp = r.trade_plan
-    if tp and tp.direction != "none" and tp.position_size_pct > 0:
+    if tp and tp.direction != "none" and tp.position_size_pct > 0 and tier != "C":
         parts.append(
             f"Рекомендуемый размер позиции: <b>{tp.position_size_pct:.0f}%</b> от капитала. "
             f"Не превышайте — это защита от серии убытков."
