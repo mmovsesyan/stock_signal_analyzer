@@ -1349,10 +1349,10 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
     # Фильтрация класса C — не показывать слабые сигналы
     if report.signal_tier == "C":
         await message.reply_text(
-            f"⚠️ <b>{_esc(sym)}</b> — {report.company}\n\n"
+            f"⚠️ <b>{_esc(sym)}</b> — {_esc(report.company)}\n\n"
             f"<b>Класс C: слабый/противоречивый сигнал</b>\n\n"
             f"Этот сигнал не имеет торгового плана и не рекомендуется для торговли.\n\n"
-            f"Почему: {report.tier_rationale}\n\n"
+            f"Почему: {_esc(report.tier_rationale)}\n\n"
             f"<i>Лучше наблюдать и не торговать. Подождите более сильного сигнала (класс A или B).</i>",
             parse_mode=ParseMode.HTML,
         )
@@ -2417,13 +2417,8 @@ async def cmd_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     try:
         import asyncio
-        msg = await update.message.reply_text("🔄 Проверяю исходы сигналов…")
-        from stock_signal_analyzer.outcome_tracker import OutcomeTracker
+        msg = await update.message.reply_text("🔄 Обучаю модель…")
         from stock_signal_analyzer.llm_learning import run_learning_cycle, format_learning_report
-        tracker = OutcomeTracker()
-        # Run blocking outcome check in thread pool so Telegram event loop stays responsive
-        await asyncio.to_thread(tracker.check_all_outcomes)
-        await msg.edit_text("🔄 Обучаю модель…")
         state = await asyncio.to_thread(run_learning_cycle, force=True)
         if state:
             report = await asyncio.to_thread(format_learning_report)
