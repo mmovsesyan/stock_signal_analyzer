@@ -992,7 +992,7 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
    Определяет, какие сигналы показывают.
 
 🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
-   Порог: |score| ≥ {prefs.strong_threshold:.2f}
+   Приходят все сигналы (A / B / C)
 
 📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
 
@@ -1645,7 +1645,7 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
             None,
             lambda: scan_strong_outside_watchlist(
                 merged,
-                prefs.strong_threshold,
+                0.0,
                 max_symbols=outside_limit,
                 max_workers=2,
             ),
@@ -1995,9 +1995,9 @@ async def cmd_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     prefs = load_prefs(uid)
     if not args:
         await update.message.reply_text(
-            f"Уведомления «сильный сигнал вне списка»: "
+            f"Уведомления «сигнал вне списка»: "
             f"{'вкл' if prefs.notify_strong_outside else 'выкл'} "
-            f"(порог |score| ≥ {prefs.strong_threshold})"
+            f"(все классы A / B / C)"
         )
         return
     v = args[0].lower()
@@ -2642,8 +2642,6 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 continue
             tier = getattr(rep, "signal_tier", "C")
-            if abs(rep.score) < prefs.strong_threshold:
-                continue
             # Отправить уведомление
             text = (
                 f"⭐ <b>Сигнал по вашему watchlist</b>\n"
@@ -2668,7 +2666,7 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             strong = await loop.run_in_executor(
                 None,
-                lambda wl=list(prefs.watchlist), thr=prefs.strong_threshold: scan_strong_outside_watchlist(wl, thr),
+                lambda wl=list(prefs.watchlist): scan_strong_outside_watchlist(wl, 0.0),
             )
         except Exception:
             log.exception("scan outside uid=%s", uid)
