@@ -1359,18 +1359,6 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
     except Exception:
         pass
 
-    # Фильтрация класса C — не показывать слабые сигналы
-    if report.signal_tier == "C":
-        await message.reply_text(
-            f"⚠️ <b>{_esc(sym)}</b> — {_esc(report.company)}\n\n"
-            f"<b>Класс C: слабый/противоречивый сигнал</b>\n\n"
-            f"Этот сигнал не имеет торгового плана и не рекомендуется для торговли.\n\n"
-            f"Почему: {_esc(report.tier_rationale)}\n\n"
-            f"<i>Лучше наблюдать и не торговать. Подождите более сильного сигнала (класс A или B).</i>",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
     # Уведомление о сильном сигнале при ручном анализе
     if report.signal_tier == "A":
         tp = report.trade_plan
@@ -1664,8 +1652,7 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
         )
         outside = await asyncio.wait_for(outside_task, timeout=outside_timeout)
         mset = {normalize_symbol(x) for x in merged}
-        # Фильтрация C классов — не показывать слабые сигналы
-        outside = [(s, r) for s, r in outside if normalize_symbol(s) not in mset and r.signal_tier != "C"]
+        outside = [(s, r) for s, r in outside if normalize_symbol(s) not in mset]
         if outside:
             preview = ", ".join(f"{s} ({r.score:+.2f})" for s, r in outside[:3])
             await message.reply_text(
@@ -2655,9 +2642,6 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 continue
             tier = getattr(rep, "signal_tier", "C")
-            # Уведомляем по tier A и B (не только A)
-            if tier not in ("A", "B"):
-                continue
             if abs(rep.score) < prefs.strong_threshold:
                 continue
             # Отправить уведомление
