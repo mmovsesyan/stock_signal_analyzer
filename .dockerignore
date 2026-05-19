@@ -29,7 +29,7 @@ data/
 logs/
 
 # Tests
-tests/
+# tests/  # included so pytest works inside the container
 pytest.ini
 .pytest_cache/
 .coverage
