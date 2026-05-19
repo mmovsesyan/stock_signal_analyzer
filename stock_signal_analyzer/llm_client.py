@@ -34,14 +34,19 @@ try:
     _OLLAMA_MODEL = _settings.ollama_model
     _OLLAMA_CLOUD_API_KEY = (_settings.ollama_cloud_api_key or "").strip()
     _OLLAMA_CLOUD_MODEL = _settings.ollama_cloud_model
+    _OPENROUTER_API_KEY = (_settings.openrouter_api_key or "").strip()
+    _OPENROUTER_MODEL = _settings.openrouter_model
 except Exception:
     _PROVIDER = os.environ.get("LLM_PROVIDER", "ollama").strip().lower()
     _OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
     _OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b")
     _OLLAMA_CLOUD_API_KEY = os.environ.get("OLLAMA_CLOUD_API_KEY", "").strip()
     _OLLAMA_CLOUD_MODEL = os.environ.get("OLLAMA_CLOUD_MODEL", "qwen2.5:1.5b")
+    _OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    _OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-chat:free")
 
 _OLLAMA_CLOUD_URL = "https://ollama.com/v1/chat/completions"
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 _REQUEST_TIMEOUT = 60.0
 
@@ -49,6 +54,8 @@ _REQUEST_TIMEOUT = 60.0
 def llm_available() -> bool:
     """Проверить доступность LLM (cloud API или локальный)."""
     if _PROVIDER == "ollama_cloud" and _OLLAMA_CLOUD_API_KEY:
+        return True
+    if _PROVIDER == "openrouter" and _OPENROUTER_API_KEY:
         return True
     # Проверяем локальный Ollama (если пользователь поднял сам)
     try:
@@ -84,6 +91,37 @@ def _call_ollama_cloud(messages: list[dict[str, str]], temperature: float = 0.1,
         return content or None
     except Exception as e:
         _log.warning("Ollama Cloud request failed: %s", e)
+        return None
+
+
+def _call_openrouter(messages: list[dict[str, str]], temperature: float = 0.1, max_tokens: int = 512) -> str | None:
+    """Вызвать OpenRouter API (OpenAI-compatible, агрегатор моделей)."""
+    try:
+        payload = {
+            "model": _OPENROUTER_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        r = requests.post(
+            _OPENROUTER_URL,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {_OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/stock-signal-analyzer",
+                "X-Title": "Stock Signal Analyzer",
+            },
+            timeout=_REQUEST_TIMEOUT,
+        )
+        if r.status_code != 200:
+            _log.warning("OpenRouter returned %d: %s", r.status_code, r.text[:200])
+            return None
+        data = r.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return content or None
+    except Exception as e:
+        _log.warning("OpenRouter request failed: %s", e)
         return None
 
 
@@ -136,6 +174,8 @@ def llm_chat(messages: list[dict[str, str]], *, temperature: float = 0.1, max_to
 
     if _PROVIDER == "ollama_cloud" and _OLLAMA_CLOUD_API_KEY:
         return _call_ollama_cloud(messages, temperature, max_tokens)
+    if _PROVIDER == "openrouter" and _OPENROUTER_API_KEY:
+        return _call_openrouter(messages, temperature, max_tokens)
     return _call_ollama_local(messages, temperature, max_tokens)
 
 
@@ -162,4 +202,6 @@ def current_provider() -> str:
     """Вернуть текущего провайдера для логирования."""
     if _PROVIDER == "ollama_cloud" and _OLLAMA_CLOUD_API_KEY:
         return f"ollama_cloud/{_OLLAMA_CLOUD_MODEL}"
+    if _PROVIDER == "openrouter" and _OPENROUTER_API_KEY:
+        return f"openrouter/{_OPENROUTER_MODEL}"
     return f"ollama/{_OLLAMA_MODEL}"

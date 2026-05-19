@@ -34,6 +34,8 @@ class Settings:
     ollama_model: str = "qwen2.5:1.5b"
     ollama_cloud_api_key: str | None = None
     ollama_cloud_model: str = "qwen2.5:1.5b"
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "deepseek/deepseek-chat:free"
     llm_sentiment_enabled: bool = True
     llm_cache_ttl: int = 3600
 
@@ -94,6 +96,8 @@ def get_settings() -> Settings:
         ollama_model=os.environ.get("OLLAMA_MODEL", "qwen2.5:1.5b"),
         ollama_cloud_api_key=os.environ.get("OLLAMA_CLOUD_API_KEY") or None,
         ollama_cloud_model=os.environ.get("OLLAMA_CLOUD_MODEL", "qwen2.5:1.5b"),
+        openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
+        openrouter_model=os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-chat:free"),
         llm_sentiment_enabled=os.environ.get("LLM_SENTIMENT", "1").strip() != "0",
         llm_cache_ttl=int(os.environ.get("LLM_CACHE_TTL", "3600")),
         scheduler_mode=os.environ.get("SCHEDULER_MODE", "apscheduler"),
