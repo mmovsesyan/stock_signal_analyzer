@@ -558,13 +558,18 @@ do_install() {
         local llm="${LLM_SENTIMENT:-1}"
 
         if [ "$llm" = "1" ]; then
-            info "Загружаю LLM модель $model (1-3 мин)..."
-            for i in $(seq 1 20); do
-                if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then break; fi
-                sleep 3
-            done
-            docker compose exec -T ollama ollama pull "$model" 2>/dev/null && \
-                ok "Модель $model загружена" || warn "Модель не загрузилась (можно позже)"
+            local llm_provider_env="${LLM_PROVIDER:-ollama_cloud}"
+            if [ "$llm_provider_env" = "ollama_cloud" ] || [ "$llm_provider_env" = "openrouter" ]; then
+                info "LLM в облачном режиме ($llm_provider_env) — локальная загрузка не требуется."
+            else
+                info "Загружаю LLM модель $model (1-3 мин)..."
+                for i in $(seq 1 20); do
+                    if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then break; fi
+                    sleep 3
+                done
+                docker compose exec -T ollama ollama pull "$model" 2>/dev/null && \
+                    ok "Модель $model загружена" || warn "Модель не загрузилась (можно позже)"
+            fi
         fi
 
         info "Инициализирую базу данных..."
