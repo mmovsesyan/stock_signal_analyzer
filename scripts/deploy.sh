@@ -883,7 +883,7 @@ do_logs() {
             "Telegram бот" \
             "REST API" \
             "Celery Worker" \
-            "Ollama LLM" \
+            "Learning (обучение)" \
             "Все сервисы" \
             "Назад"
         local choice=$?
@@ -891,7 +891,7 @@ do_logs() {
             0) docker compose logs -f --tail 50 bot ;;
             1) docker compose logs -f --tail 50 api ;;
             2) docker compose logs -f --tail 50 worker ;;
-            3) docker compose logs -f --tail 50 ollama ;;
+            3) docker compose logs -f --tail 50 learning ;;
             4) docker compose logs -f --tail 30 ;;
             5) return ;;
         esac

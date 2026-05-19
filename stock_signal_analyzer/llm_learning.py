@@ -585,6 +585,8 @@ def format_learning_report() -> str:
         llm_status = f"✅ {state.llm_provider}"
     elif state.llm_provider:
         llm_status = f"❌ {state.llm_provider} (не ответил)"
+    elif state.total_outcomes_analyzed < _MIN_OUTCOMES:
+        llm_status = "⏳ мало данных (нужно 20+ сигналов для обучения)"
     else:
         llm_status = "❌ недоступен"
 
