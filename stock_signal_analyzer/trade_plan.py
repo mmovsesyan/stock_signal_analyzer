@@ -42,9 +42,9 @@ class TradePlan:
     chandelier_lookback: int = 22
 
 
-# Порог для генерации торгового плана: |score| < 0.25 = недостаточная чёткость сигнала
-# Синхронизировано с порогом B-tier (0.26/0.24), чтобы B-класс получал полный план.
-_DIR_THRESHOLD = 0.25
+# Порог для генерации торгового плана: |score| < 0.23 = недостаточная чёткость сигнала
+# Должен быть ниже минимального B-tier (0.24 aligned), иначе B-класс получит _simple_plan.
+_DIR_THRESHOLD = 0.23
 _SLIPPAGE_ATR_MULT = 0.3
 
 # (stop_mult, target1_mult, target2_mult, hold_days_base, hold_days_trend)
