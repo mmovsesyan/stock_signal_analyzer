@@ -759,12 +759,12 @@ def test_trade_plan_low_adx_no_plan():
 
 
 def test_trade_plan_low_score_no_plan():
-    """|score| < 0.30 → нет торгового плана."""
+    """|score| < _DIR_THRESHOLD → нет торгового плана."""
     tp = build_trade_plan(
-        score=0.25, ref_price=100.0, atr_pct=2.0,
+        score=0.22, ref_price=100.0, atr_pct=2.0,
         signal_tier='A', adx14=25.0
     )
-    assert tp.direction == 'none', "|score|=0.25 должен блокировать план"
+    assert tp.direction == 'none', "|score|=0.22 должен блокировать план (порог 0.23)"
 
 
 def test_trade_plan_zero_risk_no_plan():
@@ -885,16 +885,16 @@ def test_classify_tier_b_requires_adx_20():
 
 
 def test_classify_tier_b_confidence_50():
-    """Tier B требует confidence >= 0.50 (в neutral режиме)."""
+    """Tier B требует confidence >= 0.45 (в neutral режиме)."""
     tier, rationale = classify_signal_tier(
-        total=0.45, confidence=0.48, macro_dampening=0.90,
+        total=0.45, confidence=0.44, macro_dampening=0.90,
         adx14=22.0, news_score=0.2,
         has_chart_pattern=False,
         weekly_aligned=True, earnings_window=False, index_headwind=False,
         market_regime="neutral", directional_regime=None,
     )
-    # Confidence < 0.55 → не tier B в neutral режиме
-    assert tier == 'C', f"confidence=0.48 < 0.55 должен дать C, получили {tier}"
+    # Confidence < 0.45 → не tier B в neutral режиме
+    assert tier == 'C', f"confidence=0.44 < 0.45 должен дать C, получили {tier}"
 
 
 # ===========================================================================
