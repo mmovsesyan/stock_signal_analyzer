@@ -254,13 +254,17 @@ _SYMBOL_TITLES: dict[str, str] = {
 }
 
 
-def _main_menu_keyboard() -> ReplyKeyboardMarkup:
+def _main_menu_keyboard(uid: int = 0) -> ReplyKeyboardMarkup:
+    """Главное меню — для админа показывает кнопку 'Админ'."""
+    rows = [
+        [KeyboardButton("📈 Аналитика"), KeyboardButton("📚 Списки и подбор")],
+        [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Настройки")],
+        [KeyboardButton("🏠 Главное меню"), KeyboardButton("❓ Помощь")],
+    ]
+    if uid and _is_admin(uid):
+        rows.insert(1, [KeyboardButton("Админ")])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton("📈 Аналитика"), KeyboardButton("📚 Списки и подбор")],
-            [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Настройки")],
-            [KeyboardButton("🏠 Главное меню"), KeyboardButton("❓ Помощь")],
-        ],
+        keyboard=rows,
         resize_keyboard=True,
         one_time_keyboard=False,
         selective=False,
@@ -375,12 +379,12 @@ def _autocollect_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
     )
 
 
-async def _show_root_sections_menu(message) -> None:
+async def _show_root_sections_menu(message, uid: int = 0) -> None:
     if not message:
         return
     await message.reply_text(
         "Выберите раздел:",
-        reply_markup=_main_menu_keyboard(),
+        reply_markup=_main_menu_keyboard(uid),
     )
 
 
@@ -502,7 +506,7 @@ def _keyboard_for_section(section: str, uid: int = 0) -> ReplyKeyboardMarkup:
         return _notify_menu_keyboard()
     if section == "autocollect" and uid:
         return _autocollect_menu_keyboard(uid)
-    return _main_menu_keyboard()
+    return _main_menu_keyboard(uid)
 
 
 def _section_for_action(action: str) -> str:
@@ -559,22 +563,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Если пользователь уже одобрен — показать главное меню
     if _is_approved(uid):
-        # Админ видит дополнительную кнопку
-        if _is_admin(uid):
-            keyboard = ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton("📈 Аналитика"), KeyboardButton("📚 Списки и подбор")],
-                    [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Настройки")],
-                    [KeyboardButton("Админ")],
-                    [KeyboardButton("🏠 Главное меню"), KeyboardButton("❓ Помощь")],
-                ],
-                resize_keyboard=True,
-                one_time_keyboard=False,
-                selective=False,
-            )
-        else:
-            keyboard = _main_menu_keyboard()
-
         text = (
             "👋 Снова привет! Это <b>Stock Signal Analyzer</b>\n\n"
             "Интеллектуальная платформа анализа торговых сигналов.\n\n"
@@ -593,7 +581,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             text,
             parse_mode=ParseMode.HTML,
-            reply_markup=keyboard,
+            reply_markup=_main_menu_keyboard(uid),
         )
         return
 
@@ -837,7 +825,7 @@ async def _on_admin_action_callback(update: Update, context: ContextTypes.DEFAUL
     elif action == "back":
         await query.message.reply_text(
             "🏠 Главное меню",
-            reply_markup=_main_menu_keyboard(),
+            reply_markup=_main_menu_keyboard(query.from_user.id if query.from_user else 0),
         )
 
 
@@ -882,7 +870,19 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                             old_tier = user.tier
                             user.tier = "free"
                             user.tier_expires_at = None
+                            session.commit()
                     _tier_cache.pop(target_uid, None)
+
+                    # Уведомить пользователя
+                    try:
+                        await context.bot.send_message(
+                            chat_id=target_uid,
+                            text="⚠️ <b>Ваша подписка отозвана</b>\n\nВаш тариф изменён на Free.\nОтправьте /start для продолжения.",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        pass
+
                     await query.message.reply_text(f"✅ Пользователь {target_uid}: {old_tier or 'unknown'} -> free")
                 else:
                     await query.message.reply_text("❌ БД недоступна")
@@ -898,11 +898,25 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     with get_session() as session:
                         user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
                         if user:
+                            old_tier = user.tier
                             user.tier = action
                             user.is_active = True
+                            session.commit()
                     _tier_cache.pop(target_uid, None)
+
+                    # Уведомить пользователя
                     tier_name = "Pro" if action == "pro" else "Premium"
-                    await query.message.reply_text(f"✅ Пользователь {target_uid}: выдан {tier_name}")
+                    tier_icon = "⭐" if action == "pro" else "💎"
+                    try:
+                        await context.bot.send_message(
+                            chat_id=target_uid,
+                            text=f"✅ <b>Ваш тариф изменён</b>\n\n{tier_icon} Вам выдана подписка {tier_name}.\n\nОтправьте /start для продолжения.",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        pass
+
+                    await query.message.reply_text(f"✅ Пользователь {target_uid}: {old_tier or 'unknown'} -> {tier_name}")
                 else:
                     await query.message.reply_text("❌ БД недоступна")
             except Exception as e:
@@ -1199,7 +1213,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Это только информационный инструмент, НЕ финансовая рекомендация. "
         "Всегда проводите собственный анализ. Торговля связана с риском потери капитала."
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_main_menu_keyboard())
+    uid = _uid(update)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_main_menu_keyboard(uid))
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1969,7 +1984,7 @@ async def on_menu_autocollect(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def on_menu_back_sections(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
-    await _show_root_sections_menu(update.message)
+    await _show_root_sections_menu(update.message, _uid(update))
 
 
 async def on_menu_signal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2082,9 +2097,10 @@ async def on_menu_notify_off(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
     if update.message:
+        uid = _uid(update)
         await update.message.reply_text(
             "Ок, ожидание ввода отменено.",
-            reply_markup=_main_menu_keyboard(),
+            reply_markup=_main_menu_keyboard(uid),
         )
 
 
@@ -3126,7 +3142,7 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в разделы$"), on_menu_back_sections))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в настройки$"), on_menu_back_to_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Главное меню$"), cmd_start))
-    app.add_handler(MessageHandler(filters.Regex(r"^Админ$"), _on_admin_menu_button))
+    app.add_handler(MessageHandler(filters.Regex(r"^Админ$"), _on_admin_panel_click))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Помощь$"), cmd_help))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Анализ тикера$"), on_menu_signal))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Цена тикера$"), on_menu_price))
