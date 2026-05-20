@@ -848,79 +848,104 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Проверить что это админ
     if not _is_admin(query.from_user.id if query.from_user else 0):
+        await query.answer("⛔ Только для администратора.", show_alert=True)
         return
 
     parts = query.data.split("|")
+    log.info("Admin action callback: data=%s, parts=%s", query.data, parts)
 
-    # Обработка действий из админ-панели (admact|action)
-    if parts[0] == "admact" and len(parts) >= 2:
+    # Обработка действий из админ-панели (admact|action|user_id)
+    if parts[0] == "admact" and len(parts) >= 3:
         action = parts[1]  # revoke, pro, premium
-        # Получить user_id из контекста (сохраняется в callback_data)
-        target_uid = int(parts[2]) if len(parts) > 2 else None
+        target_uid = int(parts[2])
+        log.info("Processing admact: action=%s, target_uid=%d", action, target_uid)
 
-        if action == "revoke" and target_uid:
-            # Сбросить на free
-            try:
-                from stock_signal_analyzer.db import db_available, get_session, User as DbUser
-                from stock_signal_analyzer.subscriptions import _tier_cache
-                if db_available():
-                    with get_session() as session:
-                        user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
-                        if user:
-                            old_tier = user.tier
-                            user.tier = "free"
-                            user.tier_expires_at = None
-                            session.commit()
-                    _tier_cache.pop(target_uid, None)
+        try:
+            from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+            from stock_signal_analyzer.subscriptions import _tier_cache
 
-                    # Уведомить пользователя
-                    try:
-                        await context.bot.send_message(
-                            chat_id=target_uid,
-                            text="⚠️ <b>Ваша подписка отозвана</b>\n\nВаш тариф изменён на Free.\nОтправьте /start для продолжения.",
-                            parse_mode=ParseMode.HTML,
-                        )
-                    except Exception:
-                        pass
+            if not db_available():
+                await query.message.reply_text("❌ БД недоступна")
+                return
 
-                    await query.message.reply_text(f"✅ Пользователь {target_uid}: {old_tier or 'unknown'} -> free")
+            with get_session() as session:
+                user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                if not user:
+                    await query.message.reply_text(f"❌ Пользователь {target_uid} не найден")
+                    return
+
+                old_tier = user.tier or "free"
+
+                if action == "revoke":
+                    user.tier = "free"
+                    user.tier_expires_at = None
+                    new_tier = "free"
+                elif action in ("pro", "premium"):
+                    user.tier = action
+                    user.is_active = True
+                    new_tier = action
                 else:
-                    await query.message.reply_text("❌ БД недоступна")
-            except Exception as e:
-                await query.message.reply_text(f"Ошибка: {e}")
+                    await query.answer(f"❌ Неизвестное действие: {action}", show_alert=True)
+                    return
 
-        elif action in ("pro", "premium") and target_uid:
-            # Выдать подписку
+                session.commit()
+                log.info("Tier changed for user %d: %s -> %s", target_uid, old_tier, new_tier)
+
+            # Очистить кэш тарифа
+            _tier_cache.pop(target_uid, None)
+
+            # Уведомить пользователя
+            if action == "revoke":
+                notify_text = "⚠️ <b>Ваша подписка отозвана</b>\n\nВаш тариф изменён на Free.\nОтправьте /start для продолжения."
+            else:
+                tier_icon = "⭐" if action == "pro" else "💎"
+                tier_name = "Pro" if action == "pro" else "Premium"
+                notify_text = f"✅ <b>Ваш тариф изменён</b>\n\n{tier_icon} Вам выдана подписка {tier_name}.\n\nОтправьте /start для продолжения."
+
             try:
-                from stock_signal_analyzer.db import db_available, get_session, User as DbUser
-                from stock_signal_analyzer.subscriptions import _tier_cache
-                if db_available():
-                    with get_session() as session:
-                        user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
-                        if user:
-                            old_tier = user.tier
-                            user.tier = action
-                            user.is_active = True
-                            session.commit()
-                    _tier_cache.pop(target_uid, None)
+                await context.bot.send_message(
+                    chat_id=target_uid,
+                    text=notify_text,
+                    parse_mode=ParseMode.HTML,
+                )
+                log.info("Notification sent to user %d", target_uid)
+            except Exception as notify_err:
+                log.warning("Failed to notify user %d: %s", target_uid, notify_err)
 
-                    # Уведомить пользователя
-                    tier_name = "Pro" if action == "pro" else "Premium"
-                    tier_icon = "⭐" if action == "pro" else "💎"
-                    try:
-                        await context.bot.send_message(
-                            chat_id=target_uid,
-                            text=f"✅ <b>Ваш тариф изменён</b>\n\n{tier_icon} Вам выдана подписка {tier_name}.\n\nОтправьте /start для продолжения.",
-                            parse_mode=ParseMode.HTML,
-                        )
-                    except Exception:
-                        pass
+            # Обновить отображение с новым тарифом
+            tier_icon_map = {"free": "🆓", "pro": "⭐", "premium": "💎"}
+            status = "✅" if user.is_active else "❌"
+            user_info = (
+                f"{status} {tier_icon_map.get(new_tier, '🆓')} <code>{target_uid}</code> | "
+                f"@{user.username or 'anon'} | "
+                f"{new_tier}"
+            )
+            if user.tier_expires_at:
+                user_info += f" (до {user.tier_expires_at.strftime('%Y-%m-%d')})"
 
-                    await query.message.reply_text(f"✅ Пользователь {target_uid}: {old_tier or 'unknown'} -> {tier_name}")
-                else:
-                    await query.message.reply_text("❌ БД недоступна")
-            except Exception as e:
-                await query.message.reply_text(f"Ошибка: {e}")
+            user_keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("⬇️ Free", callback_data=f"admact|revoke|{target_uid}"),
+                    InlineKeyboardButton("⭐ Pro", callback_data=f"admact|pro|{target_uid}"),
+                ],
+                [
+                    InlineKeyboardButton("💎 Premium", callback_data=f"admact|premium|{target_uid}"),
+                ],
+                [
+                    InlineKeyboardButton("🔙 Назад", callback_data="admin|users"),
+                ],
+            ])
+
+            await query.edit_message_text(
+                f"✅ Тариф изменён: <b>{old_tier}</b> → <b>{new_tier}</b>\n\n{user_info}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=user_keyboard,
+            )
+            log.info("Message edited for admin, showing new tier %s", new_tier)
+
+        except Exception as e:
+            log.exception("Error changing tier for user %d", target_uid)
+            await query.message.reply_text(f"❌ Ошибка: {e}")
         return
 
     # Старая логика для adm|approve|deny
