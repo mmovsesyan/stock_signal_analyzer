@@ -3114,7 +3114,7 @@ def main() -> int:
     app.add_handler(CallbackQueryHandler(_on_plan_selected, pattern=r"^plan\|"))
     app.add_handler(CallbackQueryHandler(_on_admin_action, pattern=r"^admact\|"))
     app.add_handler(CallbackQueryHandler(_on_admin_action_callback, pattern=r"^admin\|"))
-    app.add_handler(CallbackQueryHandler(_on_admin_action, pattern=r"^adm\|"))
+    app.add_handler(CallbackQueryHandler(_on_admin_action, pattern=r"^adm\|(approve|deny)"))
     app.add_handler(CommandHandler("price", cmd_price))
     app.add_handler(CommandHandler("quote", cmd_price))
     app.add_handler(CommandHandler("signal", cmd_signal))
