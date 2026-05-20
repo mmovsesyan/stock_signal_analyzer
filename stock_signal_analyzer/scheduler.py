@@ -146,7 +146,7 @@ def run_db_cleanup() -> dict[str, Any]:
         from datetime import timedelta
 
         cutoff_signals = datetime.now(timezone.utc) - timedelta(days=90)
-        cutoff_notify = datetime.now(timezone.utc) - timedelta(days=7)
+        cutoff_notify = datetime.now(timezone.utc) - timedelta(days=30)
 
         with get_session() as session:
             # Удалить старые notify_log (>7 дней)

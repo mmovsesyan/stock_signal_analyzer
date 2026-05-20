@@ -266,6 +266,16 @@ def _main_menu_keyboard() -> ReplyKeyboardMarkup:
         selective=False,
     )
 
+def _admin_inline_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура админ-панели (inline)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Пользователи", callback_data="admin|users")],
+        [InlineKeyboardButton("📊 Статистика БД", callback_data="admin|dbstats")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin|back")],
+    ])
+
+
+
 
 def _analysis_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -549,6 +559,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Если пользователь уже одобрен — показать главное меню
     if _is_approved(uid):
+        # Админ видит дополнительную кнопку
+        if _is_admin(uid):
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton("📈 Аналитика"), KeyboardButton("📚 Списки и подбор")],
+                    [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Настройки")],
+                    [KeyboardButton("Админ")],
+                    [KeyboardButton("🏠 Главное меню"), KeyboardButton("❓ Помощь")],
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=False,
+                selective=False,
+            )
+        else:
+            keyboard = _main_menu_keyboard()
+
         text = (
             "👋 Снова привет! Это <b>Stock Signal Analyzer</b>\n\n"
             "Интеллектуальная платформа анализа торговых сигналов.\n\n"
@@ -567,7 +593,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             text,
             parse_mode=ParseMode.HTML,
-            reply_markup=_main_menu_keyboard(),
+            reply_markup=keyboard,
         )
         return
 
@@ -694,8 +720,139 @@ async def _on_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         pass
 
 
+
+async def _on_admin_panel_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка кнопки 'Админ-панель' из главного меню."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    uid = query.from_user.id if query.from_user else 0
+    if not _is_admin(uid):
+        await query.message.reply_text("⛔ Только для администратора.")
+        return
+
+    # Показываем админ-панель с inline кнопками
+    await query.message.reply_text(
+        "<b>Админ</b>\n\n"
+        "Управление пользователями и доступом:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=_admin_inline_keyboard(),
+    )
+
+
+async def _on_admin_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка кнопок админ-панели."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    uid = query.from_user.id if query.from_user else 0
+    if not _is_admin(uid):
+        await query.message.reply_text("⛔ Только для администратора.")
+        return
+
+    parts = query.data.split("|")
+    if len(parts) < 2 or parts[0] != "admin":
+        return
+
+    action = parts[1]
+
+    if action == "users":
+        # Показать список пользователей с кнопками действий
+        try:
+            from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+            if db_available():
+                with get_session(read_only=True) as session:
+                    users = session.query(DbUser).order_by(DbUser.created_at.desc()).limit(50).all()
+
+                    for u in users:
+                        tier_icon = {"free": "🆓", "pro": "⭐", "premium": "💎"}.get(u.tier or "free", "🆓")
+                        status = "✅" if u.is_active else "❌"
+                        user_info = (
+                            f"{status} {tier_icon} <code>{u.telegram_id}</code> | "
+                            f"@{u.username or 'anon'} | "
+                            f"{u.tier or 'free'}"
+                        )
+                        if u.tier_expires_at:
+                            user_info += f" (до {u.tier_expires_at.strftime('%Y-%m-%d')})"
+
+                        # Кнопки действий для каждого пользователя
+                        user_keyboard = InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("⬇️ Free", callback_data=f"admact|revoke|{u.telegram_id}"),
+                                InlineKeyboardButton("⭐ Pro", callback_data=f"admact|pro|{u.telegram_id}"),
+                            ],
+                            [
+                                InlineKeyboardButton("💎 Premium", callback_data=f"admact|premium|{u.telegram_id}"),
+                            ],
+                            [
+                                InlineKeyboardButton("🔙 Назад", callback_data="admin|users"),
+                            ],
+                        ])
+
+                        await query.message.reply_text(
+                            user_info,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=user_keyboard,
+                        )
+            else:
+                await query.message.reply_text("❌ БД недоступна")
+        except Exception as e:
+            await query.message.reply_text(f"Ошибка: {e}")
+
+    elif action == "dbstats":
+        # Статистика БД
+        try:
+            from stock_signal_analyzer.db import db_available, get_session, User as DbUser, Signal, Outcome
+            from sqlalchemy import func
+            if db_available():
+                with get_session(read_only=True) as session:
+                    total_users = session.query(func.count(DbUser.id)).scalar()
+                    active_users = session.query(func.count(DbUser.id)).filter(DbUser.is_active == True).scalar()
+                    pro_users = session.query(func.count(DbUser.id)).filter(DbUser.tier == "pro").scalar()
+                    premium_users = session.query(func.count(DbUser.id)).filter(DbUser.tier == "premium").scalar()
+                    total_signals = session.query(func.count(Signal.id)).scalar() if Signal else 0
+
+                    text = (
+                        f"<b>📊 Статистика БД:</b>\n\n"
+                        f"Пользователей: {total_users}\n"
+                        f"Активных: {active_users}\n"
+                        f"Pro: {pro_users}\n"
+                        f"Premium: {premium_users}\n"
+                        f"Сигналов всего: {total_signals}"
+                    )
+                    await query.message.reply_text(
+                        text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=_admin_inline_keyboard(),
+                    )
+            else:
+                await query.message.reply_text("❌ БД недоступна")
+        except Exception as e:
+            await query.message.reply_text(f"Ошибка: {e}")
+
+    elif action == "back":
+        await query.message.reply_text(
+            "🏠 Главное меню",
+            reply_markup=_main_menu_keyboard(),
+        )
+
+
+def _admin_user_actions_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура действий с пользователем."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬇️ Сбросить на Free", callback_data="admact|revoke")],
+        [InlineKeyboardButton("⭐ Дать Pro", callback_data="admact|pro"),
+         InlineKeyboardButton("💎 Дать Premium", callback_data="admact|premium")],
+        [InlineKeyboardButton("🔙 Назад к админке", callback_data="admin|back")],
+    ])
+
+
 async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка кнопок одобрения/отклонения от админа."""
+    """Обработка кнопок админ-панели и действий с пользователями."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -706,6 +863,53 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     parts = query.data.split("|")
+
+    # Обработка действий из админ-панели (admact|action)
+    if parts[0] == "admact" and len(parts) >= 2:
+        action = parts[1]  # revoke, pro, premium
+        # Получить user_id из контекста (сохраняется в callback_data)
+        target_uid = int(parts[2]) if len(parts) > 2 else None
+
+        if action == "revoke" and target_uid:
+            # Сбросить на free
+            try:
+                from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+                from stock_signal_analyzer.subscriptions import _tier_cache
+                if db_available():
+                    with get_session() as session:
+                        user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                        if user:
+                            old_tier = user.tier
+                            user.tier = "free"
+                            user.tier_expires_at = None
+                    _tier_cache.pop(target_uid, None)
+                    await query.message.reply_text(f"✅ Пользователь {target_uid}: {old_tier or 'unknown'} -> free")
+                else:
+                    await query.message.reply_text("❌ БД недоступна")
+            except Exception as e:
+                await query.message.reply_text(f"Ошибка: {e}")
+
+        elif action in ("pro", "premium") and target_uid:
+            # Выдать подписку
+            try:
+                from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+                from stock_signal_analyzer.subscriptions import _tier_cache
+                if db_available():
+                    with get_session() as session:
+                        user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                        if user:
+                            user.tier = action
+                            user.is_active = True
+                    _tier_cache.pop(target_uid, None)
+                    tier_name = "Pro" if action == "pro" else "Premium"
+                    await query.message.reply_text(f"✅ Пользователь {target_uid}: выдан {tier_name}")
+                else:
+                    await query.message.reply_text("❌ БД недоступна")
+            except Exception as e:
+                await query.message.reply_text(f"Ошибка: {e}")
+        return
+
+    # Старая логика для adm|approve|deny
     if len(parts) < 3 or parts[0] != "adm":
         return
 
@@ -892,6 +1096,49 @@ async def cmd_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(f"❌ Пользователь {target_uid} заблокирован")
 
+
+
+async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Command /revoke <user_id> - revoke subscription (demote to free)."""
+    if not update.message:
+        return
+    if not _is_admin(_uid(update)):
+        await update.message.reply_text("Admin only")
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Usage: /revoke <user_id>")
+        return
+    try:
+        target_uid = int(args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid user_id")
+        return
+    old_tier = None
+    try:
+        from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+        if db_available():
+            with get_session() as session:
+                user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
+                if user:
+                    old_tier = user.tier
+                    user.tier = "free"
+                    user.tier_expires_at = None
+    except Exception:
+        pass
+    from stock_signal_analyzer.subscriptions import _tier_cache
+    _tier_cache.pop(target_uid, None)
+    try:
+        prefs = load_prefs(target_uid)
+        prefs.tier = "free"
+        save_prefs(target_uid, prefs)
+    except Exception:
+        pass
+    try:
+        await context.bot.send_message(chat_id=target_uid, text=f"Subscription revoked (was: {old_tier} -> free)", parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+    await update.message.reply_text(f"User {target_uid}: revoked (was: {old_tier or 'unknown'} -> free)")
 
 async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Команда /users — список одобренных пользователей (только для админа)."""
@@ -2807,10 +3054,13 @@ def main() -> int:
     # Admin commands
     app.add_handler(CommandHandler("approve", cmd_approve))
     app.add_handler(CommandHandler("deny", cmd_deny))
+    app.add_handler(CommandHandler("revoke", cmd_revoke))
     app.add_handler(CommandHandler("users", cmd_users))
     # Plan selection & admin actions (callbacks)
     app.add_handler(CallbackQueryHandler(_on_plan_selected, pattern=r"^plan\|"))
     app.add_handler(CallbackQueryHandler(_on_admin_action, pattern=r"^adm\|"))
+    app.add_handler(CallbackQueryHandler(_on_admin_action_callback, pattern=r"^admin\|"))
+    app.add_handler(CallbackQueryHandler(_on_admin_action_callback, pattern=r"^admact\|"))
     app.add_handler(CommandHandler("price", cmd_price))
     app.add_handler(CommandHandler("quote", cmd_price))
     app.add_handler(CommandHandler("signal", cmd_signal))
@@ -2863,6 +3113,7 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в разделы$"), on_menu_back_sections))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в настройки$"), on_menu_back_to_settings))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Главное меню$"), cmd_start))
+    app.add_handler(MessageHandler(filters.Regex(r"^Админ$"), _on_admin_menu_button))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Помощь$"), cmd_help))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Анализ тикера$"), on_menu_signal))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Цена тикера$"), on_menu_price))
