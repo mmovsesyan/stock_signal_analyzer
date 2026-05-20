@@ -74,7 +74,7 @@ def _prefs_to_db_dict(prefs: UserPrefs) -> dict[str, Any]:
 
 
 def ensure_user_exists(user_id: int, username: str | None = None) -> None:
-    """Создать пользователя в БД если его там нет."""
+    """Создать пользователя в БД если его там нет, или обновить username."""
     if not db_available():
         return
     try:
@@ -84,6 +84,10 @@ def ensure_user_exists(user_id: int, username: str | None = None) -> None:
                 user = DbUser(telegram_id=user_id, username=username or "", is_active=False)
                 session.add(user)
                 _log.info("Created DB user %d (pending approval)", user_id)
+            elif username and username != user.username:
+                old_username = user.username
+                user.username = username
+                _log.info("Updated username for user %d: %s -> %s", user_id, old_username, username)
     except Exception:
         _log.exception("ensure_user_exists failed for %d", user_id)
 

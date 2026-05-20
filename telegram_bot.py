@@ -2889,6 +2889,12 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 continue
             tier = getattr(rep, "signal_tier", "C")
+            # Класс C — никогда не уведомлять
+            if tier == "C":
+                continue
+            # Класс B — только если abs(score) >= 0.35 (порог A)
+            if tier == "B" and abs(rep.score) < 0.35:
+                continue
             # Отправить уведомление
             text = (
                 f"⭐ <b>Сигнал по вашему watchlist</b>\n"
@@ -2923,6 +2929,13 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             if not can_notify_again(prefs, sym):
                 continue
             if min_tier == "A" and getattr(rep, "signal_tier", "") != "A":
+                continue
+            # Класс C — никогда не уведомлять
+            tier = getattr(rep, "signal_tier", "?")
+            if tier == "C":
+                continue
+            # Класс B — только если abs(score) >= 0.35 (порог A)
+            if tier == "B" and abs(rep.score) < 0.35:
                 continue
             text = format_outside_notification(sym, rep)
             try:
