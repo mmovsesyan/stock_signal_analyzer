@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/AI-Ollama_LLM-orange" alt="AI">
   <img src="https://img.shields.io/badge/Markets-US_&_RU-green" alt="Markets">
   <img src="https://img.shields.io/badge/Tests-132_passed-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/Version-2.5.0-purple" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.5.2-purple" alt="Version">
 </p>
 
 ---
@@ -34,7 +34,8 @@
 - 📊 **Бэктест с графиками** — equity curve, drawdown, monthly returns, PnL distribution, tier stats
 - 📡 **TradingView webhook** — принимайте алерты из TradingView и усиливайте SSA-анализом
 - 📱 **Telegram + REST API** — получайте сигналы куда удобно
-- ✅ **Win rate фильтр** — сигналы генерируются только при ADX > 20, score ≥ 0.30, R:R ≥ 1.5
+- ✅ **Три режима фильтрации** — Conservative (только A, conf≥0.55, ADX>25), Balanced (A/B, conf≥0.50), Aggressive (A/B, conf≥0.45, без недельного тренда). Фильтр применяется к уведомлениям и dashboard
+- 🔔 **Календарная дедупликация** — 1 уведомление на тикер за сутки UTC, независимо от часового пояса
 
 ---
 
@@ -325,7 +326,7 @@ docker compose exec api python3 -m pytest tests/ -v
 
 | Настройка | Описание |
 |-----------|----------|
-| **Фильтр сигналов** | Conservative / Balanced / Aggressive — строгость отбора сигналов |
+| **Фильтр сигналов** | Conservative (A, conf≥0.55, ADX>25) / Balanced (A/B, conf≥0.50) / Aggressive (A/B, conf≥0.45) — строгость отбора сигналов и уведомлений |
 | **Уведомления вне списка** | Вкл/выкл уведомления о сильных сигналах не из watchlist |
 | **Язык** | Русский / English |
 | **Learning report** | Получать отчёты о самообучении |
@@ -466,6 +467,18 @@ ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' 
 
 ## ✅ Что нового
 
+### v2.5.2 (2026-05-23) — Фильтры сигналов, outcome tracking, HTML-escape, уведомления
+
+- **Три режима фильтрации сигналов** (`signal_filter.py`) — Conservative (только A, conf≥0.55, ADX>25), Balanced (A/B, conf≥0.50, ADX>20), Aggressive (A/B, conf≥0.45, без проверки недельного тренда). Фильтр применяется к уведомлениям watchlist/outside и `/dashboard`
+- **Календарная дедупликация уведомлений** (`user_store.py`) — 1 уведомление на тикер за календарные сутки UTC (вместо 24-часового cooldown)
+- **timeout исключён из win_rate** (`outcome_tracker.py`) — win_rate считается только по целевым выходам (win_t1/win_t2/loss), timeout не влияет на статистику
+- **Дедупликация outcomes** (`outcome_tracker.py`) — записи уникальны по паре (signal_id, outcome), предотвращает дублирование при перезапуске
+- **HTML-escape в learning report** (`llm_learning.py`) — `html.escape()` для LLM-паттернов и рекомендаций, фикс `Can't parse entities` в Telegram
+- **max_hold_days 5→15** (`trade_plan.py`) — базовое удержание 15 дней (A: 15→30 при сильном тренде, B: 15→21, C: 15)
+- **scan_all_signals** (`tasks.py` + `outside_signals.py`) — периодическое сканирование всех тикеров каждые 30 мин, кэширование результатов
+- **Фильтр вне списка** (`telegram_bot.py`) — класс C полностью исключён из уведомлений «вне списка», только A и B (B при |score|≥0.35)
+- Тесты: 132 passed
+
 ### v2.5.1 (2026-05-16) — Hotfix: learning state, outcomes bloat, unified price fetcher
 
 - **llm_learning.py** — сохраняет `learning_state.json` даже при 0 outcomes, устраняя бесконечный цикл сообщения «нет данных»
@@ -543,7 +556,7 @@ ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' 
 - **trade_plan.py** — R:R всегда ≥ 1.5; `_DIR_THRESHOLD` поднят до 0.30; защита от ZeroDivisionError
 - **signal_filter.py** — ADX < 20 жёсткий блок; score < 0.30 принудительный блок
 - **risk_context.py** — Tier B требует confidence ≥ 0.50 и ADX ≥ 20.0
-- **outcome_tracker.py** — timeout 5 дней; защита от None `pnl_pct`
+- **outcome_tracker.py** — timeout 5→15 дней; защита от None ; дедупликация по (signal_id, outcome); timeout исключён из win_rate`pnl_pct`
 - **volume_pressure.py** — защита от ZeroDivisionError и `log(0)`
 - **llm_learning.py** — минимум outcomes 30; TTL кэша весов 1 час
 - Тесты: добавлены 15 тестов (R:R, ADX, score, volume, tier B)
@@ -572,5 +585,5 @@ ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' 
 ---
 
 <p align="center">
-  <strong>Version 2.5.0</strong> • Updated 2026-05-16
+  <strong>Version 2.5.2</strong> • Updated 2026-05-23
 </p>
