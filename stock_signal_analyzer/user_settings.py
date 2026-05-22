@@ -168,3 +168,29 @@ def save_user_settings(user_id: int, prefs: UserPrefs, username: str | None = No
 # Legacy aliases for backward compatibility in existing code
 load_prefs = load_user_settings
 save_prefs = save_user_settings
+
+
+def all_user_ids() -> list[int]:
+    """Вернуть список всех telegram_id пользователей.
+
+    Priority:
+        1. PostgreSQL (users table)
+        2. Fallback JSON (telegram_users.json)
+    """
+    # 1. Попробовать БД
+    if db_available():
+        try:
+            with get_session(read_only=True) as session:
+                rows = session.query(DbUser.telegram_id).filter_by(is_active=True).all()
+                return [r[0] for r in rows if r[0] is not None]
+        except Exception:
+            _log.warning("DB read for all_user_ids failed, falling back to JSON", exc_info=True)
+
+    # 2. Fallback JSON
+    try:
+        from stock_signal_analyzer.user_store import all_user_ids as _json_all_user_ids
+        return _json_all_user_ids()
+    except Exception:
+        _log.warning("JSON read for all_user_ids failed", exc_info=True)
+
+    return []

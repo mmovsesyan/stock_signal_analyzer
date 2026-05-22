@@ -33,7 +33,7 @@ _MASSIVE_BASE_V2 = "https://api.massive.com/v2"
 _MASSIVE_BASE_V3 = "https://api.massive.com/v3"
 
 # Free tier: 5 req/min. Оставляем запас.
-_polygon_limiter = RateLimiter(max_calls=4, period=60.0)
+_polygon_limiter = RateLimiter(max_calls=1, period=25.0)
 
 
 def _api_key() -> str | None:
@@ -49,6 +49,7 @@ def _headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
+@_polygon_limiter.limit
 def _request_with_fallback(
     method: str,
     path_v2: str | None = None,
@@ -64,7 +65,6 @@ def _request_with_fallback(
     if not key:
         raise ValueError("No API key")
 
-    _polygon_limiter.wait_if_needed()
     headers = _headers(key)
 
     # Определяем URL

@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
@@ -39,6 +42,74 @@ def _get_client_class() -> tuple[type[Any] | None, str]:
     except ImportError:
         pass
     return None, "нет пакета: pip install -r requirements-tbank.txt или pip install tinkoff-investments"
+
+
+# Singleton gRPC channel + Services
+_log_tbank = logging.getLogger(__name__)
+_tbank_channel = None
+_tbank_services = None
+_tbank_lock = threading.Lock()
+
+
+def _get_services(token=None):
+    global _tbank_channel, _tbank_services
+    with _tbank_lock:
+        if _tbank_services is not None:
+            return _tbank_services
+        tok = token or _token()
+        if not tok:
+            return None
+        client_cls, src = _get_client_class()
+        if client_cls is None:
+            return None
+        try:
+            from t_tech.invest.channels import create_channel
+            from t_tech.invest.services import Services
+            _tbank_channel = create_channel()
+            _tbank_services = Services(_tbank_channel, tok)
+            _log_tbank.info("T-Bank singleton channel created (%s)", src)
+            return _tbank_services
+        except Exception:
+            _log_tbank.exception("T-Bank singleton channel creation failed")
+            return None
+
+
+def _close_services():
+    global _tbank_channel, _tbank_services
+    with _tbank_lock:
+        if _tbank_channel is not None:
+            try:
+                _tbank_channel.close()
+            except Exception:
+                pass
+        _tbank_channel = None
+        _tbank_services = None
+
+
+def _retry_unavailable(max_retries=2, backoff=0.5):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    err_str = str(e)
+                    is_unavailable = (
+                        "UNAVAILABLE" in err_str or
+                        "handshaker shutdown" in err_str or
+                        "failed to connect" in err_str
+                    )
+                    if not is_unavailable or attempt == max_retries:
+                        raise
+                    _log_tbank.warning(
+                        "T-Bank UNAVAILABLE (attempt %d/%d): %s -- recreate channel and retry in %.1fs",
+                        attempt + 1, max_retries + 1, err_str, backoff * (2 ** attempt),
+                    )
+                    _close_services()
+                    time.sleep(backoff * (2 ** attempt))
+            return None
+        return wrapper
+    return decorator
 
 
 def _quotation_to_float(q: Any) -> float:
@@ -136,51 +207,49 @@ def _find_instrument(client: Any, ticker: str) -> Any | None:
     )
 
 
+@_retry_unavailable()
 def fetch_last_price_tbank(symbol: str, token: str | None = None) -> TbankQuote | None:
     """
     Последняя цена: FindInstrument + GetLastPrices (как в invest-python).
     """
-    tok = token or _token()
-    if not tok:
-        return None
-    client_cls, _src = _get_client_class()
-    if client_cls is None:
+    client = _get_services(token)
+    if client is None:
         return None
 
     t = _normalize_ticker(symbol)
-    with client_cls(tok) as client:
-        inst = _find_instrument(client, t)
-        if inst is None:
-            return None
-        uid = getattr(inst, "uid", None) or ""
-        figi = getattr(inst, "figi", "") or ""
-        name = getattr(inst, "name", "") or t
+    inst = _find_instrument(client, t)
+    if inst is None:
+        return None
+    uid = getattr(inst, "uid", None) or ""
+    figi = getattr(inst, "figi", "") or ""
+    name = getattr(inst, "name", "") or t
 
-        if uid:
-            lp = client.market_data.get_last_prices(instrument_id=[uid])
-        elif figi:
-            lp = client.market_data.get_last_prices(figi=[figi])
-        else:
-            return None
-        if not lp.last_prices:
-            return None
-        p0 = lp.last_prices[0]
-        price = _quotation_to_float(getattr(p0, "price", None))
-        if price != price or price <= 0:
-            return None
-        cur = str(getattr(inst, "currency", "") or "rub").upper()
-        detail = f"Т-Инвестиции API: {name}, last={price:.4f} {cur}"
-        return TbankQuote(
-            ticker=t,
-            name=name,
-            last_price=float(price),
-            currency=cur,
-            figi=figi,
-            instrument_uid=uid,
-            detail=detail,
-        )
+    if uid:
+        lp = client.market_data.get_last_prices(instrument_id=[uid])
+    elif figi:
+        lp = client.market_data.get_last_prices(figi=[figi])
+    else:
+        return None
+    if not lp.last_prices:
+        return None
+    p0 = lp.last_prices[0]
+    price = _quotation_to_float(getattr(p0, "price", None))
+    if price != price or price <= 0:
+        return None
+    cur = str(getattr(inst, "currency", "") or "rub").upper()
+    detail = f"Т-Инвестиции API: {name}, last={price:.4f} {cur}"
+    return TbankQuote(
+        ticker=t,
+        name=name,
+        last_price=float(price),
+        currency=cur,
+        figi=figi,
+        instrument_uid=uid,
+        detail=detail,
+    )
 
 
+@_retry_unavailable()
 def fetch_quote_and_volume_context(
     symbol: str,
     token: str | None = None,
@@ -192,11 +261,8 @@ def fetch_quote_and_volume_context(
     Одна gRPC-сессия: котировка + (опционально) свечи для VWAP/POC.
     Экономит ~100–300 мс по сравнению с двумя раздельными вызовами.
     """
-    tok = token or _token()
-    if not tok:
-        return None, None
-    client_cls, _ = _get_client_class()
-    if client_cls is None:
+    client = _get_services(token)
+    if client is None:
         return None, None
 
     t = _normalize_ticker(symbol)
@@ -213,63 +279,62 @@ def fetch_quote_and_volume_context(
             except ImportError:
                 pass
 
-    with client_cls(tok) as client:
-        inst = _find_instrument(client, t)
-        if inst is None:
-            return None, None
-        uid = getattr(inst, "uid", None) or ""
-        figi = getattr(inst, "figi", "") or ""
-        name = getattr(inst, "name", "") or t
+    inst = _find_instrument(client, t)
+    if inst is None:
+        return None, None
+    uid = getattr(inst, "uid", None) or ""
+    figi = getattr(inst, "figi", "") or ""
+    name = getattr(inst, "name", "") or t
 
-        if uid:
-            lp = client.market_data.get_last_prices(instrument_id=[uid])
-        elif figi:
-            lp = client.market_data.get_last_prices(figi=[figi])
-        else:
-            return None, None
-        if not lp.last_prices:
-            return None, None
-        p0 = lp.last_prices[0]
-        price = _quotation_to_float(getattr(p0, "price", None))
-        if price != price or price <= 0:
-            return None, None
-        cur = str(getattr(inst, "currency", "") or "rub").upper()
-        detail = f"Т-Инвестиции API: {name}, last={price:.4f} {cur}"
-        quote = TbankQuote(
-            ticker=t, name=name, last_price=float(price),
-            currency=cur, figi=figi, instrument_uid=uid, detail=detail,
-        )
+    if uid:
+        lp = client.market_data.get_last_prices(instrument_id=[uid])
+    elif figi:
+        lp = client.market_data.get_last_prices(figi=[figi])
+    else:
+        return None, None
+    if not lp.last_prices:
+        return None, None
+    p0 = lp.last_prices[0]
+    price = _quotation_to_float(getattr(p0, "price", None))
+    if price != price or price <= 0:
+        return None, None
+    cur = str(getattr(inst, "currency", "") or "rub").upper()
+    detail = f"Т-Инвестиции API: {name}, last={price:.4f} {cur}"
+    quote = TbankQuote(
+        ticker=t, name=name, last_price=float(price),
+        currency=cur, figi=figi, instrument_uid=uid, detail=detail,
+    )
 
-        vol_ctx: TbankVolumeContext | None = None
-        if CandleInterval is not None:
-            dt_to = datetime.now(timezone.utc)
-            dt_from = dt_to - timedelta(hours=max(1, int(hours_back)))
-            try:
-                candles = _get_candles_for_instrument(
-                    client,
-                    instrument_uid=uid, figi=figi,
-                    dt_from=dt_from, dt_to=dt_to,
-                    interval=CandleInterval.CANDLE_INTERVAL_5_MIN,
+    vol_ctx: TbankVolumeContext | None = None
+    if CandleInterval is not None:
+        dt_to = datetime.now(timezone.utc)
+        dt_from = dt_to - timedelta(hours=max(1, int(hours_back)))
+        try:
+            candles = _get_candles_for_instrument(
+                client,
+                instrument_uid=uid, figi=figi,
+                dt_from=dt_from, dt_to=dt_to,
+                interval=CandleInterval.CANDLE_INTERVAL_5_MIN,
+            )
+            stats = _vwap_and_poc_from_candles(candles)
+            if stats is not None:
+                vwap, poc, tot_vol = stats
+                last_vs: float | None = None
+                ref = yahoo_last_daily_close if yahoo_last_daily_close else float(price)
+                if ref and ref == ref and vwap > 0:
+                    last_vs = (float(price) / vwap - 1.0) * 100.0
+                vd = (
+                    f"Т-Инвестиции: объёмный контекст ({name}): VWAP={vwap:.4f}, POC≈{poc:.4f}, "
+                    f"свечей={len(candles)}, vol={tot_vol:.0f}"
                 )
-                stats = _vwap_and_poc_from_candles(candles)
-                if stats is not None:
-                    vwap, poc, tot_vol = stats
-                    last_vs: float | None = None
-                    ref = yahoo_last_daily_close if yahoo_last_daily_close else float(price)
-                    if ref and ref == ref and vwap > 0:
-                        last_vs = (float(price) / vwap - 1.0) * 100.0
-                    vd = (
-                        f"Т-Инвестиции: объёмный контекст ({name}): VWAP={vwap:.4f}, POC≈{poc:.4f}, "
-                        f"свечей={len(candles)}, vol={tot_vol:.0f}"
-                    )
-                    if last_vs is not None:
-                        vd += f", last vs VWAP={last_vs:+.2f}%"
-                    vol_ctx = TbankVolumeContext(
-                        vwap=vwap, poc=poc, last_vs_vwap_pct=last_vs,
-                        n_candles=len(candles), total_volume=tot_vol, detail=vd,
-                    )
-            except Exception:
-                pass
+                if last_vs is not None:
+                    vd += f", last vs VWAP={last_vs:+.2f}%"
+                vol_ctx = TbankVolumeContext(
+                    vwap=vwap, poc=poc, last_vs_vwap_pct=last_vs,
+                    n_candles=len(candles), total_volume=tot_vol, detail=vd,
+                )
+        except Exception:
+            pass
 
     return quote, vol_ctx
 
@@ -374,6 +439,7 @@ def _get_candles_for_instrument(
     return []
 
 
+@_retry_unavailable()
 def fetch_session_volume_context(
     symbol: str,
     token: str | None = None,
@@ -386,11 +452,8 @@ def fetch_session_volume_context(
 
     Нужен токен и установленный ``tinkoff.invest``. Без сделок и счёта: только рыночные данные.
     """
-    tok = token or _token()
-    if not tok:
-        return None
-    client_cls, _ = _get_client_class()
-    if client_cls is None:
+    client = _get_services(token)
+    if client is None:
         return None
     try:
         from t_tech.invest import CandleInterval
@@ -404,32 +467,31 @@ def fetch_session_volume_context(
     dt_to = datetime.now(timezone.utc)
     dt_from = dt_to - timedelta(hours=max(1, int(hours_back)))
 
-    with client_cls(tok) as client:
-        found = client.instruments.find_instrument(query=t)
-        if not found.instruments:
-            return None
-        inst = None
-        for x in found.instruments:
-            if getattr(x, "ticker", "").upper() == t:
-                inst = x
-                break
-        if inst is None:
-            inst = found.instruments[0]
-        uid = getattr(inst, "uid", None) or ""
-        figi = getattr(inst, "figi", "") or ""
-        name = getattr(inst, "name", "") or t
+    found = client.instruments.find_instrument(query=t)
+    if not found.instruments:
+        return None
+    inst = None
+    for x in found.instruments:
+        if getattr(x, "ticker", "").upper() == t:
+            inst = x
+            break
+    if inst is None:
+        inst = found.instruments[0]
+    uid = getattr(inst, "uid", None) or ""
+    figi = getattr(inst, "figi", "") or ""
+    name = getattr(inst, "name", "") or t
 
-        try:
-            candles = _get_candles_for_instrument(
-                client,
-                instrument_uid=uid,
-                figi=figi,
-                dt_from=dt_from,
-                dt_to=dt_to,
-                interval=CandleInterval.CANDLE_INTERVAL_5_MIN,
-            )
-        except Exception:
-            return None
+    try:
+        candles = _get_candles_for_instrument(
+            client,
+            instrument_uid=uid,
+            figi=figi,
+            dt_from=dt_from,
+            dt_to=dt_to,
+            interval=CandleInterval.CANDLE_INTERVAL_5_MIN,
+        )
+    except Exception:
+        return None
 
     stats = _vwap_and_poc_from_candles(candles)
     if stats is None:
@@ -456,6 +518,7 @@ def fetch_session_volume_context(
     )
 
 
+@_retry_unavailable()
 def fetch_daily_history(
     symbol: str,
     token: str | None = None,
@@ -467,11 +530,8 @@ def fetch_daily_history(
     """
     import pandas as pd
 
-    tok = token or _token()
-    if not tok:
-        return None
-    client_cls, _ = _get_client_class()
-    if client_cls is None:
+    client = _get_services(token)
+    if client is None:
         return None
     try:
         from t_tech.invest import CandleInterval
@@ -485,23 +545,22 @@ def fetch_daily_history(
     dt_to = datetime.now(timezone.utc)
     dt_from = dt_to - timedelta(days=days)
 
-    with client_cls(tok) as client:
-        inst = _find_instrument(client, t)
-        if inst is None:
-            return None
-        uid = getattr(inst, "uid", None) or ""
-        figi = getattr(inst, "figi", "") or ""
-        name = getattr(inst, "name", "") or t
+    inst = _find_instrument(client, t)
+    if inst is None:
+        return None
+    uid = getattr(inst, "uid", None) or ""
+    figi = getattr(inst, "figi", "") or ""
+    name = getattr(inst, "name", "") or t
 
-        try:
-            candles = _get_candles_for_instrument(
-                client,
-                instrument_uid=uid, figi=figi,
-                dt_from=dt_from, dt_to=dt_to,
-                interval=CandleInterval.CANDLE_INTERVAL_DAY,
-            )
-        except Exception:
-            return None
+    try:
+        candles = _get_candles_for_instrument(
+            client,
+            instrument_uid=uid, figi=figi,
+            dt_from=dt_from, dt_to=dt_to,
+            interval=CandleInterval.CANDLE_INTERVAL_DAY,
+        )
+    except Exception:
+        return None
 
     if not candles:
         return None

@@ -66,16 +66,16 @@ from stock_signal_analyzer.telegram_format import (
     sanitize_command_args,
     split_telegram_html,
 )
-from stock_signal_analyzer.user_store import (
-    all_user_ids,
-    can_notify_again,
-    mark_notified,
-    normalize_symbol,
-)
 from stock_signal_analyzer.user_settings import (
+    all_user_ids,
     ensure_user_exists,
     load_prefs,
     save_prefs,
+)
+from stock_signal_analyzer.user_store import (
+    can_notify_again,
+    mark_notified,
+    normalize_symbol,
 )
 from stock_signal_analyzer.subscriptions import (
     check_feature_access,
@@ -621,7 +621,7 @@ async def _on_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     await query.answer()
 
-    parts = query.data.split("|")
+    parts = query.data.strip().split("|")
     if len(parts) != 2 or parts[0] != "plan":
         return
 
@@ -710,20 +710,18 @@ async def _on_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def _on_admin_panel_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработка кнопки 'Админ-панель' из главного меню."""
-    query = update.callback_query
-    if not query or not query.data:
+    """Обработка кнопки 'Админ' из главного меню (текстовая кнопка)."""
+    if not update.message:
         return
-    await query.answer()
 
-    uid = query.from_user.id if query.from_user else 0
+    uid = update.effective_user.id if update.effective_user else 0
     if not _is_admin(uid):
-        await query.message.reply_text("⛔ Только для администратора.")
+        await update.message.reply_text("⛔ Только для администратора.")
         return
 
     # Показываем админ-панель с inline кнопками
-    await query.message.reply_text(
-        "<b>Админ</b>\n\n"
+    await update.message.reply_text(
+        "<b>Админ-панель</b>\n\n"
         "Управление пользователями и доступом:",
         parse_mode=ParseMode.HTML,
         reply_markup=_admin_inline_keyboard(),
@@ -742,7 +740,7 @@ async def _on_admin_action_callback(update: Update, context: ContextTypes.DEFAUL
         await query.message.reply_text("⛔ Только для администратора.")
         return
 
-    parts = query.data.split("|")
+    parts = query.data.strip().split("|")
     if len(parts) < 2 or parts[0] != "admin":
         return
 
@@ -851,7 +849,7 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await query.answer("⛔ Только для администратора.", show_alert=True)
         return
 
-    parts = query.data.split("|")
+    parts = query.data.strip().split("|")
     log.info("Admin action callback: data=%s, parts=%s", query.data, parts)
 
     # Обработка действий из админ-панели (admact|action|user_id)
@@ -890,6 +888,10 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
                 session.commit()
                 log.info("Tier changed for user %d: %s -> %s", target_uid, old_tier, new_tier)
+                # Сохранить поля до закрытия сессии (DetachedInstanceError fix)
+                _user_is_active = user.is_active
+                _user_username = user.username
+                _user_tier_expires_at = user.tier_expires_at
 
             # Очистить кэш тарифа
             _tier_cache.pop(target_uid, None)
@@ -914,14 +916,14 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
             # Обновить отображение с новым тарифом
             tier_icon_map = {"free": "🆓", "pro": "⭐", "premium": "💎"}
-            status = "✅" if user.is_active else "❌"
+            status = "✅" if _user_is_active else "❌"
             user_info = (
                 f"{status} {tier_icon_map.get(new_tier, '🆓')} <code>{target_uid}</code> | "
-                f"@{user.username or 'anon'} | "
+                f"@{_user_username or 'anon'} | "
                 f"{new_tier}"
             )
-            if user.tier_expires_at:
-                user_info += f" (до {user.tier_expires_at.strftime('%Y-%m-%d')})"
+            if _user_tier_expires_at:
+                user_info += f" (до {_user_tier_expires_at.strftime('%Y-%m-%d')})"
 
             user_keyboard = InlineKeyboardMarkup([
                 [
@@ -1343,7 +1345,7 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
     await query.answer()
 
-    parts = query.data.split("|")
+    parts = query.data.strip().split("|")
     if len(parts) < 4 or parts[0] != "set":
         return
 
@@ -1744,7 +1746,7 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     await query.answer()
 
-    parts = query.data.split("|")
+    parts = query.data.strip().split("|")
     if len(parts) < 2 or parts[0] != "pk":
         return
     action = parts[1]
