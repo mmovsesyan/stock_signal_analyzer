@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import threading
+from datetime import datetime, timezone
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -176,9 +177,15 @@ def all_user_ids(path: Path | None = None) -> list[int]:
 def can_notify_again(prefs: UserPrefs, symbol: str) -> bool:
     sym = normalize_symbol(symbol)
     ts = prefs.last_notify_ts.get(sym)
+    # cooldown=0 означает force-refresh — всегда разрешить
+    if prefs.notify_cooldown_sec == 0:
+        return True
     if ts is None:
         return True
-    return (time.time() - ts) >= prefs.notify_cooldown_sec
+    # Календарный день: одно уведомление на тикер в сутки (UTC)
+    last_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+    today = datetime.now(timezone.utc).date()
+    return last_date < today
 
 
 def mark_notified(prefs: UserPrefs, symbol: str) -> None:

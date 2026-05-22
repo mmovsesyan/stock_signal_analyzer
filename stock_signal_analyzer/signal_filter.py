@@ -206,7 +206,7 @@ def get_conservative_filter() -> SignalFilter:
     """
     return SignalFilter(
         min_tier='A',
-        min_confidence=0.45,  # Мин. порог для tier A
+        min_confidence=0.55,  # Мин. порог для tier A
         min_adx=25.0,
         min_volume_score=0.0,
         min_macro_dampening=0.90,
@@ -254,7 +254,7 @@ def get_aggressive_filter() -> SignalFilter:
     """
     return SignalFilter(
         min_tier='B',
-        min_confidence=0.45,
+        min_confidence=0.55,
         min_adx=20.0,
         min_volume_score=0.0,
         min_macro_dampening=0.80,

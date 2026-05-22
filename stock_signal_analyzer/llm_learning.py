@@ -35,6 +35,7 @@ from typing import Any
 import numpy as np
 
 from .llm_client import llm_available, llm_chat_json, current_provider
+import html
 
 _log = logging.getLogger(__name__)
 
@@ -632,19 +633,19 @@ def format_learning_report() -> str:
     if state.win_patterns:
         lines.append("Что работает (паттерны успеха):")
         for p in state.win_patterns[:3]:
-            lines.append(f"  ✓ {p}")
+            lines.append(f"  ✓ {html.escape(p)}")
         lines.append("")
 
     if state.loss_patterns:
         lines.append("Что не работает (паттерны неудачи):")
         for p in state.loss_patterns[:3]:
-            lines.append(f"  ✗ {p}")
+            lines.append(f"  ✗ {html.escape(p)}")
         lines.append("")
 
     if state.recommendations:
         lines.append("Советы:")
         for r in state.recommendations[:3]:
-            lines.append(f"  • {r}")
+            lines.append(f"  • {html.escape(r)}")
 
     return "\n".join(lines)
 

@@ -50,7 +50,10 @@ from stock_signal_analyzer.dashboard import build_dashboard
 from stock_signal_analyzer.engine import build_report
 from stock_signal_analyzer.market_data import fetch_snapshot_with_meta
 from stock_signal_analyzer.market_segments import DIVIDEND_UNIVERSE
-from stock_signal_analyzer.outside_signals import scan_strong_outside_watchlist
+from stock_signal_analyzer.outside_signals import (
+    scan_strong_outside_watchlist,
+    get_cached_signals,
+)
 from stock_signal_analyzer.signal_log import log_path_from_env
 from stock_signal_analyzer.outcome_tracker import OutcomeTracker
 from stock_signal_analyzer.live_price import fetch_live_price
@@ -1660,7 +1663,6 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
             parse_mode=ParseMode.HTML,
         )
 
-    html_text = format_signal_report(report)
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
@@ -1913,6 +1915,10 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
         log.exception("dashboard")
         await message.reply_text(_esc(f"Ошибка: {e}"), parse_mode=ParseMode.HTML)
         return
+    # Фильтрация по пользовательским настройкам
+    from stock_signal_analyzer.signal_filter import should_trade_signal
+    for section in bundle.sections.values():
+        section[:] = [rep for rep in section if should_trade_signal(rep, filter_type=prefs.signal_filter_type)]
     html_text = format_dashboard_bundle(bundle, [])
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
@@ -1942,6 +1948,8 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
         outside = await asyncio.wait_for(outside_task, timeout=outside_timeout)
         mset = {normalize_symbol(x) for x in merged}
         outside = [(s, r) for s, r in outside if normalize_symbol(s) not in mset]
+        # Фильтрация outside по пользовательским настройкам
+        outside = [(s, r) for s, r in outside if should_trade_signal(r, filter_type=prefs.signal_filter_type)]
         if outside:
             preview = ", ".join(f"{s} ({r.score:+.2f})" for s, r in outside[:3])
             await message.reply_text(
@@ -2932,11 +2940,15 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 continue
             tier = getattr(rep, "signal_tier", "C")
-            # Класс C — никогда не уведомлять
-            if tier == "C":
+            # Класс C — уведомлять только при |score| >= 0.35
+            if tier == "C" and abs(rep.score) < 0.35:
                 continue
             # Класс B — только если abs(score) >= 0.35 (порог A)
             if tier == "B" and abs(rep.score) < 0.35:
+                continue
+            # Пользовательский фильтр
+            from stock_signal_analyzer.signal_filter import should_trade_signal
+            if not should_trade_signal(rep, filter_type=prefs.signal_filter_type):
                 continue
             # Отправить уведомление
             text = (
@@ -2962,23 +2974,44 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             strong = await loop.run_in_executor(
                 None,
-                lambda wl=list(prefs.watchlist): scan_strong_outside_watchlist(wl, 0.0),
+                lambda wl=list(prefs.watchlist): get_cached_signals(wl),
             )
         except Exception:
-            log.exception("scan outside uid=%s", uid)
+            log.exception("cached signals read failed uid=%s", uid)
             strong = []
 
-        for sym, rep in strong:
+        # Кэш полных отчётов внутри job (чтобы не строить повторно для каждого пользователя)
+        _report_cache: dict[str, Any] = {}
+
+        def _get_full_report(sym: str) -> Any:
+            if sym in _report_cache:
+                return _report_cache[sym]
+            try:
+                r = build_report(sym, fast_mode=True)
+                _report_cache[sym] = r
+                return r
+            except Exception:
+                _report_cache[sym] = None
+                return None
+
+        for sym, cs in strong:
             if not can_notify_again(prefs, sym):
                 continue
-            if min_tier == "A" and getattr(rep, "signal_tier", "") != "A":
+            rep = await loop.run_in_executor(None, lambda s=sym: _get_full_report(s))
+            if rep is None:
                 continue
-            # Класс C — никогда не уведомлять
             tier = getattr(rep, "signal_tier", "?")
+            if min_tier == "A" and tier != "A":
+                continue
+            # Класс C — не уведомлять
             if tier == "C":
                 continue
             # Класс B — только если abs(score) >= 0.35 (порог A)
             if tier == "B" and abs(rep.score) < 0.35:
+                continue
+            # Пользовательский фильтр
+            from stock_signal_analyzer.signal_filter import should_trade_signal
+            if not should_trade_signal(rep, filter_type=prefs.signal_filter_type):
                 continue
             text = format_outside_notification(sym, rep)
             try:
@@ -2989,7 +3022,7 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 try:
                     from stock_signal_analyzer.max_notify import send_signal_to_max, max_available
                     if max_available():
-                        await send_signal_to_max(sym, getattr(rep, "signal_tier", "?"), rep.score,
+                        await send_signal_to_max(sym, tier, rep.score,
                             rep.trade_plan.direction if rep.trade_plan else "neutral", rep.verdict)
                 except Exception:
                     pass

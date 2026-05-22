@@ -70,8 +70,8 @@ class OutcomeTracker:
 
         # Загрузить уже проверенные сигналы
         self.checked_signals = self._load_checked_signals()
-        # Track which open signals we already wrote to avoid duplicate records
-        self._open_written = set()
+        # Track all (signal_id, outcome) pairs to prevent duplicate records across restarts
+        self._seen_keys = self._load_seen_keys()
 
     def _get_signals_log_path(self) -> str | None:
         """Получить путь к логу сигналов из переменных окружения."""
@@ -99,6 +99,20 @@ class OutcomeTracker:
 
         _log.info(f"Загружено {len(checked)} уже проверенных сигналов")
         return checked
+
+    def _load_seen_keys(self) -> set[tuple[str, str]]:
+        """Загрузить все (signal_id, outcome) пары для дедупликации."""
+        if not self.outcomes_file.exists():
+            return set()
+        seen = set()
+        with open(self.outcomes_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    rec = json.loads(line.strip())
+                    seen.add((rec.get('signal_id', ''), rec.get('outcome', '')))
+                except json.JSONDecodeError:
+                    continue
+        return seen
 
     def _load_open_signals(self) -> list[dict[str, Any]]:
         """Загрузить открытые сигналы из лога."""
@@ -185,7 +199,7 @@ class OutcomeTracker:
             'stop_price': stop_price or 0.0,
             'target1_price': target1_price or 0.0,
             'target2_price': target2_price or 0.0,
-            'max_hold_days': int(signal.get('tp_max_hold_days') or 5),
+            'max_hold_days': int(signal.get('tp_max_hold_days') or 15),
         }
 
     def _get_signal_id(self, signal: dict[str, Any]) -> str:
@@ -212,7 +226,7 @@ class OutcomeTracker:
         stop_price = trade_plan['stop_price']
         target1_price = trade_plan['target1_price']
         target2_price = trade_plan['target2_price']
-        max_hold_days = trade_plan.get('max_hold_days', 5)
+        max_hold_days = trade_plan.get('max_hold_days', 15)
 
         # Проверить, не истёк ли срок
         now = datetime.now(timezone.utc)
@@ -456,14 +470,14 @@ class OutcomeTracker:
         # Создать директорию если нужно
         self.outcomes_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Skip duplicate "open" entries to prevent log bloat
-        if outcome.outcome == 'open' and outcome.signal_id in self._open_written:
+        # Skip duplicate entries by (signal_id, outcome)
+        key = (outcome.signal_id, outcome.outcome)
+        if key in self._seen_keys:
             pass
         else:
             with open(self.outcomes_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(record, ensure_ascii=False) + '\n')
-            if outcome.outcome == 'open':
-                self._open_written.add(outcome.signal_id)
+            self._seen_keys.add(key)
 
         # Добавить в checked если закрыт
         if outcome.outcome != 'open':
@@ -551,9 +565,9 @@ class OutcomeTracker:
         losses = [o for o in outcomes if o['outcome'] == 'loss' and o.get('pnl_pct') is not None]
         all_with_pnl = [o for o in outcomes if o.get('pnl_pct') is not None]
 
-        total = len(outcomes)
         win_count = len(wins)
         loss_count = len(losses)
+        total = win_count + loss_count  # исключаем timeout из расчета win_rate
 
         win_rate = win_count / total if total > 0 else 0.0
 

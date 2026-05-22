@@ -65,6 +65,10 @@ app.conf.beat_schedule = {
         "task": "stock_signal_analyzer.tasks.run_collect_all",
         "schedule": timedelta(hours=4),
     },
+    "scan-all-signals": {
+        "task": "stock_signal_analyzer.tasks.scan_all_signals",
+        "schedule": timedelta(minutes=30),
+    },
 }
 
 
@@ -240,3 +244,14 @@ def _save_signal_to_db(record: dict, user_id: int | None) -> None:
             session.add(sig)
     except Exception as e:
         _log.debug("DB save failed: %s", e)
+
+
+@app.task(bind=True, max_retries=1, default_retry_delay=60, soft_time_limit=900, time_limit=1200)
+def scan_all_signals(self):
+    """Асинхронное сканирование всех RU и US тикеров с сохранением в кэш."""
+    from stock_signal_analyzer.outside_signals import scan_all_regions
+    try:
+        scan_all_regions([])
+    except Exception as exc:
+        log.warning("scan_all_signals failed, retrying...", exc_info=True)
+        raise self.retry(exc=exc)
