@@ -1722,7 +1722,6 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
                 volume_tape_ws=tape,
                 use_finnhub_ws=ws,
                 ws_seconds=8.0,
-                filter_type=prefs.signal_filter_type,
                 user_id=uid,
             ),
         )
@@ -2042,19 +2041,7 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
         log.exception("dashboard")
         await message.reply_text(_esc(f"Ошибка: {e}"), parse_mode=ParseMode.HTML)
         return
-    # Фильтрация по пользовательским настройкам
-    from stock_signal_analyzer.signal_filter import should_trade_signal
-    for section in bundle.sections.values():
-        section[:] = [rep for rep in section if should_trade_signal(rep, filter_type=prefs.signal_filter_type)]
-    any_section = any(section for section in bundle.sections.values())
-    if not any_section and not bundle.errors:
-        filter_note = (
-            f"ℹ️ Данные по тикерам загружены, но все сигналы отфильтрованы «{prefs.signal_filter_type or 'default'}» фильтром. "
-            f"Попробуйте изменить настройки через /settings.\n\n"
-        )
-    else:
-        filter_note = ""
-    html_text = filter_note + format_dashboard_bundle(bundle, [])
+    html_text = format_dashboard_bundle(bundle, [])
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
@@ -2563,7 +2550,7 @@ def _collect_signals_smart(tickers: list[str]) -> tuple[int, int, list[str], lis
 _SIGNAL_COLLECT_TIMEOUT_SEC = int(os.environ.get("SIGNAL_COLLECT_TIMEOUT_SEC", "60"))
 
 
-def _collect_signals_sync(tickers: list[str], filter_type: str = "balanced") -> tuple[int, int, list[str]]:
+def _collect_signals_sync(tickers: list[str]) -> tuple[int, int, list[str]]:
     """
     Анализирует каждый тикер через build_report (который сам пишет в SSA_SIGNAL_LOG).
     Каждый тикер имеет таймаут — зависший не блокирует остальные.
@@ -2575,7 +2562,7 @@ def _collect_signals_sync(tickers: list[str], filter_type: str = "balanced") -> 
     for sym in tickers:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(build_report, sym, fast_mode=True, filter_type=filter_type)
+                future = executor.submit(build_report, sym, fast_mode=True)
                 future.result(timeout=_SIGNAL_COLLECT_TIMEOUT_SEC)
             ok += 1
         except concurrent.futures.TimeoutError:
@@ -2620,7 +2607,7 @@ async def _cmd_collect_with_args(update: Update, args: list[str]) -> None:
 
     loop = asyncio.get_running_loop()
     ok, errs, err_list = await loop.run_in_executor(
-        None, lambda: _collect_signals_sync(tickers, filter_type=prefs.signal_filter_type),
+        None, lambda: _collect_signals_sync(tickers),
     )
 
     lines = [f"✅ Сбор завершён: {ok} сигналов записано, {errs} ошибок."]
