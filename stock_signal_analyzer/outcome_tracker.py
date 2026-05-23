@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -566,9 +566,9 @@ class OutcomeTracker:
             return {'closed': 0, 'pending': 0, 'total': 0}
 
         if max_workers is None:
-            max_workers = int(os.environ.get("OUTCOME_MAX_WORKERS", "3"))
-        total_timeout = int(os.environ.get("OUTCOME_TOTAL_TIMEOUT", "900"))
-        per_future_timeout = int(os.environ.get("OUTCOME_PER_FUTURE_TIMEOUT", "60"))
+            max_workers = int(os.environ.get("OUTCOME_MAX_WORKERS", "8"))
+        total_timeout = int(os.environ.get("OUTCOME_TOTAL_TIMEOUT", "1800"))
+        per_future_timeout = int(os.environ.get("OUTCOME_PER_FUTURE_TIMEOUT", "30"))
         _log.info(f"Проверка {len(signals)} сигналов (workers={max_workers}, total_timeout={total_timeout})...")
 
         # Параллельно проверяем каждый сигнал

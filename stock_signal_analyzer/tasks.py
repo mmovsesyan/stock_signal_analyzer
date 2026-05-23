@@ -139,7 +139,7 @@ def analyze_ticker(self, symbol: str, user_id: int | None = None, fast_mode: boo
         self.retry(exc=exc)
 
 
-@app.task(bind=True, max_retries=1)
+@app.task(bind=True, max_retries=1, soft_time_limit=300, time_limit=600)
 def run_outcome_tracker(self) -> dict:
     """Проверить исходы открытых сигналов."""
     try:
@@ -153,7 +153,7 @@ def run_outcome_tracker(self) -> dict:
         self.retry(exc=exc)
 
 
-@app.task(bind=True, max_retries=1)
+@app.task(bind=True, max_retries=1, soft_time_limit=300, time_limit=600)
 def run_learning(self) -> dict:
     """Запустить цикл обучения (IC + LLM)."""
     try:
@@ -193,7 +193,7 @@ def run_collect_all(self) -> dict:
         self.retry(exc=exc)
 
 
-@app.task(bind=True, max_retries=1)
+@app.task(bind=True, max_retries=1, soft_time_limit=300, time_limit=600)
 def run_cleanup(self) -> dict:
     """Очистка неактивных тестовых пользователей и старых логов."""
     try:

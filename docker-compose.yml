@@ -39,7 +39,7 @@ services:
   tracker:
     build: .
     container_name: stock-signal-tracker
-    restart: "no"
+    restart: unless-stopped
     environment:
       - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
       - STOCK_SIGNAL_DATA=/data
@@ -81,7 +81,7 @@ services:
   learning:
     build: .
     container_name: stock-signal-learning
-    restart: "no"
+    restart: unless-stopped
     environment:
       - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
       - STOCK_SIGNAL_DATA=/data
