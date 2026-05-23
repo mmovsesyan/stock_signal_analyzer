@@ -379,8 +379,9 @@ async def _reply_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     if chat_id and prefs.last_bot_msg_id:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
-        except Exception:
-            pass
+            log.debug("Deleted previous bot message %s for uid=%s", prefs.last_bot_msg_id, uid)
+        except Exception as e:
+            log.warning("Failed to delete message %s for uid=%s: %s", prefs.last_bot_msg_id, uid, e)
     msg = await update.message.reply_text(text, **kwargs) if update.message else None
     if msg and uid:
         prefs.last_bot_msg_id = msg.message_id
@@ -396,8 +397,9 @@ async def _reply_tracked_msg(message, uid: int, text: str, **kwargs) -> Message 
     if chat_id and prefs.last_bot_msg_id:
         try:
             await message._bot.delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
-        except Exception:
-            pass
+            log.debug("Deleted previous bot message %s for uid=%s", prefs.last_bot_msg_id, uid)
+        except Exception as e:
+            log.warning("Failed to delete message %s for uid=%s: %s", prefs.last_bot_msg_id, uid, e)
     msg = await message.reply_text(text, **kwargs) if message else None
     if msg and uid:
         prefs.last_bot_msg_id = msg.message_id
