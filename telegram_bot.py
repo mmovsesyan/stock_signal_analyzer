@@ -372,19 +372,38 @@ def _autocollect_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
 
 async def _reply_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> Message | None:
     """Отправить reply и удалить предыдущее меню-сообщение бота.
-    Использует persistent last_bot_msg_id из настроек пользователя."""
+    Использует persistent last_bot_msg_id из настроек пользователя.
+
+    Правило удаления:
+    • Новое сообщение с ReplyKeyboardMarkup — удаляем старое (клавиатура
+      восстанавливается из нового сообщения).
+    • Новое сообщение с InlineKeyboardMarkup или без клавиатуры — удаляем
+      старое только если оно НЕ имело ReplyKeyboardMarkup (иначе кнопки
+      меню пропадут)."""
     uid = _uid(update)
     prefs = load_prefs(uid)
     chat_id = update.effective_chat.id if update.effective_chat else None
-    if chat_id and prefs.last_bot_msg_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
-            log.debug("Deleted previous bot message %s for uid=%s", prefs.last_bot_msg_id, uid)
-        except Exception as e:
-            log.warning("Failed to delete message %s for uid=%s: %s", prefs.last_bot_msg_id, uid, e)
+    new_has_reply_kb = isinstance(kwargs.get("reply_markup"), ReplyKeyboardMarkup)
+
+    # 1. Отправить новое сообщение СНАЧАЛА — чтобы клавиатура не пропала
     msg = await update.message.reply_text(text, **kwargs) if update.message else None
+
+    # 2. Удалить старое сообщение, если это безопасно
+    if chat_id and prefs.last_bot_msg_id and msg:
+        should_delete = (
+            not prefs.last_bot_msg_has_reply_kb  # старое было inline / без клавиатуры
+            or new_has_reply_kb                  # новое восстановит ReplyKeyboardMarkup
+        )
+        if should_delete:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
+                log.debug("Deleted previous bot message %s for uid=%s", prefs.last_bot_msg_id, uid)
+            except Exception as e:
+                log.warning("Failed to delete message %s for uid=%s: %s", prefs.last_bot_msg_id, uid, e)
+
     if msg and uid:
         prefs.last_bot_msg_id = msg.message_id
+        prefs.last_bot_msg_has_reply_kb = new_has_reply_kb
         save_prefs(uid, prefs)
     return msg
 
@@ -394,15 +413,27 @@ async def _reply_tracked_msg(message, uid: int, text: str, **kwargs) -> Message 
     Использует persistent last_bot_msg_id из настроек пользователя."""
     prefs = load_prefs(uid)
     chat_id = message.chat_id if message else None
-    if chat_id and prefs.last_bot_msg_id:
-        try:
-            await message.get_bot().delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
-            log.debug("Deleted previous bot message %s for uid=%s", prefs.last_bot_msg_id, uid)
-        except Exception as e:
-            log.warning("Failed to delete message %s for uid=%s: %s", prefs.last_bot_msg_id, uid, e)
+    new_has_reply_kb = isinstance(kwargs.get("reply_markup"), ReplyKeyboardMarkup)
+
+    # 1. Отправить новое сообщение СНАЧАЛА
     msg = await message.reply_text(text, **kwargs) if message else None
+
+    # 2. Удалить старое сообщение, если это безопасно
+    if chat_id and prefs.last_bot_msg_id and msg:
+        should_delete = (
+            not prefs.last_bot_msg_has_reply_kb
+            or new_has_reply_kb
+        )
+        if should_delete:
+            try:
+                await message.get_bot().delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
+                log.debug("Deleted previous bot message %s for uid=%s", prefs.last_bot_msg_id, uid)
+            except Exception as e:
+                log.warning("Failed to delete message %s for uid=%s: %s", prefs.last_bot_msg_id, uid, e)
+
     if msg and uid:
         prefs.last_bot_msg_id = msg.message_id
+        prefs.last_bot_msg_has_reply_kb = new_has_reply_kb
         save_prefs(uid, prefs)
     return msg
 
