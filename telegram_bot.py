@@ -1284,7 +1284,7 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
    Определяет, какие сигналы показывают.
 
 🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
-   Приходят все сигналы (A / B / C)
+   Приходят A и B (C — только в watchlist)
 
 📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
 
@@ -2295,7 +2295,7 @@ async def cmd_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(
             f"Уведомления «сигнал вне списка»: "
             f"{'вкл' if prefs.notify_strong_outside else 'выкл'} "
-            f"(все классы A / B / C)"
+            f"(A и B, C — только watchlist)"
         )
         return
     v = args[0].lower()
