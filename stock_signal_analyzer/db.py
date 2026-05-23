@@ -96,6 +96,7 @@ class User(Base):
     max_watchlist_size = Column(Integer, default=30)
     autocollect_tickers = Column(JSON, default=list)
     notify_outside_scope = Column(String(10), default="all")
+    last_bot_msg_id = Column(Integer, default=0)
 
     # Relations
     watchlist = relationship("Watchlist", back_populates="user", cascade="all, delete-orphan")

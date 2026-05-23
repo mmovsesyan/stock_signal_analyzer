@@ -64,6 +64,8 @@ class UserPrefs:
     daily_digest: bool = False
     """Область уведомлений вне списка: all, us, ru."""
     notify_outside_scope: str = "all"
+    """ID последнего меню-сообщения бота (для авто-удаления старых)."""
+    last_bot_msg_id: int = 0
 
 
 def _empty_store() -> dict[str, Any]:
@@ -135,6 +137,7 @@ def _prefs_from_dict(d: dict[str, Any]) -> UserPrefs:
         notify_drawdown=bool(d.get("notify_drawdown", True)),
         daily_digest=bool(d.get("daily_digest", False)),
         notify_outside_scope=str(d.get("notify_outside_scope", "all")),
+        last_bot_msg_id=int(d.get("last_bot_msg_id", 0)),
     )
 
 

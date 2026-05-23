@@ -52,6 +52,7 @@ def _db_user_to_prefs(user: DbUser) -> UserPrefs:
         notify_drawdown=user.notify_drawdown,
         daily_digest=user.daily_digest,
         notify_outside_scope=user.notify_outside_scope or "all",
+        last_bot_msg_id=user.last_bot_msg_id or 0,
     )
 
 
@@ -72,6 +73,7 @@ def _prefs_to_db_dict(prefs: UserPrefs) -> dict[str, Any]:
         "autocollect_tickers": prefs.autocollect_tickers,
         "tier": prefs.tier,
         "notify_outside_scope": prefs.notify_outside_scope,
+        "last_bot_msg_id": prefs.last_bot_msg_id,
     }
 
 

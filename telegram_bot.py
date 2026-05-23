@@ -371,42 +371,37 @@ def _autocollect_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
 
 
 async def _reply_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> Message | None:
-    """Отправить reply и удалить предыдущее несигнальное сообщение бота.
-    ReplyKeyboardMarkup-сообщения не удаляются (иначе кнопки пропадут).
-    Предыдущее удаляется только если оно тоже было без ReplyKeyboardMarkup."""
-    msg = await update.message.reply_text(text, **kwargs) if update.message else None
+    """Отправить reply и удалить предыдущее меню-сообщение бота.
+    Использует persistent last_bot_msg_id из настроек пользователя."""
+    uid = _uid(update)
+    prefs = load_prefs(uid)
     chat_id = update.effective_chat.id if update.effective_chat else None
-    reply_markup = kwargs.get("reply_markup")
-    has_reply_kb = type(reply_markup).__name__ == "ReplyKeyboardMarkup"
-    if chat_id:
-        last_info = context.user_data.get("_last_msg_info")
-        if last_info and not last_info.get("has_reply_kb") and not has_reply_kb:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=last_info["id"])
-            except Exception:
-                pass
-        if msg:
-            context.user_data["_last_msg_info"] = {"id": msg.message_id, "has_reply_kb": has_reply_kb}
+    if chat_id and prefs.last_bot_msg_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
+        except Exception:
+            pass
+    msg = await update.message.reply_text(text, **kwargs) if update.message else None
+    if msg and uid:
+        prefs.last_bot_msg_id = msg.message_id
+        save_prefs(uid, prefs)
     return msg
 
 
-async def _reply_tracked_msg(message, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> Message | None:
-    """Отправить reply на message и удалить предыдущее несигнальное сообщение бота.
-    ReplyKeyboardMarkup-сообщения не удаляются (иначе кнопки пропадут).
-    Предыдущее удаляется только если оно тоже было без ReplyKeyboardMarkup."""
-    msg = await message.reply_text(text, **kwargs) if message else None
+async def _reply_tracked_msg(message, uid: int, text: str, **kwargs) -> Message | None:
+    """Отправить reply на message и удалить предыдущее меню-сообщение бота.
+    Использует persistent last_bot_msg_id из настроек пользователя."""
+    prefs = load_prefs(uid)
     chat_id = message.chat_id if message else None
-    reply_markup = kwargs.get("reply_markup")
-    has_reply_kb = type(reply_markup).__name__ == "ReplyKeyboardMarkup"
-    if chat_id:
-        last_info = context.user_data.get("_last_msg_info")
-        if last_info and not last_info.get("has_reply_kb") and not has_reply_kb:
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=last_info["id"])
-            except Exception:
-                pass
-        if msg:
-            context.user_data["_last_msg_info"] = {"id": msg.message_id, "has_reply_kb": has_reply_kb}
+    if chat_id and prefs.last_bot_msg_id:
+        try:
+            await message._bot.delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
+        except Exception:
+            pass
+    msg = await message.reply_text(text, **kwargs) if message else None
+    if msg and uid:
+        prefs.last_bot_msg_id = msg.message_id
+        save_prefs(uid, prefs)
     return msg
 
 
@@ -1362,7 +1357,7 @@ async def _show_settings_inline(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         keyboard.append([InlineKeyboardButton("🔒 Дайджест — требуется Pro", callback_data=f"set|upgrade|digest|{uid}")])
 
-    await _reply_tracked_msg(msg, context, text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+    await _reply_tracked_msg(msg, uid, text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
