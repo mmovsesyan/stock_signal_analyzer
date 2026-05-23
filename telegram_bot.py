@@ -45,6 +45,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.error import TimedOut
 
 from stock_signal_analyzer.dashboard import build_dashboard
 from stock_signal_analyzer.engine import build_report
@@ -689,14 +690,17 @@ async def _on_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"\n\n📞 Для связи с администратором:\n"
             f"  <b>{_esc(_ADMIN_CONTACT_INFO)}</b>\n"
         )
-    await query.edit_message_text(
-        f"✅ Вы выбрали план: <b>{plan_label}</b>\n\n"
-        "Ваша заявка отправлена администратору.\n"
-        "Вы получите уведомление когда доступ будет активирован.\n\n"
-        "⏳ Обычно это занимает несколько минут."
-        f"{contact_line}",
-        parse_mode=ParseMode.HTML,
-    )
+    try:
+        await query.edit_message_text(
+            f"✅ Вы выбрали план: <b>{plan_label}</b>\n\n"
+            "Ваша заявка отправлена администратору.\n"
+            "Вы получите уведомление когда доступ будет активирован.\n\n"
+            "⏳ Обычно это занимает несколько минут."
+            f"{contact_line}",
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception:
+        pass
 
     # ── Уведомление админу ──
     if _ADMIN_CHAT_ID:
@@ -987,12 +991,15 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 ],
             ])
 
-            await query.edit_message_text(
-                f"✅ Тариф изменён: <b>{old_tier}</b> → <b>{new_tier}</b>\n\n{user_info}",
-                parse_mode=ParseMode.HTML,
-                reply_markup=user_keyboard,
-            )
-            log.info("Message edited for admin, showing new tier %s", new_tier)
+            try:
+                await query.edit_message_text(
+                    f"✅ Тариф изменён: <b>{old_tier}</b> → <b>{new_tier}</b>\n\n{user_info}",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=user_keyboard,
+                )
+                log.info("Message edited for admin, showing new tier %s", new_tier)
+            except Exception:
+                pass
 
         except Exception as e:
             log.exception("Error changing tier for user %d", target_uid)
@@ -1047,10 +1054,13 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except Exception:
             pass
 
-        await query.edit_message_text(
-            query.message.text + f"\n\n✅ <b>ОДОБРЕНО</b> — план {plan_label}",
-            parse_mode=ParseMode.HTML,
-        )
+        try:
+            await query.edit_message_text(
+                query.message.text + f"\n\n✅ <b>ОДОБРЕНО</b> — план {plan_label}",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
 
     elif action == "deny":
         # Деактивировать в БД
@@ -1061,6 +1071,22 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     user = session.query(DbUser).filter_by(telegram_id=target_uid).first()
                     if user:
                         user.is_active = False
+        except Exception:
+            pass
+
+        # Удалить из approved_users и сбросить prefs
+        try:
+            approved = _load_approved_users()
+            approved.discard(target_uid)
+            _save_approved_users(approved)
+        except Exception:
+            pass
+        try:
+            from stock_signal_analyzer.subscriptions import _tier_cache
+            _tier_cache.pop(target_uid, None)
+            prefs = load_prefs(target_uid)
+            prefs.tier = "free"
+            save_prefs(target_uid, prefs)
         except Exception:
             pass
 
@@ -1077,10 +1103,13 @@ async def _on_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except Exception:
             pass
 
-        await query.edit_message_text(
-            query.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>",
-            parse_mode=ParseMode.HTML,
-        )
+        try:
+            await query.edit_message_text(
+                query.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
 
 
 async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1416,7 +1445,10 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Проверить, что пользователь меняет свои настройки
     if _uid(update) != uid and not _is_admin(_uid(update)):
-        await query.edit_message_text("⛔ Нельзя менять чужие настройки.", parse_mode=ParseMode.HTML)
+        try:
+            await query.edit_message_text("⛔ Нельзя менять чужие настройки.", parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
         return
 
     tier = get_user_tier(uid)
@@ -1554,7 +1586,10 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         keyboard.append([InlineKeyboardButton("🔒 Дайджест — требуется Pro", callback_data=f"set|upgrade|digest|{uid}")])
 
-    await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+    try:
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        log.debug("Settings edit_message_text failed (likely not modified): %s", e)
 
 
 async def _send_price_for_symbol(message, sym: str) -> None:
@@ -1821,25 +1856,34 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if action == "noop":
         return
     if action == "home":
-        await query.edit_message_text(
-            "Выберите категорию тикеров.\n"
-            "Дальше можно выбрать бумагу и действие: анализ, цена, добавление в watchlist/dashboard.",
-            reply_markup=_pick_categories_markup(),
-        )
+        try:
+            await query.edit_message_text(
+                "Выберите категорию тикеров.\n"
+                "Дальше можно выбрать бумагу и действие: анализ, цена, добавление в watchlist/dashboard.",
+                reply_markup=_pick_categories_markup(),
+            )
+        except Exception:
+            pass
         return
     if action == "c" and len(parts) >= 4:
         group_id = parts[2]
         page = int(parts[3]) if parts[3].isdigit() else 0
         title, symbols = _PICK_GROUPS.get(group_id, ("Категория", []))
         if not symbols:
-            await query.edit_message_text("Список пуст.")
+            try:
+                await query.edit_message_text("Список пуст.")
+            except Exception:
+                pass
             return
         group_desc = _PICK_GROUP_DESCRIPTIONS.get(group_id, "")
         desc_line = f"\n{group_desc}" if group_desc else ""
-        await query.edit_message_text(
-            f"{title}{desc_line}\nВыберите тикер:",
-            reply_markup=_pick_tickers_markup(group_id, page),
-        )
+        try:
+            await query.edit_message_text(
+                f"{title}{desc_line}\nВыберите тикер:",
+                reply_markup=_pick_tickers_markup(group_id, page),
+            )
+        except Exception:
+            pass
         return
     if action == "t" and len(parts) >= 5:
         sym = parts[2]
@@ -1847,12 +1891,15 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         page = int(parts[4]) if parts[4].isdigit() else 0
         sym_title = _SYMBOL_TITLES.get(sym, _SYMBOL_TITLES.get(sym.replace(".ME", ""), ""))
         label = f"{_esc(sym)} — {_esc(sym_title)}" if sym_title else _esc(sym)
-        await query.edit_message_text(
-            f"Тикер: <b>{label}</b>\n"
-            "Что сделать с этим тикером?",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_pick_actions_markup(sym, group_id, page),
-        )
+        try:
+            await query.edit_message_text(
+                f"Тикер: <b>{label}</b>\n"
+                "Что сделать с этим тикером?",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_pick_actions_markup(sym, group_id, page),
+            )
+        except Exception:
+            pass
         return
     if action == "a" and len(parts) >= 6:
         mode = parts[2]
@@ -1876,10 +1923,15 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 if n and n not in prefs.watchlist:
                     prefs.watchlist.append(n)
                     save_prefs(uid, prefs)
-                await msg.reply_text(
-                    f"Добавил <b>{_esc(sym)}</b> в watchlist.",
-                    parse_mode=ParseMode.HTML,
-                )
+                    await msg.reply_text(
+                        f"Добавил <b>{_esc(sym)}</b> в watchlist.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                else:
+                    await msg.reply_text(
+                        f"<b>{_esc(sym)}</b> уже есть в watchlist.",
+                        parse_mode=ParseMode.HTML,
+                    )
         elif mode == "dash":
             uid = _uid(update)
             await _cmd_dashboard_message_with_args(msg, uid, [sym])
@@ -1967,15 +2019,25 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
     loop = asyncio.get_running_loop()
 
     try:
-        bundle = await loop.run_in_executor(
-            None,
-            lambda: build_dashboard(
-                merged,
-                volume_tape_ws=tape,
-                use_finnhub_ws=ws,
-                ws_seconds=8.0,
+        bundle = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: build_dashboard(
+                    merged,
+                    volume_tape_ws=tape,
+                    use_finnhub_ws=ws,
+                    ws_seconds=8.0,
+                ),
             ),
+            timeout=50.0,
         )
+    except asyncio.TimeoutError:
+        log.warning("dashboard timeout for uid=%s symbols=%s", uid, merged)
+        await message.reply_text(
+            "⏱ Сбор данных занял слишком много времени. Попробуйте позже или с меньшим списком тикеров.",
+            reply_markup=_analysis_menu_keyboard(),
+        )
+        return
     except Exception as e:
         log.exception("dashboard")
         await message.reply_text(_esc(f"Ошибка: {e}"), parse_mode=ParseMode.HTML)
@@ -1984,7 +2046,15 @@ async def _cmd_dashboard_message_with_args(message, uid: int, args: list[str]) -
     from stock_signal_analyzer.signal_filter import should_trade_signal
     for section in bundle.sections.values():
         section[:] = [rep for rep in section if should_trade_signal(rep, filter_type=prefs.signal_filter_type)]
-    html_text = format_dashboard_bundle(bundle, [])
+    any_section = any(section for section in bundle.sections.values())
+    if not any_section and not bundle.errors:
+        filter_note = (
+            f"ℹ️ Данные по тикерам загружены, но все сигналы отфильтрованы «{prefs.signal_filter_type or 'default'}» фильтром. "
+            f"Попробуйте изменить настройки через /settings.\n\n"
+        )
+    else:
+        filter_note = ""
+    html_text = filter_note + format_dashboard_bundle(bundle, [])
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
@@ -3133,6 +3203,9 @@ async def post_init(application: Application) -> None:
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global error handler: log all unhandled exceptions and notify the user."""
     log.error("Telegram update caused error: %s (update: %s)", context.error, update)
+    if isinstance(context.error, TimedOut):
+        # Network timeout — no need to alarm the user; the client will retry or show spinner.
+        return
     if update and isinstance(update, Update) and update.effective_message:
         try:
             await update.effective_message.reply_text(

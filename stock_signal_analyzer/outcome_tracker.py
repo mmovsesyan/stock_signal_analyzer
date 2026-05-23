@@ -504,23 +504,43 @@ class OutcomeTracker:
                 executor.submit(self._check_signal_outcome, sig): sig
                 for sig in signals
             }
-            for future in as_completed(future_to_signal, timeout=total_timeout):
-                sig = future_to_signal[future]
-                try:
-                    outcome = future.result(timeout=per_future_timeout)
-                    outcomes_map[self._get_signal_id(sig)] = outcome
-                except Exception as e:
-                    _log.error("Outcome check failed for %s: %s", sig['symbol'], e)
-                    # Fallback: оставить открытым
-                    outcomes_map[self._get_signal_id(sig)] = SignalOutcome(
-                        signal_id=self._get_signal_id(sig),
-                        symbol=sig['symbol'],
-                        outcome='open',
-                        exit_price=None,
-                        exit_date=None,
-                        pnl_pct=None,
-                        hold_days=None,
-                    )
+            try:
+                for future in as_completed(future_to_signal, timeout=total_timeout):
+                    sig = future_to_signal[future]
+                    try:
+                        outcome = future.result(timeout=per_future_timeout)
+                        outcomes_map[self._get_signal_id(sig)] = outcome
+                    except Exception as e:
+                        _log.error("Outcome check failed for %s: %s", sig['symbol'], e)
+                        # Fallback: оставить открытым
+                        outcomes_map[self._get_signal_id(sig)] = SignalOutcome(
+                            signal_id=self._get_signal_id(sig),
+                            symbol=sig['symbol'],
+                            outcome='open',
+                            exit_price=None,
+                            exit_date=None,
+                            pnl_pct=None,
+                            hold_days=None,
+                        )
+            except TimeoutError:
+                unfinished = sum(1 for f in future_to_signal if not f.done())
+                _log.warning("Outcome check total timeout (%ss) reached, %d futures unfinished — leaving as open", total_timeout, unfinished)
+                for future, sig in future_to_signal.items():
+                    if future.done():
+                        try:
+                            outcome = future.result(timeout=per_future_timeout)
+                            outcomes_map[self._get_signal_id(sig)] = outcome
+                        except Exception as e:
+                            _log.error("Outcome check failed for %s: %s", sig['symbol'], e)
+                            outcomes_map[self._get_signal_id(sig)] = SignalOutcome(
+                                signal_id=self._get_signal_id(sig),
+                                symbol=sig['symbol'],
+                                outcome='open',
+                                exit_price=None,
+                                exit_date=None,
+                                pnl_pct=None,
+                                hold_days=None,
+                            )
 
         # Последовательно сохраняем результаты (файловая запись — не thread-safe)
         # Сохраняем только закрытые сигналы, чтобы не раздувать файл.
