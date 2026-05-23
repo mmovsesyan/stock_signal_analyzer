@@ -115,37 +115,83 @@ class OutcomeTracker:
         return seen
 
     def _load_open_signals(self) -> list[dict[str, Any]]:
-        """Загрузить открытые сигналы из лога."""
-        if not self.signals_log.exists():
-            _log.warning(f"Файл сигналов не найден: {self.signals_log}")
-            return []
+        """Загрузить открытые сигналы из лога и БД."""
+        signals: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
 
-        signals = []
-        with open(self.signals_log, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    signal = json.loads(line.strip())
-
-                    # Пропустить уже проверенные
-                    signal_id = self._get_signal_id(signal)
-                    if signal_id in self.checked_signals:
+        # 1. JSONL файл (legacy, primary для тикеров без db_id)
+        if self.signals_log.exists():
+            with open(self.signals_log, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        signal = json.loads(line.strip())
+                        signal_id = self._get_signal_id(signal)
+                        if signal_id in self.checked_signals:
+                            continue
+                        trade_plan = signal.get('trade_plan')
+                        if not trade_plan:
+                            trade_plan = self._extract_trade_plan(signal)
+                        if not trade_plan or trade_plan.get('direction') in ('none', '', None):
+                            continue
+                        signal['trade_plan'] = trade_plan
+                        signals.append(signal)
+                        seen_ids.add(signal_id)
+                    except (json.JSONDecodeError, KeyError):
                         continue
 
-                    # Signal log хранит торговый план в плоских ключах (tp_direction, tp_entry, ...)
-                    # Собираем их во вложенный dict для единообразия.
-                    trade_plan = signal.get('trade_plan')
-                    if not trade_plan:
-                        trade_plan = self._extract_trade_plan(signal)
-                    if not trade_plan or trade_plan.get('direction') in ('none', '', None):
-                        continue
+        # 2. PostgreSQL — сигналы без outcome и с торговым планом
+        try:
+            from .db import db_available, get_session, Signal as DbSignal, Outcome as DbOutcome
+            if db_available():
+                with get_session(read_only=True) as session:
+                    rows = (
+                        session.query(DbSignal)
+                        .outerjoin(DbOutcome, DbSignal.id == DbOutcome.signal_id)
+                        .filter(DbOutcome.id == None)
+                        .filter(DbSignal.direction != None)
+                        .filter(DbSignal.direction.notin_(['none', 'neutral', '']))
+                        .filter(DbSignal.tp_entry != None)
+                        .order_by(DbSignal.created_at.desc())
+                        .limit(500)
+                        .all()
+                    )
+                    for row in rows:
+                        signal_id = f"{row.symbol}_{row.created_at.isoformat().replace('+00:00', 'Z')}" if row.created_at else f"{row.symbol}_db_{row.id}"
+                        if signal_id in seen_ids or signal_id in self.checked_signals:
+                            continue
+                        trade_plan = {
+                            'direction': row.direction,
+                            'entry_price': row.tp_entry or row.ref_price,
+                            'stop_price': row.tp_stop,
+                            'target1_price': row.tp_target1,
+                            'target2_price': row.tp_target2,
+                            'max_hold_days': row.tp_max_hold_days or 15,
+                        }
+                        if not trade_plan['entry_price']:
+                            continue
+                        signal = {
+                            'symbol': row.symbol,
+                            'ts_utc': row.created_at.isoformat().replace('+00:00', 'Z') if row.created_at else '',
+                            'score': row.score,
+                            'confidence': row.confidence,
+                            'signal_tier': row.signal_tier,
+                            'technical_score': row.technical_score,
+                            'momentum_score': row.momentum_score,
+                            'news_score': row.news_score,
+                            'volume_score': row.volume_score,
+                            'direction': row.direction,
+                            'trade_plan': trade_plan,
+                            'db_signal_id': row.id,
+                            'atr_pct': row.atr_pct,
+                            'macro_dampening': row.macro_dampening,
+                            'ref_price': row.ref_price,
+                        }
+                        signals.append(signal)
+                        seen_ids.add(signal_id)
+        except Exception as e:
+            _log.debug("DB open signals load skipped: %s", e)
 
-                    signal['trade_plan'] = trade_plan
-                    signals.append(signal)
-
-                except json.JSONDecodeError:
-                    continue
-
-        _log.info(f"Найдено {len(signals)} открытых сигналов")
+        _log.info("Найдено %d открытых сигналов", len(signals))
         return signals
 
     @staticmethod
@@ -479,6 +525,34 @@ class OutcomeTracker:
                 f.write(json.dumps(record, ensure_ascii=False) + '\n')
             self._seen_keys.add(key)
 
+        # Сохранить в БД (если сигнал из БД)
+        db_signal_id = signal.get('db_signal_id')
+        if db_signal_id:
+            try:
+                from .db import db_available, get_session, Outcome as DbOutcome
+                if db_available():
+                    with get_session() as session:
+                        existing = session.query(DbOutcome).filter_by(signal_id=int(db_signal_id)).first()
+                        if existing:
+                            existing.outcome = outcome.outcome
+                            existing.exit_price = outcome.exit_price
+                            existing.exit_date = outcome.exit_date
+                            existing.pnl_pct = outcome.pnl_pct
+                            existing.hold_days = outcome.hold_days
+                            existing.checked_at = datetime.now(timezone.utc)
+                        else:
+                            db_outcome = DbOutcome(
+                                signal_id=int(db_signal_id),
+                                outcome=outcome.outcome,
+                                exit_price=outcome.exit_price,
+                                exit_date=outcome.exit_date,
+                                pnl_pct=outcome.pnl_pct,
+                                hold_days=outcome.hold_days,
+                            )
+                            session.add(db_outcome)
+            except Exception:
+                pass
+
         # Добавить в checked если закрыт
         if outcome.outcome != 'open':
             self.checked_signals.add(outcome.signal_id)
@@ -559,23 +633,57 @@ class OutcomeTracker:
         _log.info(f"Закрыто сигналов: {closed_count}/{len(signals)}")
         return {'closed': closed_count, 'pending': len(signals) - closed_count, 'total': len(signals)}
 
-    def get_statistics(self, tier: str | None = None) -> dict[str, Any]:
-        """Получить статистику по результатам."""
-        if not self.outcomes_file.exists():
-            return {}
+    def _load_outcomes_from_db(self, tier: str | None = None) -> list[dict[str, Any]]:
+        """Загрузить закрытые outcomes из PostgreSQL."""
+        try:
+            from .db import db_available, get_session, Outcome as DbOutcome, Signal as DbSignal
+            if not db_available():
+                return []
+            with get_session(read_only=True) as session:
+                query = (
+                    session.query(DbOutcome, DbSignal)
+                    .join(DbSignal, DbOutcome.signal_id == DbSignal.id)
+                    .filter(DbOutcome.outcome != 'open')
+                )
+                if tier:
+                    query = query.filter(DbSignal.signal_tier == tier)
+                rows = query.limit(5000).all()
+                outcomes = []
+                for outcome, signal in rows:
+                    outcomes.append({
+                        'outcome': outcome.outcome,
+                        'pnl_pct': outcome.pnl_pct,
+                        'signal_tier': signal.signal_tier,
+                        'score': signal.score,
+                        'confidence': signal.confidence,
+                        'symbol': signal.symbol,
+                    })
+                return outcomes
+        except Exception as e:
+            _log.debug("DB outcomes load skipped: %s", e)
+            return []
 
-        outcomes = []
-        with open(self.outcomes_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    outcome = json.loads(line.strip())
-                    if outcome['outcome'] == 'open':
+    def get_statistics(self, tier: str | None = None) -> dict[str, Any]:
+        """Получить статистику по результатам (JSONL + PostgreSQL)."""
+        outcomes: list[dict[str, Any]] = []
+
+        # 1. PostgreSQL (primary)
+        db_outcomes = self._load_outcomes_from_db(tier)
+        outcomes.extend(db_outcomes)
+
+        # 2. JSONL fallback (legacy)
+        if self.outcomes_file.exists():
+            with open(self.outcomes_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        outcome = json.loads(line.strip())
+                        if outcome['outcome'] == 'open':
+                            continue
+                        if tier and outcome.get('signal_tier') != tier:
+                            continue
+                        outcomes.append(outcome)
+                    except json.JSONDecodeError:
                         continue
-                    if tier and outcome.get('signal_tier') != tier:
-                        continue
-                    outcomes.append(outcome)
-                except json.JSONDecodeError:
-                    continue
 
         if not outcomes:
             return {}

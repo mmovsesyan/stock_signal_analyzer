@@ -105,42 +105,95 @@ class LearningState:
     llm_provider: str = ""
 
 
-def _load_outcomes() -> list[OutcomeRecord]:
-    """Загрузить закрытые outcomes из файла."""
-    path = _outcomes_path()
-    if not path.exists():
-        return []
-
-    records: list[OutcomeRecord] = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                r = json.loads(line)
-                if r.get("outcome") in ("open", None):
-                    continue
-                pnl = r.get("outcome_pnl") or r.get("pnl_pct")
-                if pnl is None:
+def _load_outcomes_from_db() -> list[OutcomeRecord]:
+    """Загрузить закрытые outcomes из PostgreSQL."""
+    try:
+        from .db import db_available, get_session, Outcome as DbOutcome, Signal as DbSignal
+        if not db_available():
+            return []
+        with get_session(read_only=True) as session:
+            rows = (
+                session.query(DbOutcome, DbSignal)
+                .join(DbSignal, DbOutcome.signal_id == DbSignal.id)
+                .filter(DbOutcome.outcome != 'open')
+                .limit(5000)
+                .all()
+            )
+            records: list[OutcomeRecord] = []
+            for outcome, signal in rows:
+                if outcome.pnl_pct is None:
                     continue
                 records.append(OutcomeRecord(
-                    symbol=r.get("symbol", ""),
-                    tier=r.get("signal_tier", "C"),
-                    outcome=r.get("outcome", ""),
-                    pnl_pct=float(pnl),
-                    score=float(r.get("score", 0)),
-                    confidence=float(r.get("confidence", 0)),
-                    technical_score=float(r.get("technical_score", 0)),
-                    momentum_score=float(r.get("momentum_score", 0)),
-                    news_score=float(r.get("news_score", 0)),
-                    volume_score=float(r.get("volume_score", 0)),
-                    direction=r.get("direction", ""),
-                    hold_days=int(r.get("hold_days", 0)),
-                    entry_date=r.get("entry_date", ""),
+                    symbol=signal.symbol or "",
+                    tier=signal.signal_tier or "C",
+                    outcome=outcome.outcome or "",
+                    pnl_pct=float(outcome.pnl_pct),
+                    score=float(signal.score or 0),
+                    confidence=float(signal.confidence or 0),
+                    technical_score=float(signal.technical_score or 0),
+                    momentum_score=float(signal.momentum_score or 0),
+                    news_score=float(signal.news_score or 0),
+                    volume_score=float(signal.volume_score or 0),
+                    direction=signal.direction or "",
+                    hold_days=int(outcome.hold_days or 0),
+                    entry_date=signal.created_at.isoformat() if signal.created_at else "",
                 ))
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
+            return records
+    except Exception as e:
+        _log.debug("DB outcomes load skipped in learning: %s", e)
+        return []
+
+
+def _load_outcomes() -> list[OutcomeRecord]:
+    """Загрузить закрытые outcomes из файла и БД."""
+    records: list[OutcomeRecord] = []
+    seen_keys: set[str] = set()
+
+    # 1. PostgreSQL (primary)
+    db_records = _load_outcomes_from_db()
+    for rec in db_records:
+        key = f"{rec.symbol}_{rec.entry_date}_{rec.outcome}"
+        if key not in seen_keys:
+            records.append(rec)
+            seen_keys.add(key)
+
+    # 2. JSONL fallback (legacy)
+    path = _outcomes_path()
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                    if r.get("outcome") in ("open", None):
+                        continue
+                    pnl = r.get("outcome_pnl") or r.get("pnl_pct")
+                    if pnl is None:
+                        continue
+                    entry_date = r.get("entry_date", "")
+                    key = f"{r.get('symbol','')}_{entry_date}_{r.get('outcome','')}"
+                    if key in seen_keys:
+                        continue
+                    records.append(OutcomeRecord(
+                        symbol=r.get("symbol", ""),
+                        tier=r.get("signal_tier", "C"),
+                        outcome=r.get("outcome", ""),
+                        pnl_pct=float(pnl),
+                        score=float(r.get("score", 0)),
+                        confidence=float(r.get("confidence", 0)),
+                        technical_score=float(r.get("technical_score", 0)),
+                        momentum_score=float(r.get("momentum_score", 0)),
+                        news_score=float(r.get("news_score", 0)),
+                        volume_score=float(r.get("volume_score", 0)),
+                        direction=r.get("direction", ""),
+                        hold_days=int(r.get("hold_days", 0)),
+                        entry_date=entry_date,
+                    ))
+                    seen_keys.add(key)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
     return records
 
 
