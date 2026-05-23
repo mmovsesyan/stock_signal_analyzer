@@ -491,7 +491,7 @@ async def _show_collect_menu(message, uid: int = 0) -> None:
     )
 
 
-async def _show_settings_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
+async def _show_settings_menu(message, uid: int) -> None:
     if not message:
         return
     await _reply_tracked_msg(
@@ -505,7 +505,7 @@ async def _show_settings_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: 
     )
 
 
-async def _show_learning_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
+async def _show_learning_menu(message, uid: int) -> None:
     if not message:
         return
     prefs = load_prefs(uid)
@@ -525,7 +525,7 @@ async def _show_learning_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: 
     )
 
 
-async def _show_autocollect_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
+async def _show_autocollect_menu(message, uid: int) -> None:
     if not message:
         return
     prefs = load_prefs(uid)
@@ -2131,7 +2131,7 @@ async def on_menu_section_collect(update: Update, context: ContextTypes.DEFAULT_
 
 async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
-    await _show_settings_menu(update.message, context, _uid(update))
+    await _show_settings_menu(update.message, _uid(update))
 
 
 async def on_menu_settings_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
