@@ -370,6 +370,38 @@ def _autocollect_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
     )
 
 
+async def _reply_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> Message | None:
+    """Отправить reply и удалить предыдущее несигнальное сообщение бота."""
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if chat_id:
+        last_id = context.user_data.get("_last_msg_id")
+        if last_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=last_id)
+            except Exception:
+                pass
+    msg = await update.message.reply_text(text, **kwargs) if update.message else None
+    if msg and chat_id:
+        context.user_data["_last_msg_id"] = msg.message_id
+    return msg
+
+
+async def _reply_tracked_msg(message, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> Message | None:
+    """Отправить reply на message и удалить предыдущее несигнальное сообщение бота."""
+    chat_id = message.chat_id if message else None
+    if chat_id:
+        last_id = context.user_data.get("_last_msg_id")
+        if last_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=last_id)
+            except Exception:
+                pass
+    msg = await message.reply_text(text, **kwargs) if message else None
+    if msg and chat_id:
+        context.user_data["_last_msg_id"] = msg.message_id
+    return msg
+
+
 async def _show_root_sections_menu(message, uid: int = 0) -> None:
     if not message:
         return
@@ -417,10 +449,11 @@ async def _show_collect_menu(message) -> None:
     )
 
 
-async def _show_settings_menu(message, uid: int) -> None:
+async def _show_settings_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
     if not message:
         return
-    await message.reply_text(
+    await _reply_tracked_msg(
+        message, context,
         "⚙️ <b>Настройки</b>\n"
         "• Настройка автосбора сигналов\n"
         "• Управление уведомлениями\n"
@@ -430,7 +463,7 @@ async def _show_settings_menu(message, uid: int) -> None:
     )
 
 
-async def _show_learning_menu(message, uid: int) -> None:
+async def _show_learning_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
     if not message:
         return
     prefs = load_prefs(uid)
@@ -443,14 +476,14 @@ async def _show_learning_menu(message, uid: int) -> None:
         "• Адаптивные веса корректируются автоматически\n\n"
         f"Learning report: <b>{report_status}</b>"
     )
-    await message.reply_text(
-        text,
+    await _reply_tracked_msg(
+        message, context, text,
         parse_mode=ParseMode.HTML,
         reply_markup=_learning_menu_keyboard(uid),
     )
 
 
-async def _show_autocollect_menu(message, uid: int) -> None:
+async def _show_autocollect_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
     if not message:
         return
     prefs = load_prefs(uid)
@@ -466,8 +499,8 @@ async def _show_autocollect_menu(message, uid: int) -> None:
         "• Ваши добавленные тикеры\n"
         "• Ваш watchlist"
     )
-    await message.reply_text(
-        text,
+    await _reply_tracked_msg(
+        message, context, text,
         parse_mode=ParseMode.HTML,
         reply_markup=_autocollect_menu_keyboard(uid),
     )
@@ -554,8 +587,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Система совершенствуется на исходах сделок\n\n"
             "Выберите раздел кнопками ниже."
         )
-        await update.message.reply_text(
-            text,
+        await _reply_tracked(
+            update, context, text,
             parse_mode=ParseMode.HTML,
             reply_markup=_main_menu_keyboard(uid),
         )
@@ -1218,7 +1251,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Всегда проводите собственный анализ. Торговля связана с риском потери капитала."
     )
     uid = _uid(update)
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_main_menu_keyboard(uid))
+    await _reply_tracked(update, context, text, parse_mode=ParseMode.HTML, reply_markup=_main_menu_keyboard(uid))
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1228,14 +1261,14 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if update.message:
             await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
         return
-    await _show_settings_inline(update, uid)
+    await _show_settings_inline(update, context, uid)
 
 
 def _scope_label(scope: str) -> str:
     return {"all": "🌍 Все", "us": "🇺🇸 Только US", "ru": "🇷🇺 Только РФ"}.get(scope, "🌍 Все")
 
 
-async def _show_settings_inline(update: Update, uid: int) -> None:
+async def _show_settings_inline(update: Update, context: ContextTypes.DEFAULT_TYPE, uid: int) -> None:
     """Показать inline-меню настроек с учётом тарифа."""
     prefs = load_prefs(uid)
     msg = update.message or (update.callback_query.message if update.callback_query else None)
@@ -1321,7 +1354,7 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
     else:
         keyboard.append([InlineKeyboardButton("🔒 Дайджест — требуется Pro", callback_data=f"set|upgrade|digest|{uid}")])
 
-    await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+    await _reply_tracked_msg(msg, context, text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1726,7 +1759,8 @@ async def cmd_pick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_approved(_uid(update)):
         await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
         return
-    await update.message.reply_text(
+    await _reply_tracked(
+        update, context,
         "Выберите категорию тикеров.\n"
         "Дальше можно выбрать бумагу и действие: анализ, цена, добавление в watchlist/dashboard.",
         reply_markup=_pick_categories_markup(),
@@ -1984,7 +2018,7 @@ async def on_menu_section_collect(update: Update, context: ContextTypes.DEFAULT_
 
 async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
-    await _show_settings_menu(update.message, _uid(update))
+    await _show_settings_menu(update.message, context, _uid(update))
 
 
 async def on_menu_settings_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1995,7 +2029,7 @@ async def on_menu_settings_inline(update: Update, context: ContextTypes.DEFAULT_
         if update.message:
             await update.message.reply_text("⛔ Доступ не активирован. Отправьте /start")
         return
-    await _show_settings_inline(update, uid)
+    await _show_settings_inline(update, context, uid)
 
 
 async def on_menu_autocollect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
