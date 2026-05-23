@@ -69,6 +69,10 @@ app.conf.beat_schedule = {
         "task": "stock_signal_analyzer.tasks.scan_all_signals",
         "schedule": timedelta(minutes=30),
     },
+    "db-cleanup": {
+        "task": "stock_signal_analyzer.tasks.run_cleanup",
+        "schedule": crontab(hour=3, minute=0),  # 03:00 UTC каждый день
+    },
 }
 
 
@@ -186,6 +190,17 @@ def run_collect_all(self) -> dict:
         return {"status": "ok", "queued": len(symbols), "group_task_id": result.id}
     except Exception as exc:
         _log.exception("collect_all failed")
+        self.retry(exc=exc)
+
+
+@app.task(bind=True, max_retries=1)
+def run_cleanup(self) -> dict:
+    """Очистка неактивных тестовых пользователей и старых логов."""
+    try:
+        from .scheduler import run_db_cleanup
+        return run_db_cleanup()
+    except Exception as exc:
+        _log.exception("cleanup failed")
         self.retry(exc=exc)
 
 

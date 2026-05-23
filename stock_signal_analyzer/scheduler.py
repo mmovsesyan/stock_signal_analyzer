@@ -139,28 +139,36 @@ def run_signal_collection() -> dict[str, Any]:
 
 
 def run_db_cleanup() -> dict[str, Any]:
-    """Очистка старых данных в БД."""
+    """Очистка старых данных и тестовых пользователей в БД."""
     _log.info("Scheduler: running DB cleanup...")
     try:
-        from .db import get_session, NotifyLog
+        from .db import get_session, NotifyLog, User as DbUser
         from datetime import timedelta
 
-        cutoff_signals = datetime.now(timezone.utc) - timedelta(days=90)
         cutoff_notify = datetime.now(timezone.utc) - timedelta(days=30)
+        cutoff_inactive = datetime.now(timezone.utc) - timedelta(
+            days=int(os.environ.get("CLEANUP_INACTIVE_DAYS", "7"))
+        )
 
         with get_session() as session:
-            # Удалить старые notify_log (>7 дней)
+            # Удалить старые notify_log
             deleted_notify = session.query(NotifyLog).filter(
                 NotifyLog.notified_at < cutoff_notify
             ).delete()
 
-            # Не удаляем сигналы — они нужны для обучения
-            # Но можно удалить очень старые без outcomes
-            # (оставляем на будущее)
+            # Удалить неактивных тестовых пользователей старше N дней
+            deleted_users = session.query(DbUser).filter(
+                DbUser.is_active == False,
+                DbUser.created_at < cutoff_inactive,
+                DbUser.tier == "free",
+            ).delete()
 
         _health_update(last_cleanup=datetime.now(timezone.utc).isoformat())
-        _log.info("Scheduler: cleanup done (notify_log: %d deleted)", deleted_notify)
-        return {"notify_deleted": deleted_notify}
+        _log.info(
+            "Scheduler: cleanup done (notify_log: %d, inactive_users: %d deleted)",
+            deleted_notify, deleted_users,
+        )
+        return {"notify_deleted": deleted_notify, "inactive_users_deleted": deleted_users}
     except Exception as e:
         _log.debug("Scheduler: cleanup skipped (DB not available): %s", e)
         return {"skipped": True}
