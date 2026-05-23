@@ -371,9 +371,14 @@ def _autocollect_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
 
 
 async def _reply_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> Message | None:
-    """Отправить reply и удалить предыдущее несигнальное сообщение бота."""
+    """Отправить reply и удалить предыдущее несигнальное сообщение бота.
+    НЕ удаляет предыдущее сообщение если текущее использует ReplyKeyboardMarkup
+    (иначе кнопки пропадают)."""
     chat_id = update.effective_chat.id if update.effective_chat else None
-    if chat_id:
+    reply_markup = kwargs.get("reply_markup")
+    # ReplyKeyboardMarkup — не удалять предыдущее, иначе кнопки пропадут
+    has_reply_kb = type(reply_markup).__name__ == "ReplyKeyboardMarkup"
+    if chat_id and not has_reply_kb:
         last_id = context.user_data.get("_last_msg_id")
         if last_id:
             try:
@@ -381,15 +386,19 @@ async def _reply_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
             except Exception:
                 pass
     msg = await update.message.reply_text(text, **kwargs) if update.message else None
-    if msg and chat_id:
+    if msg and chat_id and not has_reply_kb:
         context.user_data["_last_msg_id"] = msg.message_id
     return msg
 
 
 async def _reply_tracked_msg(message, context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> Message | None:
-    """Отправить reply на message и удалить предыдущее несигнальное сообщение бота."""
+    """Отправить reply на message и удалить предыдущее несигнальное сообщение бота.
+    НЕ удаляет предыдущее сообщение если текущее использует ReplyKeyboardMarkup
+    (иначе кнопки пропадают)."""
     chat_id = message.chat_id if message else None
-    if chat_id:
+    reply_markup = kwargs.get("reply_markup")
+    has_reply_kb = type(reply_markup).__name__ == "ReplyKeyboardMarkup"
+    if chat_id and not has_reply_kb:
         last_id = context.user_data.get("_last_msg_id")
         if last_id:
             try:
@@ -397,7 +406,7 @@ async def _reply_tracked_msg(message, context: ContextTypes.DEFAULT_TYPE, text: 
             except Exception:
                 pass
     msg = await message.reply_text(text, **kwargs) if message else None
-    if msg and chat_id:
+    if msg and chat_id and not has_reply_kb:
         context.user_data["_last_msg_id"] = msg.message_id
     return msg
 
