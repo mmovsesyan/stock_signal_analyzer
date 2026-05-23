@@ -1257,6 +1257,10 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await _show_settings_inline(update, uid)
 
 
+def _scope_label(scope: str) -> str:
+    return {"all": "🌍 Все", "us": "🇺🇸 Только US", "ru": "🇷🇺 Только РФ"}.get(scope, "🌍 Все")
+
+
 async def _show_settings_inline(update: Update, uid: int) -> None:
     """Показать inline-меню настроек с учётом тарифа."""
     prefs = load_prefs(uid)
@@ -1284,7 +1288,7 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
    Определяет, какие сигналы показывают.
 
 🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
-   Приходят A и B (C — только в watchlist)
+   Рынок: {_scope_label(prefs.notify_outside_scope)}
 
 📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
 
@@ -1303,6 +1307,11 @@ async def _show_settings_inline(update: Update, uid: int) -> None:
         [
             InlineKeyboardButton("🔔 Уведомления: ON" if prefs.notify_strong_outside else "🔕 Уведомления: OFF",
                                callback_data=f"set|notify|{('off' if prefs.notify_strong_outside else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🌍 Все", callback_data=f"set|scope|all|{uid}"),
+            InlineKeyboardButton("🇺🇸 Только US", callback_data=f"set|scope|us|{uid}"),
+            InlineKeyboardButton("🇷🇺 Только РФ", callback_data=f"set|scope|ru|{uid}"),
         ],
     ]
 
@@ -1384,6 +1393,9 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
         prefs.signal_filter_type = value
     elif key == "notify":
         prefs.notify_strong_outside = (value == "on")
+    elif key == "scope":
+        if value in ("all", "us", "ru"):
+            prefs.notify_outside_scope = value
     elif key == "learning":
         if not limits.learning_report:
             await query.answer("Learning report доступен с тарифа Pro", show_alert=True)
@@ -1431,7 +1443,7 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 🔔 <b>Уведомления вне списка:</b> {'✅' if prefs.notify_strong_outside else '❌'}
 
-   Порог: |score| ≥ {prefs.strong_threshold:.2f}
+   Рынок: {_scope_label(prefs.notify_outside_scope)}
 
 
 📈 <b>Learning report:</b> {_feat(prefs.receive_learning_report, limits.learning_report)}
@@ -1455,6 +1467,11 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
         [
             InlineKeyboardButton("🔔 Уведомления: ON" if prefs.notify_strong_outside else "🔕 Уведомления: OFF",
                                callback_data=f"set|notify|{('off' if prefs.notify_strong_outside else 'on')}|{uid}"),
+        ],
+        [
+            InlineKeyboardButton("🌍 Все", callback_data=f"set|scope|all|{uid}"),
+            InlineKeyboardButton("🇺🇸 Только US", callback_data=f"set|scope|us|{uid}"),
+            InlineKeyboardButton("🇷🇺 Только РФ", callback_data=f"set|scope|ru|{uid}"),
         ],
     ]
 
@@ -2996,6 +3013,12 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         for sym, cs in strong:
             if not can_notify_again(prefs, sym):
+                continue
+            # Фильтр по рынку (US / RU / ALL)
+            scope = prefs.notify_outside_scope
+            if scope == "us" and sym.upper().endswith(".ME"):
+                continue
+            if scope == "ru" and not sym.upper().endswith(".ME"):
                 continue
             rep = await loop.run_in_executor(None, lambda s=sym: _get_full_report(s))
             if rep is None:

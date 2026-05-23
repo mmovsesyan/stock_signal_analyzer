@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/AI-Ollama_LLM-orange" alt="AI">
   <img src="https://img.shields.io/badge/Markets-US_&_RU-green" alt="Markets">
   <img src="https://img.shields.io/badge/Tests-132_passed-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/Version-2.5.2-purple" alt="Version">
+  <img src="https://img.shields.io/badge/Version-2.5.3-purple" alt="Version">
 </p>
 
 ---
@@ -466,6 +466,12 @@ ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' 
 ---
 
 ## ✅ Что нового
+
+### v2.5.3 (2026-05-23) — Выбор рынка для уведомлений вне списка
+
+- **Настройка рынка вне списка** (`user_store.py` + `telegram_bot.py`) — пользователь может выбрать: 🌍 Все рынки / 🇺🇸 Только US / 🇷🇺 Только РФ. Фильтр применяется к периодическим уведомлениям вне watchlist
+- **Кнопки выбора рынка** в `/settings` — inline-кнопки рядом с переключателем уведомлений
+- Тесты: 132 passed
 
 ### v2.5.2 (2026-05-23) — Фильтры сигналов, outcome tracking, HTML-escape, уведомления
 

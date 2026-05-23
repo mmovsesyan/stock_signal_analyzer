@@ -62,6 +62,8 @@ class UserPrefs:
     notify_drawdown: bool = True
     """Получать ежедневный дайджест."""
     daily_digest: bool = False
+    """Область уведомлений вне списка: all, us, ru."""
+    notify_outside_scope: str = "all"
 
 
 def _empty_store() -> dict[str, Any]:
@@ -132,6 +134,7 @@ def _prefs_from_dict(d: dict[str, Any]) -> UserPrefs:
         max_watchlist_size=int(d.get("max_watchlist_size", 30)),
         notify_drawdown=bool(d.get("notify_drawdown", True)),
         daily_digest=bool(d.get("daily_digest", False)),
+        notify_outside_scope=str(d.get("notify_outside_scope", "all")),
     )
 
 
