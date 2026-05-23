@@ -158,13 +158,14 @@ def _is_approved(user_id: int) -> bool:
                 user = session.query(DbUser).filter_by(telegram_id=user_id).first()
                 if user and user.is_active:
                     return True
+            # DB доступна и пользователь не найден / не активен — не падаем до JSON fallback
+            return False
     except Exception:
         pass
-    # Fallback на JSON
+    # Fallback на JSON только если DB недоступна
     approved = _load_approved_users()
     if user_id in approved:
         return True
-    # Без ADMIN_CHAT_ID доступ закрыт
     if not _ADMIN_CHAT_ID:
         return False
     return False
@@ -1267,13 +1268,22 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("⛔ Только для администратора.")
         return
 
-    approved = _load_approved_users()
-    if not approved:
+    users: list[int] = []
+    try:
+        from stock_signal_analyzer.db import db_available, get_session, User as DbUser
+        if db_available():
+            with get_session(read_only=True) as session:
+                rows = session.query(DbUser).filter_by(is_active=True).order_by(DbUser.telegram_id).all()
+                users = [int(u.telegram_id) for u in rows if u.telegram_id]
+    except Exception:
+        pass
+
+    if not users:
         await update.message.reply_text("Нет одобренных пользователей.")
         return
 
-    lines = [f"👥 <b>Одобренные пользователи ({len(approved)}):</b>\n"]
-    for uid in sorted(approved):
+    lines = [f"👥 <b>Одобренные пользователи ({len(users)}):</b>\n"]
+    for uid in users:
         lines.append(f"  • <code>{uid}</code>")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
@@ -1443,7 +1453,9 @@ async def _on_settings_callback(update: Update, context: ContextTypes.DEFAULT_TY
     except ValueError:
         return
 
-    # Проверить, что пользователь меняет свои настройки
+    # Проверить, что пользователь имеет право менять настройки
+    if not _is_approved(uid):
+        return
     if _uid(update) != uid and not _is_admin(_uid(update)):
         try:
             await query.edit_message_text("⛔ Нельзя менять чужие настройки.", parse_mode=ParseMode.HTML)
@@ -1846,6 +1858,9 @@ async def on_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     if query is None or query.data is None:
         return
+    if not _is_approved(_uid(update)):
+        await query.answer("⛔ Доступ не активирован.", show_alert=True)
+        return
     await query.answer()
 
     parts = query.data.strip().split("|")
@@ -2241,10 +2256,9 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "назад", "помощь", "аналитика", "списки", "сбор",
         "настройки", "уведомления",
     )
-    for kw in menu_keywords:
-        if kw in lower:
-            _clear_pending_action(context)
-            return  # Пусть другие handlers обработают кнопку
+    if lower in menu_keywords:
+        _clear_pending_action(context)
+        return  # Пусть другие handlers обработают кнопку
 
     args = text.split()
     if pending == "price":
@@ -2560,16 +2574,17 @@ def _collect_signals_sync(tickers: list[str]) -> tuple[int, int, list[str]]:
     import concurrent.futures
     ok = 0
     errors: list[str] = []
-    for sym in tickers:
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(build_report, sym, fast_mode=True)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_sym = {executor.submit(build_report, sym, fast_mode=True): sym for sym in tickers}
+        for future in concurrent.futures.as_completed(future_to_sym):
+            sym = future_to_sym[future]
+            try:
                 future.result(timeout=_SIGNAL_COLLECT_TIMEOUT_SEC)
-            ok += 1
-        except concurrent.futures.TimeoutError:
-            errors.append(f"{sym}: timeout ({_SIGNAL_COLLECT_TIMEOUT_SEC}s)")
-        except Exception as e:
-            errors.append(f"{sym}: {e}")
+                ok += 1
+            except concurrent.futures.TimeoutError:
+                errors.append(f"{sym}: timeout ({_SIGNAL_COLLECT_TIMEOUT_SEC}s)")
+            except Exception as e:
+                errors.append(f"{sym}: {e}")
     return ok, len(errors), errors
 
 

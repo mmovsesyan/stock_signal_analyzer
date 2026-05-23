@@ -97,11 +97,11 @@ class SignalFilter:
                 score=0.0
             )
 
-        # 2. Проверка общего score (жёсткая: >= 0.30 обязательно)
-        if abs(report.score) < max(self.min_score, 0.30):
+        # 2. Проверка общего score (жёсткая)
+        if abs(report.score) < self.min_score:
             return FilterResult(
                 should_trade=False,
-                reason=f"Score {report.score:.3f} ниже минимального {max(self.min_score, 0.30):.2f}",
+                reason=f"Score {report.score:.3f} ниже минимального {self.min_score:.2f}",
                 score=20.0
             )
 
@@ -244,25 +244,25 @@ def get_balanced_filter() -> SignalFilter:
 
 def get_aggressive_filter() -> SignalFilter:
     """
-    Агрессивный фильтр - tier A/B, ADX > 20 (жёстко), больше сигналов.
+    Агрессивный фильтр - tier A/B, больше сигналов, мягкие пороги.
 
     Ожидаемые метрики:
     - Win rate: 55-65%
     - Profit factor: 1.5-2.0
     - Сигналов в месяц: 50-100
-    Пороги: confidence >= 0.45, ADX > 20 (жёсткий блок)
+    Пороги: confidence >= 0.45, ADX > 20 (мягкий штраф, не блок)
     """
     return SignalFilter(
         min_tier='B',
-        min_confidence=0.55,
+        min_confidence=0.45,
         min_adx=20.0,
         min_volume_score=0.0,
         min_macro_dampening=0.80,
-        min_score=0.30,
+        min_score=0.25,
         require_weekly_alignment=False,
         avoid_earnings_window=True,
         require_volume_above_avg=True,
-        adx_hard_block=True,
+        adx_hard_block=False,
     )
 
 
