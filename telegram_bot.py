@@ -396,7 +396,7 @@ async def _reply_tracked_msg(message, uid: int, text: str, **kwargs) -> Message 
     chat_id = message.chat_id if message else None
     if chat_id and prefs.last_bot_msg_id:
         try:
-            await message._bot.delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
+            await message.get_bot().delete_message(chat_id=chat_id, message_id=prefs.last_bot_msg_id)
             log.debug("Deleted previous bot message %s for uid=%s", prefs.last_bot_msg_id, uid)
         except Exception as e:
             log.warning("Failed to delete message %s for uid=%s: %s", prefs.last_bot_msg_id, uid, e)
@@ -410,16 +410,18 @@ async def _reply_tracked_msg(message, uid: int, text: str, **kwargs) -> Message 
 async def _show_root_sections_menu(message, uid: int = 0) -> None:
     if not message:
         return
-    await message.reply_text(
+    await _reply_tracked_msg(
+        message, uid,
         "Выберите раздел:",
         reply_markup=_main_menu_keyboard(uid),
     )
 
 
-async def _show_analysis_menu(message) -> None:
+async def _show_analysis_menu(message, uid: int = 0) -> None:
     if not message:
         return
-    await message.reply_text(
+    await _reply_tracked_msg(
+        message, uid,
         "📈 <b>Аналитика</b>\n"
         "• Анализ тикера\n"
         "• Быстрая цена\n"
@@ -429,10 +431,11 @@ async def _show_analysis_menu(message) -> None:
     )
 
 
-async def _show_lists_menu(message) -> None:
+async def _show_lists_menu(message, uid: int = 0) -> None:
     if not message:
         return
-    await message.reply_text(
+    await _reply_tracked_msg(
+        message, uid,
         "📚 <b>Списки и подбор</b>\n"
         "• Ваш watchlist\n"
         "• Подбор тикеров по категориям и отраслям",
@@ -441,10 +444,11 @@ async def _show_lists_menu(message) -> None:
     )
 
 
-async def _show_collect_menu(message) -> None:
+async def _show_collect_menu(message, uid: int = 0) -> None:
     if not message:
         return
-    await message.reply_text(
+    await _reply_tracked_msg(
+        message, uid,
         "🗂️ <b>Сбор и экспорт</b>\n"
         "• Запуск массового сбора\n"
         "• Статус накопления\n"
@@ -458,7 +462,7 @@ async def _show_settings_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: 
     if not message:
         return
     await _reply_tracked_msg(
-        message, context,
+        message, uid,
         "⚙️ <b>Настройки</b>\n"
         "• Настройка автосбора сигналов\n"
         "• Управление уведомлениями\n"
@@ -482,7 +486,7 @@ async def _show_learning_menu(message, context: ContextTypes.DEFAULT_TYPE, uid: 
         f"Learning report: <b>{report_status}</b>"
     )
     await _reply_tracked_msg(
-        message, context, text,
+        message, uid, text,
         parse_mode=ParseMode.HTML,
         reply_markup=_learning_menu_keyboard(uid),
     )
@@ -505,7 +509,7 @@ async def _show_autocollect_menu(message, context: ContextTypes.DEFAULT_TYPE, ui
         "• Ваш watchlist"
     )
     await _reply_tracked_msg(
-        message, context, text,
+        message, uid, text,
         parse_mode=ParseMode.HTML,
         reply_markup=_autocollect_menu_keyboard(uid),
     )
@@ -2008,17 +2012,17 @@ async def cmd_dashboard_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def on_menu_section_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
-    await _show_analysis_menu(update.message)
+    await _show_analysis_menu(update.message, _uid(update))
 
 
 async def on_menu_section_lists(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
-    await _show_lists_menu(update.message)
+    await _show_lists_menu(update.message, _uid(update))
 
 
 async def on_menu_section_collect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
-    await _show_collect_menu(update.message)
+    await _show_collect_menu(update.message, _uid(update))
 
 
 async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
