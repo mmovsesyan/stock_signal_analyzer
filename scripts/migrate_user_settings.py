@@ -84,6 +84,7 @@ def migrate() -> None:
             user.daily_digest = user_data.get("daily_digest", user.daily_digest)
             user.max_watchlist_size = int(user_data.get("max_watchlist_size", user.max_watchlist_size or 30))
             user.autocollect_tickers = list(user_data.get("autocollect_tickers") or [])
+            user.notify_outside_scope = user_data.get("notify_outside_scope", user.notify_outside_scope or "all")
 
             # Миграция watchlist
             watchlist_symbols = user_data.get("watchlist", [])

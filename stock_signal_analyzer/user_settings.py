@@ -51,6 +51,7 @@ def _db_user_to_prefs(user: DbUser) -> UserPrefs:
         max_watchlist_size=user.max_watchlist_size or 30,
         notify_drawdown=user.notify_drawdown,
         daily_digest=user.daily_digest,
+        notify_outside_scope=user.notify_outside_scope or "all",
     )
 
 
@@ -70,6 +71,7 @@ def _prefs_to_db_dict(prefs: UserPrefs) -> dict[str, Any]:
         "max_watchlist_size": prefs.max_watchlist_size,
         "autocollect_tickers": prefs.autocollect_tickers,
         "tier": prefs.tier,
+        "notify_outside_scope": prefs.notify_outside_scope,
     }
 
 
