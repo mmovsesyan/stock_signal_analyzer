@@ -326,7 +326,7 @@ def _settings_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton("⚙️ Интерактивные настройки")],
-            [KeyboardButton("🤖 Настройка автосбора"), KeyboardButton("🔔 Уведомления")],
+            [KeyboardButton("🤖 Настройка автосбора")],
             [KeyboardButton("🧠 Обучение")],
             [KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")],
         ],
@@ -348,18 +348,6 @@ def _learning_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
     kb.append([KeyboardButton("⬅️ Назад в настройки"), KeyboardButton("🏠 Главное меню")])
     return ReplyKeyboardMarkup(
         keyboard=kb,
-        resize_keyboard=True,
-        one_time_keyboard=False,
-        selective=False,
-    )
-
-
-def _notify_menu_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton("🔔 Уведомления ВКЛ"), KeyboardButton("🔕 Уведомления ВЫКЛ")],
-            [KeyboardButton("⬅️ Назад в настройки"), KeyboardButton("🏠 Главное меню")],
-        ],
         resize_keyboard=True,
         one_time_keyboard=False,
         selective=False,
@@ -462,17 +450,6 @@ async def _show_learning_menu(message, uid: int) -> None:
     )
 
 
-async def _show_notify_menu(message) -> None:
-    if not message:
-        return
-    await message.reply_text(
-        "🔔 <b>Уведомления</b>\n"
-        "Включение/выключение уведомлений о сильных сигналах вне watchlist.",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_notify_menu_keyboard(),
-    )
-
-
 async def _show_autocollect_menu(message, uid: int) -> None:
     if not message:
         return
@@ -505,8 +482,6 @@ def _keyboard_for_section(section: str, uid: int = 0) -> ReplyKeyboardMarkup:
         return _collect_menu_keyboard()
     if section == "settings":
         return _settings_menu_keyboard()
-    if section == "notify":
-        return _notify_menu_keyboard()
     if section == "autocollect" and uid:
         return _autocollect_menu_keyboard(uid)
     return _main_menu_keyboard(uid)
@@ -521,8 +496,6 @@ def _section_for_action(action: str) -> str:
         return "collect"
     if action in ("settings",):
         return "settings"
-    if action in ("notify_on", "notify_off"):
-        return "notify"
     if action in ("autocollect", "toggle_default", "add_custom", "show_custom", "clear_custom"):
         return "autocollect"
     if action in ("learning", "show_learning", "show_report", "show_stats", "toggle_learn_report", "force_learn"):
@@ -2009,11 +1982,6 @@ async def on_menu_section_collect(update: Update, context: ContextTypes.DEFAULT_
     await _show_collect_menu(update.message)
 
 
-async def on_menu_section_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _clear_pending_action(context)
-    await _show_notify_menu(update.message)
-
-
 async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
     await _show_settings_menu(update.message, _uid(update))
@@ -2111,40 +2079,6 @@ async def on_menu_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def on_menu_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _clear_pending_action(context)
     await cmd_export(update, context)
-
-
-async def on_menu_notify_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _clear_pending_action(context)
-    if not update.message:
-        return
-    uid = _uid(update)
-    if not uid:
-        return
-    prefs = load_prefs(uid)
-    prefs.notify_strong_outside = True
-    save_prefs(uid, prefs)
-    await update.message.reply_text(
-        "🔔 Уведомления о сильных сигналах: <b>включены</b>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_notify_menu_keyboard(),
-    )
-
-
-async def on_menu_notify_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _clear_pending_action(context)
-    if not update.message:
-        return
-    uid = _uid(update)
-    if not uid:
-        return
-    prefs = load_prefs(uid)
-    prefs.notify_strong_outside = False
-    save_prefs(uid, prefs)
-    await update.message.reply_text(
-        "🔕 Уведомления о сильных сигналах: <b>выключены</b>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=_notify_menu_keyboard(),
-    )
 
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3213,7 +3147,6 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Списки и подбор$"), on_menu_section_lists))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Сбор и экспорт$"), on_menu_section_collect))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Настройки$"), on_menu_section_settings))
-    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления$"), on_menu_section_notify))
     app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Интерактивные настройки"), on_menu_settings_inline))
     app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Настройка автосбора"), on_menu_autocollect))
     app.add_handler(MessageHandler(filters.Regex(r"(?:[^\w]+\s*)?Обучение$"), on_menu_learning))
@@ -3236,8 +3169,6 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Сбор сигналов$"), on_menu_collect))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Статус сбора$"), on_menu_status))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Выгрузить лог$"), on_menu_export))
-    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления ВКЛ$"), on_menu_notify_on))
-    app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Уведомления ВЫКЛ$"), on_menu_notify_off))
     app.add_handler(MessageHandler(filters.Regex(r"^[✅❌]\s*Дефолтные тикеры"), on_menu_toggle_default_tickers))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Добавить свои тикеры$"), on_menu_add_custom_tickers))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Показать текущие$"), on_menu_show_custom_tickers))
