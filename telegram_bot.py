@@ -1761,6 +1761,7 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
             parse_mode=ParseMode.HTML,
         )
 
+    html_text = format_signal_report(report)
     for chunk in split_telegram_html(html_text):
         await message.reply_text(chunk, parse_mode=ParseMode.HTML)
 
