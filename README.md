@@ -377,48 +377,6 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 
 ---
 
-## 🚀 GitHub Actions — авто-деплой
-
-При `git push origin main` код автоматически деплоится на сервер.
-
-**Настройка (один раз):**
-
-```bash
-# 1. Сгенерировать SSH-ключ
-ssh-keygen -t ed25519 -f /tmp/gh_deploy_key -N ""
-
-# 2. Добавить публичный ключ на сервер
-ssh root@213.176.76.35 "mkdir -p ~/.ssh && echo '$(cat /tmp/gh_deploy_key.pub)' >> ~/.ssh/authorized_keys"
-
-# 3. Добавить секреты в GitHub (Settings → Secrets and variables → Actions):
-#    SERVER_HOST=213.176.76.35
-#    SERVER_USER=root
-#    SERVER_SSH_KEY=<содержимое /tmp/gh_deploy_key>
-```
-
-После настройки каждый `git push origin main` триггерит:
-1. `git fetch origin main && git reset --hard origin/main`
-2. `docker compose build api bot worker`
-3. `docker compose up -d api bot worker`
-4. Health check (`curl /health` до 10 попыток)
-
----
-
-## 🐳 Docker сервисы
-
-| Сервис | Порт | Описание |
-|--------|:----:|----------|
-| `bot` | — | Telegram бот |
-| `api` | 8000 | REST API (FastAPI) |
-| `worker` | — | Celery workers |
-| `beat` | — | Периодические задачи |
-| `cron` | — | Периодические задачи через cron (альтернатива beat) |
-| `postgres` | 5432 | PostgreSQL 16 |
-| `redis` | 6379 | Redis 7 (cache, rate limiter, Celery) |
-| `redis_data` | — | Persistent volume для Redis |
-
----
-
 ## 📂 Структура проекта
 
 ```
