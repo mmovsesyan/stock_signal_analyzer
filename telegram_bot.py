@@ -3050,15 +3050,20 @@ async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if m in ("us", "ru", "all"):
             market = m
 
+    await update.message.chat.send_action(ChatAction.TYPING)
+    loop = asyncio.get_running_loop()
     try:
         from stock_signal_analyzer.screener import run_screen
         from stock_signal_analyzer.telegram_format import format_screen_results
-        result = run_screen(
-            market=market,
-            min_score=-1.0,
-            max_results=limits.screen_max_results,
-            fast_mode=True,
-            cache_ttl=limits.screen_cache_ttl,
+        result = await loop.run_in_executor(
+            None,
+            lambda: run_screen(
+                market=market,
+                min_score=-1.0,
+                max_results=limits.screen_max_results,
+                fast_mode=True,
+                cache_ttl=limits.screen_cache_ttl,
+            ),
         )
         body = format_screen_results(result.get("results", []), limits.screen_max_results)
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
@@ -3088,15 +3093,17 @@ async def cmd_clusters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Введите тикер: /clusters AAPL")
         return
 
+    await update.message.chat.send_action(ChatAction.TYPING)
+    loop = asyncio.get_running_loop()
     try:
         from stock_signal_analyzer.market_data import fetch_history
         from stock_signal_analyzer.volume_clusters import analyze_volume_clusters
         from stock_signal_analyzer.telegram_format import format_clusters_telegram
-        hist = fetch_history(symbol, period="60d")
+        hist = await loop.run_in_executor(None, lambda: fetch_history(symbol, period="60d"))
         if hist is None or hist.empty:
             await update.message.reply_text(f"Нет данных для {symbol}")
             return
-        result = analyze_volume_clusters(hist)
+        result = await loop.run_in_executor(None, lambda: analyze_volume_clusters(hist))
         body = format_clusters_telegram(result)
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
     except Exception as e:
@@ -3112,11 +3119,13 @@ async def cmd_mlscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("🧠 ML Score доступен только на Premium.")
         return
 
+    await update.message.chat.send_action(ChatAction.TYPING)
+    loop = asyncio.get_running_loop()
     try:
         from stock_signal_analyzer.ml_scoring import RankEnsemble
         from stock_signal_analyzer.telegram_format import format_mlscore_telegram
         ensemble = RankEnsemble()
-        ensemble.fit()
+        await loop.run_in_executor(None, ensemble.fit)
         body = format_mlscore_telegram(ensemble)
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
     except Exception as e:
@@ -3138,10 +3147,11 @@ async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"⛔ {msg}")
         return
 
+    loop = asyncio.get_running_loop()
     try:
         from stock_signal_analyzer.outcome_tracker import get_open_signals_for_user
         from stock_signal_analyzer.telegram_format import format_portfolio_telegram
-        signals = get_open_signals_for_user(uid)
+        signals = await loop.run_in_executor(None, lambda: get_open_signals_for_user(uid))
         body = format_portfolio_telegram(signals)
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
     except Exception as e:
@@ -3157,10 +3167,15 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("🔔 Алерты доступны только на Premium.")
         return
 
+    loop = asyncio.get_running_loop()
     try:
         from stock_signal_analyzer.db import get_session, UserAlert
-        with get_session(read_only=True) as session:
-            rows = session.query(UserAlert).filter_by(user_id=uid, is_active=True).all()
+
+        def _load_alerts():
+            with get_session(read_only=True) as session:
+                return session.query(UserAlert).filter_by(user_id=uid, is_active=True).all()
+
+        rows = await loop.run_in_executor(None, _load_alerts)
         lines = ["🔔 <b>Активные алерты</b>"]
         if rows:
             for r in rows:
