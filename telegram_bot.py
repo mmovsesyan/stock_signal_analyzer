@@ -3035,14 +3035,16 @@ async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not update.message:
         return
     uid = _uid(update)
+    is_admin = _is_admin(uid)
     tier = get_user_tier(uid)
     limits = get_tier_limits(tier)
 
-    from stock_signal_analyzer.subscriptions import check_command_rate_limit
-    allowed, msg = check_command_rate_limit(uid, "screen")
-    if not allowed:
-        await update.message.reply_text(f"⛔ {msg}")
-        return
+    if not is_admin:
+        from stock_signal_analyzer.subscriptions import check_command_rate_limit
+        allowed, msg = check_command_rate_limit(uid, "screen")
+        if not allowed:
+            await update.message.reply_text(f"⛔ {msg}")
+            return
 
     market = "all"
     if context.args:
@@ -3060,12 +3062,12 @@ async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             lambda: run_screen(
                 market=market,
                 min_score=-1.0,
-                max_results=limits.screen_max_results,
+                max_results=50 if is_admin else limits.screen_max_results,
                 fast_mode=True,
-                cache_ttl=limits.screen_cache_ttl,
+                cache_ttl=30 if is_admin else limits.screen_cache_ttl,
             ),
         )
-        body = format_screen_results(result.get("results", []), limits.screen_max_results)
+        body = format_screen_results(result.get("results", []), 50 if is_admin else limits.screen_max_results)
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
@@ -3076,15 +3078,17 @@ async def cmd_clusters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.message:
         return
     uid = _uid(update)
-    if not check_feature_access(uid, "clusters"):
+    is_admin = _is_admin(uid)
+    if not is_admin and not check_feature_access(uid, "clusters"):
         await update.message.reply_text("🔬 Кластеры доступны с тарифа Pro.")
         return
 
-    from stock_signal_analyzer.subscriptions import check_command_rate_limit
-    allowed, msg = check_command_rate_limit(uid, "clusters")
-    if not allowed:
-        await update.message.reply_text(f"⛔ {msg}")
-        return
+    if not is_admin:
+        from stock_signal_analyzer.subscriptions import check_command_rate_limit
+        allowed, msg = check_command_rate_limit(uid, "clusters")
+        if not allowed:
+            await update.message.reply_text(f"⛔ {msg}")
+            return
 
     symbol = ""
     if context.args:
@@ -3115,7 +3119,7 @@ async def cmd_mlscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not update.message:
         return
     uid = _uid(update)
-    if not check_feature_access(uid, "mlscore"):
+    if not _is_admin(uid) and not check_feature_access(uid, "mlscore"):
         await update.message.reply_text("🧠 ML Score доступен только на Premium.")
         return
 
@@ -3137,15 +3141,17 @@ async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
     uid = _uid(update)
-    if not check_feature_access(uid, "portfolio"):
+    is_admin = _is_admin(uid)
+    if not is_admin and not check_feature_access(uid, "portfolio"):
         await update.message.reply_text("📁 Портфель доступен с тарифа Pro.")
         return
 
-    from stock_signal_analyzer.subscriptions import check_command_rate_limit
-    allowed, msg = check_command_rate_limit(uid, "portfolio")
-    if not allowed:
-        await update.message.reply_text(f"⛔ {msg}")
-        return
+    if not is_admin:
+        from stock_signal_analyzer.subscriptions import check_command_rate_limit
+        allowed, msg = check_command_rate_limit(uid, "portfolio")
+        if not allowed:
+            await update.message.reply_text(f"⛔ {msg}")
+            return
 
     loop = asyncio.get_running_loop()
     try:
@@ -3163,7 +3169,7 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not update.message:
         return
     uid = _uid(update)
-    if not check_feature_access(uid, "alerts"):
+    if not _is_admin(uid) and not check_feature_access(uid, "alerts"):
         await update.message.reply_text("🔔 Алерты доступны только на Premium.")
         return
 
