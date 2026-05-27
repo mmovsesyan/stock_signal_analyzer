@@ -604,6 +604,33 @@ def test_news_item_weight_old_decay():
     assert w < 0.5
 
 
+def test_ensemble_score_with_finbert():
+    """Ensemble: VADER 0.35 + FinBERT 0.65 blending."""
+    from stock_signal_analyzer.finbert_sentiment import ensemble_score
+    vader = [0.2, -0.3, 0.0]
+    finbert = [0.6, -0.1, 0.4]
+    out = ensemble_score(vader, finbert, vader_weight=0.35, finbert_weight=0.65)
+    assert len(out) == 3
+    assert abs(out[0] - (0.2 * 0.35 + 0.6 * 0.65)) < 1e-6
+    assert abs(out[1] - (-0.3 * 0.35 + -0.1 * 0.65)) < 1e-6
+
+
+def test_ensemble_score_empty_finbert_fallback():
+    """Если FinBERT не доступен, ensemble возвращает VADER без изменений."""
+    from stock_signal_analyzer.finbert_sentiment import ensemble_score
+    vader = [0.2, -0.3]
+    out = ensemble_score(vader, [], vader_weight=0.35, finbert_weight=0.65)
+    assert out == vader
+
+
+def test_sentiment_fallback_without_finbert():
+    """score_headlines работает без FinBERT (VADER-only fallback)."""
+    items = [NewsItem(title="Apple beats estimates for Q3 earnings", link="", source="test", published_ts=None)]
+    result = score_headlines(items)
+    assert result.headlines_used == 1
+    assert result.compound != 0.0  # VADER + financial boost даёт ненулевой результат
+
+
 # ===========================================================================
 # momentum.py — ROC acceleration
 # ===========================================================================

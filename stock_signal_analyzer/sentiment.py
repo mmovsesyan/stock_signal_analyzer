@@ -15,6 +15,18 @@ from dataclasses import dataclass
 import numpy as np
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+# Optional FinBERT ensemble (heavyweight ML, lazy-loaded)
+try:
+    from .finbert_sentiment import (
+        finbert_available,
+        score_headlines_finbert,
+        ensemble_score,
+    )
+except Exception:
+    finbert_available = lambda: False
+    score_headlines_finbert = lambda _: []
+    ensemble_score = lambda v, f, **kw: v
+
 from .news_feeds import NewsItem
 
 
@@ -94,12 +106,30 @@ def score_headlines(items: list[NewsItem], weights: list[float] | None = None) -
     compound = 0.0
     total_boost = 0.0
     analyzer = _get_analyzer()
+
+    # FinBERT ensemble (optional)
+    vader_scores: list[float] = []
+    finbert_scores: list[float] = []
+    if finbert_available():
+        try:
+            finbert_scores = score_headlines_finbert(items)
+        except Exception:
+            finbert_scores = []
+
     for it, w in zip(items, w_arr):
         vader = analyzer.polarity_scores(it.title)["compound"]
         fb = _financial_boost(it.title)
-        combined = float(np.clip(vader + fb, -1.0, 1.0))
-        compound += combined * w
+        vader_scores.append(float(np.clip(vader + fb, -1.0, 1.0)))
         total_boost += fb * w
+
+    # Ensemble: FinBERT 0.65 + VADER 0.35 (per SentimentIQ research)
+    if finbert_scores:
+        combined_scores = ensemble_score(vader_scores, finbert_scores, vader_weight=0.35, finbert_weight=0.65)
+    else:
+        combined_scores = vader_scores
+
+    for cs, w in zip(combined_scores, w_arr):
+        compound += cs * w
 
     compound = float(np.clip(compound, -1.0, 1.0))
     avg_boost = float(total_boost)
