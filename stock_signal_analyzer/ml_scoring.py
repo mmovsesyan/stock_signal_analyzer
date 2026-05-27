@@ -139,6 +139,7 @@ class RankEnsemble:
         self._models: dict[str, Any] = {}
         self._trained_count = 0
         self._last_fit_count = 0
+        self._last_fit_at: str | None = None
         self._load_persisted()
 
     def _load_persisted(self) -> None:
@@ -151,6 +152,7 @@ class RankEnsemble:
             self._models = payload.get("models", {})
             self._trained_count = payload.get("trained_count", 0)
             self._last_fit_count = self._trained_count
+            self._last_fit_at = payload.get("last_fit_at")
             _log.info("Loaded persisted ML ensemble (%d samples)", self._trained_count)
         except Exception as exc:
             _log.warning("Failed to load persisted model: %s", exc)
@@ -159,7 +161,11 @@ class RankEnsemble:
         try:
             Path(self.model_path).parent.mkdir(parents=True, exist_ok=True)
             with open(self.model_path, "wb") as f:
-                pickle.dump({"models": self._models, "trained_count": self._trained_count}, f)
+                pickle.dump({
+                    "models": self._models,
+                    "trained_count": self._trained_count,
+                    "last_fit_at": self._last_fit_at,
+                }, f)
         except Exception as exc:
             _log.warning("Failed to persist model: %s", exc)
 
@@ -232,6 +238,7 @@ class RankEnsemble:
             }
             self._trained_count = len(records)
             self._last_fit_count = self._trained_count
+            self._last_fit_at = datetime.now(timezone.utc).isoformat()
             self._save_persisted()
             _log.info("RankEnsemble fitted on %d samples", len(records))
             return True

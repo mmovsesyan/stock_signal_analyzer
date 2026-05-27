@@ -229,10 +229,28 @@ class DailyUsage(Base):
     count = Column(Integer, default=0)
     us_count = Column(Integer, default=0)  # анализов US тикеров
     ru_count = Column(Integer, default=0)  # анализов RU тикеров
+    commands = Column(JSON, default=dict)  # {"screen": 3, "clusters": 1}
 
     __table_args__ = (
         Index("ix_daily_usage_user_date", "user_id", "date", unique=True),
     )
+
+
+class UserAlert(Base):
+    """Пользовательские алерты по score/tier."""
+    __tablename__ = "user_alerts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    alert_type = Column(String(20), nullable=False)  # score_threshold, tier, direction
+    condition = Column(String(20), nullable=False)  # gt, lt, eq
+    threshold = Column(Float, nullable=True)
+    target_tier = Column(String(5), nullable=True)
+    target_direction = Column(String(10), nullable=True)
+    is_active = Column(Boolean, default=True)
+    last_triggered_at = Column(DateTime, nullable=True)
+    cooldown_sec = Column(Integer, default=3600)
 
 
 # ── Session management ───────────────────────────────────────────────────────

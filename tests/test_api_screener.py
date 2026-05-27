@@ -57,8 +57,8 @@ def test_screen_get_basic(client, monkeypatch):
         r.symbol = symbol
         return r
 
-    monkeypatch.setattr("api.main._run_screen_single", fake_build_report)
-    monkeypatch.setattr("api.main.trade_plan_to_dict", lambda tp: {"direction": tp.direction})
+    monkeypatch.setattr("stock_signal_analyzer.screener._run_screen_single", fake_build_report)
+    monkeypatch.setattr("stock_signal_analyzer.screener.trade_plan_to_dict", lambda tp: {"direction": tp.direction})
 
     response = client.get("/screen?market=us&max_results=5")
     assert response.status_code == 200
@@ -76,8 +76,8 @@ def test_screen_post_filter_by_market(client, monkeypatch):
         r.score = 0.5 if "ME" in symbol else 0.3
         return r
 
-    monkeypatch.setattr("api.main._run_screen_single", fake_build_report)
-    monkeypatch.setattr("api.main.trade_plan_to_dict", lambda tp: {"direction": tp.direction})
+    monkeypatch.setattr("stock_signal_analyzer.screener._run_screen_single", fake_build_report)
+    monkeypatch.setattr("stock_signal_analyzer.screener.trade_plan_to_dict", lambda tp: {"direction": tp.direction})
 
     response = client.post("/screen", json={"market": "ru", "max_results": 10})
     assert response.status_code == 200
@@ -93,7 +93,7 @@ def test_screen_min_score_filter(client, monkeypatch):
         r.score = 0.05
         return r
 
-    monkeypatch.setattr("api.main._run_screen_single", fake_build_report)
+    monkeypatch.setattr("stock_signal_analyzer.screener._run_screen_single", fake_build_report)
 
     response = client.get("/screen?market=us&min_score=0.1&max_results=50")
     assert response.status_code == 200
@@ -110,8 +110,8 @@ def test_screen_caching(client, monkeypatch):
         r.symbol = symbol
         return r
 
-    monkeypatch.setattr("api.main._run_screen_single", fake_build_report)
-    monkeypatch.setattr("api.main.trade_plan_to_dict", lambda tp: {"direction": tp.direction})
+    monkeypatch.setattr("stock_signal_analyzer.screener._run_screen_single", fake_build_report)
+    monkeypatch.setattr("stock_signal_analyzer.screener.trade_plan_to_dict", lambda tp: {"direction": tp.direction})
 
     response1 = client.get("/screen?market=us&max_results=3")
     assert response1.status_code == 200

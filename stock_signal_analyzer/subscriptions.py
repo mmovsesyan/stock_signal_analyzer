@@ -111,6 +111,18 @@ class TierLimits:
     drawdown_notify: bool
     daily_digest: bool
     custom_tickers: bool
+    # --- new command limits ---
+    screen_max_results: int
+    screen_markets: list[str]
+    screen_cache_ttl: int  # seconds
+    backtest_detail: str  # basic | detailed | full
+    clusters: bool
+    mlscore: bool
+    portfolio: bool
+    alerts: bool
+    screen_daily: int
+    clusters_daily: int
+    portfolio_daily: int
 
 
 TIERS: dict[str, TierLimits] = {
@@ -130,6 +142,17 @@ TIERS: dict[str, TierLimits] = {
         drawdown_notify=False,
         daily_digest=False,
         custom_tickers=False,
+        screen_max_results=5,
+        screen_markets=["US", "RU"],
+        screen_cache_ttl=300,
+        backtest_detail="basic",
+        clusters=False,
+        mlscore=False,
+        portfolio=False,
+        alerts=False,
+        screen_daily=5,
+        clusters_daily=0,
+        portfolio_daily=0,
     ),
     "pro": TierLimits(
         name="Pro",
@@ -147,6 +170,17 @@ TIERS: dict[str, TierLimits] = {
         drawdown_notify=True,
         daily_digest=True,
         custom_tickers=True,
+        screen_max_results=15,
+        screen_markets=["US", "RU", "all"],
+        screen_cache_ttl=120,
+        backtest_detail="detailed",
+        clusters=True,
+        mlscore=False,
+        portfolio=True,
+        alerts=False,
+        screen_daily=15,
+        clusters_daily=10,
+        portfolio_daily=5,
     ),
     "premium": TierLimits(
         name="Premium",
@@ -164,6 +198,17 @@ TIERS: dict[str, TierLimits] = {
         drawdown_notify=True,
         daily_digest=True,
         custom_tickers=True,
+        screen_max_results=30,
+        screen_markets=["US", "RU", "all"],
+        screen_cache_ttl=30,
+        backtest_detail="full",
+        clusters=True,
+        mlscore=True,
+        portfolio=True,
+        alerts=True,
+        screen_daily=30,
+        clusters_daily=50,
+        portfolio_daily=20,
     ),
 }
 
@@ -304,9 +349,96 @@ def check_feature_access(user_id: int, feature: str) -> bool:
         priority_queue — приоритетная очередь (premium)
         llm_sentiment — LLM sentiment (pro+)
         custom_tickers — свои тикеры в автосборе (pro+)
+        clusters — volume clusters (pro+)
+        mlscore — ML scoring info (premium)
+        portfolio — portfolio tracking (pro+)
+        alerts — alerts setup (premium)
     """
     if not SUBSCRIPTIONS_ENABLED:
         return True
     tier = get_user_tier(user_id)
     limits = get_tier_limits(tier)
     return getattr(limits, feature, False)
+
+
+# ── Command rate limits (daily per-command) ──────────────────────────────────
+
+_COMMAND_LIMIT_MAP = {
+    "screen": "screen_daily",
+    "clusters": "clusters_daily",
+    "portfolio": "portfolio_daily",
+}
+
+
+def _get_command_usage_db(user_id: int, today: str) -> dict:
+    """Получить JSON commands из DailyUsage."""
+    try:
+        from .db import get_session, DailyUsage
+        with get_session(read_only=True) as session:
+            row = session.query(DailyUsage).filter_by(
+                user_id=user_id, date=today
+            ).first()
+            if row and row.commands:
+                return dict(row.commands)
+            return {}
+    except Exception:
+        return {}
+
+
+def _bump_command_usage_db(user_id: int, today: str, command: str) -> None:
+    """Атомарно инкрементировать счётчик команды."""
+    try:
+        from .db import get_session, DailyUsage
+        with get_session() as session:
+            row = session.query(DailyUsage).filter_by(
+                user_id=user_id, date=today
+            ).first()
+            if row:
+                cmds = dict(row.commands or {})
+                cmds[command] = cmds.get(command, 0) + 1
+                row.commands = cmds
+            else:
+                session.add(DailyUsage(
+                    user_id=user_id, date=today, count=0,
+                    us_count=0, ru_count=0, commands={command: 1},
+                ))
+    except Exception:
+        pass
+
+
+def check_command_rate_limit(user_id: int, command: str) -> tuple[bool, str]:
+    """Проверить дневной лимит для конкретной команды.
+
+    Команды: screen, clusters, portfolio.
+    Возвращает (allowed, message).
+    """
+    if not SUBSCRIPTIONS_ENABLED:
+        return True, ""
+
+    limit_attr = _COMMAND_LIMIT_MAP.get(command)
+    if not limit_attr:
+        # Неизвестная команда — пропускаем
+        return True, ""
+
+    tier = get_user_tier(user_id)
+    limits = get_tier_limits(tier)
+    daily_limit = getattr(limits, limit_attr, 0)
+
+    if daily_limit <= 0:
+        return False, (
+            f"Команда /{command} недоступна на тарифе {limits.name}. "
+            f"Обновите подписку для доступа."
+        )
+
+    today = _today_key()
+    usage = _get_command_usage_db(user_id, today)
+    used = usage.get(command, 0)
+
+    if used >= daily_limit:
+        return False, (
+            f"Достигнут дневной лимит команды /{command} ({daily_limit} для тарифа {limits.name}). "
+            f"Обновите подписку или попробуйте завтра."
+        )
+
+    _bump_command_usage_db(user_id, today, command)
+    return True, ""

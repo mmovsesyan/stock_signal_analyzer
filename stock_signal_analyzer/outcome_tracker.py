@@ -720,6 +720,53 @@ class OutcomeTracker:
         }
 
 
+def get_open_signals_for_user(user_id: int) -> list[dict[str, Any]]:
+    """Вернуть открытые позиции пользователя с live P&L."""
+    signals: list[dict[str, Any]] = []
+    try:
+        from .db import db_available, get_session, Signal as DbSignal, Outcome as DbOutcome
+        if not db_available():
+            return []
+        with get_session(read_only=True) as session:
+            rows = (
+                session.query(DbSignal)
+                .outerjoin(DbOutcome, DbSignal.id == DbOutcome.signal_id)
+                .filter(DbOutcome.id == None)
+                .filter(DbSignal.user_id == user_id)
+                .filter(DbSignal.direction != None)
+                .filter(DbSignal.direction.notin_(['none', 'neutral', '']))
+                .filter(DbSignal.tp_entry != None)
+                .order_by(DbSignal.created_at.desc())
+                .all()
+            )
+            for row in rows:
+                current: float | None = None
+                pnl: float | None = None
+                try:
+                    current = fetch_current_price(row.symbol)
+                except Exception:
+                    pass
+                entry = row.tp_entry or row.ref_price or 0.0
+                if current and entry > 0:
+                    if row.direction == 'long':
+                        pnl = (current - entry) / entry * 100.0
+                    else:
+                        pnl = (entry - current) / entry * 100.0
+                signals.append({
+                    'symbol': row.symbol,
+                    'direction': row.direction,
+                    'entry_price': entry,
+                    'current_price': current,
+                    'pnl_pct': pnl,
+                    'score': row.score,
+                    'tier': row.signal_tier,
+                    'created_at': row.created_at.isoformat() if row.created_at else None,
+                })
+    except Exception as e:
+        _log.debug("get_open_signals_for_user failed: %s", e)
+    return signals
+
+
 def main():
     """Главная функция для запуска из командной строки."""
     tracker = OutcomeTracker()

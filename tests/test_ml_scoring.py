@@ -134,6 +134,20 @@ class TestRankEnsemble:
             assert "technical" in imp
             assert all(v >= 0 for v in imp.values())
 
+    def test_last_fit_at_persisted(self, sample_outcomes_file):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_path = Path(tmp) / "model.pkl"
+            re = RankEnsemble(outcomes_path=sample_outcomes_file, model_path=str(model_path))
+            ok = re.fit(force=True)
+            if not ok:
+                pytest.skip("ML libraries not available")
+            assert re._last_fit_at is not None
+            assert "T" in re._last_fit_at
+
+            # Reload and check last_fit_at preserved
+            re2 = RankEnsemble(outcomes_path=sample_outcomes_file, model_path=str(model_path))
+            assert re2._last_fit_at == re._last_fit_at
+
 
 class TestBlendMlScore:
     def test_blend_with_none(self):

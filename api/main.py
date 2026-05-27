@@ -594,14 +594,7 @@ async def webhook_tradingview(alert: TradingViewAlert):
 
 # ── Screener ────────────────────────────────────────────────────────────────
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-# Predefined screening universes
-_SCREEN_UNIVERSES: dict[str, list[str]] = {
-    "us": sorted(US_BLUE_CHIPS),
-    "ru": sorted([f"{s}.ME" for s in RU_BLUE_CHIPS]),
-    "all": sorted(US_BLUE_CHIPS) + sorted([f"{s}.ME" for s in RU_BLUE_CHIPS]),
-}
+from stock_signal_analyzer.screener import _screen_cache, run_screen
 
 
 class ScreenRequest(BaseModel):
@@ -636,96 +629,20 @@ class ScreenResponse(BaseModel):
     results: list[ScreenItem]
 
 
-# In-memory cache for screener (5 min TTL)
-_screen_cache: dict[str, tuple[float, ScreenResponse]] = {}
 _SCREEN_CACHE_TTL = 300
-
-
-def _get_screen_cache_key(market: str, min_score: float, max_results: int, fast_mode: bool) -> str:
-    return f"screen:{market}:{min_score}:{max_results}:{fast_mode}"
-
-
-def _run_screen_single(symbol: str, fast_mode: bool) -> SignalReport | None:
-    """Analyze one ticker for the screener."""
-    try:
-        from stock_signal_analyzer.engine import build_report
-        return build_report(symbol, fast_mode=fast_mode)
-    except Exception:
-        log.debug("Screen skip %s", symbol, exc_info=True)
-        return None
 
 
 @app.post("/screen", response_model=ScreenResponse)
 async def screen_post(req: ScreenRequest):
     """Проскринить вселенную тикеров и вернуть отранжированные сигналы."""
-    cache_key = _get_screen_cache_key(req.market, req.min_score, req.max_results, req.fast_mode)
-    now = time.time()
-    cached = _screen_cache.get(cache_key)
-    if cached and (now - cached[0]) < _SCREEN_CACHE_TTL:
-        return cached[1]
-
-    universe = _SCREEN_UNIVERSES.get(req.market, _SCREEN_UNIVERSES["all"])
-    if not universe:
-        raise HTTPException(status_code=400, detail="Empty universe")
-
-    loop = asyncio.get_running_loop()
-    results: list[ScreenItem] = []
-
-    # Parallel screening (I/O-bound analysis)
-    max_workers = min(8, len(universe))
-    total_timeout = 120  # seconds total
-    per_future_timeout = 25
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_run_screen_single, sym, req.fast_mode): sym
-            for sym in universe
-        }
-        try:
-            for future in as_completed(futures, timeout=total_timeout):
-                report = future.result(timeout=per_future_timeout)
-                if report is None:
-                    continue
-                if report.score < req.min_score:
-                    continue
-                tp_dict = None
-                if report.trade_plan and report.trade_plan.direction != "none":
-                    tp_dict = trade_plan_to_dict(report.trade_plan)
-                results.append(
-                    ScreenItem(
-                        symbol=report.symbol,
-                        company=report.company,
-                        score=round(report.score, 4),
-                        signal_tier=report.signal_tier,
-                        direction=report.trade_plan.direction if report.trade_plan else "none",
-                        confidence=round(report.confidence, 3),
-                        verdict=report.verdict,
-                        technical_score=round(report.technical_score, 4),
-                        momentum_score=round(report.momentum_score, 4),
-                        news_score=round(report.news_score, 4),
-                        volume_score=round(report.volume_score, 4),
-                        trade_plan=tp_dict,
-                        adx14=round(report.adx14, 1),
-                        atr_pct=round(report.atr_pct, 3) if report.atr_pct else None,
-                        ml_score=round(report.ml_score, 4) if report.ml_score is not None else None,
-                    )
-                )
-        except TimeoutError:
-            unfinished = sum(1 for f in futures if not f.done())
-            log.warning("Screen total timeout reached, %d unfinished", unfinished)
-
-    # Sort by score desc, cap results
-    results.sort(key=lambda x: x.score, reverse=True)
-    results = results[:req.max_results]
-
-    response = ScreenResponse(
+    result = run_screen(
         market=req.market,
-        screened_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        count=len(results),
-        results=results,
+        min_score=req.min_score,
+        max_results=req.max_results,
+        fast_mode=req.fast_mode,
+        cache_ttl=_SCREEN_CACHE_TTL,
     )
-    _screen_cache[cache_key] = (now, response)
-    return response
+    return ScreenResponse(**result)
 
 
 @app.get("/screen")

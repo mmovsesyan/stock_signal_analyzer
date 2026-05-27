@@ -455,3 +455,181 @@ def sanitize_command_args(args: list[str]) -> tuple[str, bool, bool, bool]:
         return "", False, False, True
     tail = {a.lower() for a in args[1:]}
     return sym, "tape" in tail, "ws" in tail, False
+
+
+# ── Tier-based Telegram formatters ────────────────────────────────────────────
+
+
+def format_screen_results(results: list[dict], max_results: int = 10) -> str:
+    """Краткий список результатов скринера для Telegram."""
+    if not results:
+        return "📊 Нет сигналов по заданным критериям."
+    lines = [f"📊 <b>Топ сигналов</b> (показано {min(len(results), max_results)} из {len(results)})"]
+    for r in results[:max_results]:
+        tier = r.get("signal_tier", "C")
+        direction = r.get("direction", "none")
+        score = r.get("score", 0)
+        sym = _esc(r.get("symbol", "?"))
+        comp = _esc(r.get("company", ""))
+        conf = r.get("confidence", 0)
+        dir_icon = "🟢" if direction == "long" else ("🔴" if direction == "short" else "⚪")
+        lines.append(
+            f"{dir_icon} <b>{sym}</b> {comp}\n"
+            f"   Score: <b>{score:+.2f}</b> | Tier: <b>{tier}</b> | Conf: {conf:.0%}"
+        )
+    return "\n".join(lines)
+
+
+def render_ascii_equity_curve(equity_values: list[float], width: int = 40, height: int = 10) -> str:
+    """Нарисовать ASCII equity curve."""
+    if not equity_values:
+        return ""
+    min_v = min(equity_values)
+    max_v = max(equity_values)
+    if max_v == min_v:
+        return ""
+    rows: list[str] = []
+    for h in range(height, -1, -1):
+        thresh = min_v + (max_v - min_v) * (h / height)
+        line = ""
+        for i, v in enumerate(equity_values):
+            x = int(i / max(len(equity_values) - 1, 1) * (width - 1))
+            # simple: plot every point but align to width
+            pass
+        # simpler approach: sample width points
+        if h == height:
+            rows.append(f"{max_v:>8.1f} ┤")
+        elif h == 0:
+            rows.append(f"{min_v:>8.1f} ┤")
+        else:
+            rows.append("         ┤")
+    # Build actual markers
+    sampled: list[float] = []
+    n = len(equity_values)
+    for i in range(width):
+        idx = int(i / max(width - 1, 1) * (n - 1))
+        sampled.append(equity_values[idx])
+    grid = [[" " for _ in range(width)] for _ in range(height + 1)]
+    for i, v in enumerate(sampled):
+        row = height - int((v - min_v) / (max_v - min_v) * height)
+        row = max(0, min(height, row))
+        grid[row][i] = "*"
+    out_lines: list[str] = []
+    for h in range(height + 1):
+        v_label = ""
+        if h == 0:
+            v_label = f"{min_v:>8.1f} "
+        elif h == height:
+            v_label = f"{max_v:>8.1f} "
+        else:
+            v_label = "         "
+        out_lines.append(v_label + "┤" + "".join(grid[h]))
+    out_lines.append("         └" + "─" * width)
+    return "\n".join(out_lines)
+
+
+def format_backtest_telegram(report: dict, tier: str = "free") -> str:
+    """Форматировать backtest отчёт для Telegram с учётом tier."""
+    if not report or not report.get("total_signals"):
+        return "📈 <b>Бэктест</b>\nНет данных для отчёта."
+
+    lines = ["📈 <b>Бэктест</b>"]
+    total = report["total_signals"]
+    wr = report.get("win_rate", 0) * 100
+    pf = report.get("profit_factor", 0)
+    avg_win = report.get("avg_win_pct", 0)
+    avg_loss = report.get("avg_loss_pct", 0)
+    total_pnl = report.get("total_pnl_pct", 0)
+    lines.append(
+        f"Сделок: <b>{total}</b> | Win rate: <b>{wr:.1f}%</b> | PF: <b>{pf:.2f}</b>\n"
+        f"Avg win: +{avg_win:.2f}% | Avg loss: −{avg_loss:.2f}% | Total PnL: <b>{total_pnl:+.2f}%</b>"
+    )
+
+    # Tier/direction breakdown for pro+
+    if tier in ("pro", "premium"):
+        breakdown = report.get("breakdown", {})
+        if breakdown:
+            lines.append("")
+            lines.append("<b>Разбивка</b>")
+            for key, stats in breakdown.items():
+                lines.append(
+                    f"  {key}: {stats.get('win_rate', 0)*100:.1f}% WR, "
+                    f"PF {stats.get('profit_factor', 0):.2f} ({stats.get('count', 0)} сделок)"
+                )
+
+    # ASCII equity curve + Sharpe/max DD for premium
+    if tier == "premium":
+        equity = report.get("equity_curve", [])
+        if equity:
+            lines.append("")
+            lines.append("<b>Equity curve</b>")
+            lines.append(f"<pre>{render_ascii_equity_curve(equity, width=36, height=8)}</pre>")
+        sharpe = report.get("sharpe_like")
+        if sharpe is not None:
+            lines.append(f"Sharpe-like: <b>{sharpe:.2f}</b>")
+        max_dd = report.get("max_drawdown_pct")
+        if max_dd is not None:
+            lines.append(f"Max drawdown: <b>{max_dd:.2f}%</b>")
+
+    return "\n".join(lines)
+
+
+def format_clusters_telegram(result: dict) -> str:
+    """Форматировать анализ объёмных кластеров для Telegram."""
+    if not result:
+        return "🔬 Кластеры: нет данных."
+    lines = ["🔬 <b>Volume Clusters</b>"]
+    poc = result.get("poc")
+    if poc is not None:
+        lines.append(f"POC (точка максимального объёма): <b>{poc:.2f}</b>")
+    va_low = result.get("value_area_low")
+    va_high = result.get("value_area_high")
+    if va_low is not None and va_high is not None:
+        lines.append(f"Value Area (70%): <b>{va_low:.2f}</b> — <b>{va_high:.2f}</b>")
+    hvn = result.get("hvn_levels", [])
+    lvn = result.get("lvn_levels", [])
+    if hvn:
+        lines.append(f"HVN (высокий объём): {', '.join(f'{v:.2f}' for v in hvn[:5])}")
+    if lvn:
+        lines.append(f"LVN (низкий объём): {', '.join(f'{v:.2f}' for v in lvn[:5])}")
+    return "\n".join(lines)
+
+
+def format_mlscore_telegram(ensemble) -> str:
+    """Форматировать ML scoring info для Telegram (premium)."""
+    if ensemble is None:
+        return "🧠 ML Score: модель недоступна."
+    fi = ensemble.feature_importances()
+    if not fi:
+        return "🧠 ML Score: ещё не обучено."
+    lines = ["🧠 <b>ML RankEnsemble</b>"]
+    lines.append("<b>Важность фич</b>")
+    for name, val in sorted(fi.items(), key=lambda x: x[1], reverse=True):
+        bar = "█" * int(val * 40)
+        lines.append(f"  {name}: <b>{val:.3f}</b> {bar}")
+    last = getattr(ensemble, "_last_fit_at", None)
+    if last:
+        lines.append(f"Последнее обучение: {last}")
+    lines.append(f"Сэмплов: {getattr(ensemble, '_trained_count', 0)}")
+    return "\n".join(lines)
+
+
+def format_portfolio_telegram(signals: list[dict]) -> str:
+    """Форматировать открытые позиции для Telegram."""
+    if not signals:
+        return "📁 <b>Портфель</b>\nНет открытых позиций."
+    lines = ["📁 <b>Портфель</b>"]
+    total_pnl = 0.0
+    for s in signals:
+        sym = _esc(s.get("symbol", "?"))
+        dir_ = s.get("direction", "none")
+        entry = s.get("entry_price", 0)
+        current = s.get("current_price", 0)
+        pnl = s.get("pnl_pct", 0)
+        total_pnl += pnl or 0
+        icon = "🟢" if dir_ == "long" else "🔴"
+        lines.append(
+            f"{icon} <b>{sym}</b> {dir_} | Entry: {entry:.2f} | Now: {current:.2f} | PnL: {pnl:+.2f}%"
+        )
+    lines.append(f"\nОбщий PnL: <b>{total_pnl:+.2f}%</b>")
+    return "\n".join(lines)

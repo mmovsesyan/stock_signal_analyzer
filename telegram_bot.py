@@ -264,6 +264,7 @@ def _main_menu_keyboard(uid: int = 0) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton("📈 Аналитика"), KeyboardButton("📚 Списки и подбор")],
         [KeyboardButton("🗂️ Сбор и экспорт"), KeyboardButton("⚙️ Настройки")],
+        [KeyboardButton("🧰 Инструменты")],
         [KeyboardButton("🏠 Главное меню"), KeyboardButton("❓ Помощь")],
     ]
     if uid and _is_admin(uid):
@@ -366,6 +367,29 @@ def _autocollect_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
             [KeyboardButton("🗑️ Очистить свои тикеры")],
             [KeyboardButton("⬅️ Назад в настройки"), KeyboardButton("🏠 Главное меню")],
         ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
+def _tools_menu_keyboard(uid: int) -> ReplyKeyboardMarkup:
+    """Меню инструментов (tier-based)."""
+    tier = get_user_tier(uid)
+    limits = get_tier_limits(tier)
+    rows: list[list[KeyboardButton]] = []
+    rows.append([KeyboardButton("📊 Скринер")])
+    if limits.clusters:
+        rows.append([KeyboardButton("🔬 Кластеры")])
+    if limits.mlscore:
+        rows.append([KeyboardButton("🧠 ML Score")])
+    if limits.portfolio:
+        rows.append([KeyboardButton("📁 Портфель")])
+    if limits.alerts:
+        rows.append([KeyboardButton("🔔 Алерты")])
+    rows.append([KeyboardButton("⬅️ Назад в разделы"), KeyboardButton("🏠 Главное меню")])
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
         resize_keyboard=True,
         one_time_keyboard=False,
         selective=False,
@@ -502,6 +526,31 @@ async def _show_settings_menu(message, uid: int) -> None:
         "• 🧠 Обучение и статистика",
         parse_mode=ParseMode.HTML,
         reply_markup=_settings_menu_keyboard(),
+    )
+
+
+async def _show_tools_menu(message, uid: int) -> None:
+    if not message:
+        return
+    tier = get_user_tier(uid)
+    limits = get_tier_limits(tier)
+    lines = [
+        "🧰 <b>Инструменты</b>",
+        "• 📊 Скринер — топ сигналов по рынку",
+    ]
+    if limits.clusters:
+        lines.append("• 🔬 Кластеры — объёмный профиль (Pro+)")
+    if limits.mlscore:
+        lines.append("• 🧠 ML Score — важность фич (Premium)")
+    if limits.portfolio:
+        lines.append("• 📁 Портфель — открытые позиции (Pro+)")
+    if limits.alerts:
+        lines.append("• 🔔 Алерты — настройка уведомлений (Premium)")
+    await _reply_tracked_msg(
+        message, uid,
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=_tools_menu_keyboard(uid),
     )
 
 
@@ -2134,6 +2183,11 @@ async def on_menu_section_settings(update: Update, context: ContextTypes.DEFAULT
     await _show_settings_menu(update.message, _uid(update))
 
 
+async def on_menu_section_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    _clear_pending_action(context)
+    await _show_tools_menu(update.message, _uid(update))
+
+
 async def on_menu_settings_inline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Открыть интерактивные inline-настройки."""
     _clear_pending_action(context)
@@ -2327,6 +2381,26 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 parse_mode=ParseMode.HTML,
                 reply_markup=_autocollect_menu_keyboard(uid),
             )
+        return
+
+    if pending == "clusters":
+        sym, _, _, bad = sanitize_command_args(args)
+        if bad or not sym:
+            _clear_pending_action(context)
+            await update.message.reply_text(
+                "Не понял тикер. Пример: <code>AAPL</code> или <code>SBER.ME</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_tools_menu_keyboard(_uid(update)),
+            )
+            return
+        _clear_pending_action(context)
+        from stock_signal_analyzer.universe import resolve_symbol_market
+        sym = resolve_symbol_market(sym)
+        fake_update = type("FakeUpdate", (), {})()
+        fake_update.message = update.message
+        fake_context = type("FakeContext", (), {})()
+        fake_context.args = [sym]
+        await cmd_clusters(fake_update, fake_context)
         return
 
 
@@ -2839,14 +2913,63 @@ async def cmd_force_learn(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
 
 
+def _build_telegram_backtest_report(report) -> dict:
+    """Преобразовать BacktestReport в dict для format_backtest_telegram."""
+    if not report:
+        return {}
+    result = {
+        "total_signals": report.total_trades,
+        "win_rate": report.overall.win_rate,
+        "profit_factor": 0.0,
+        "avg_win_pct": 0.0,
+        "avg_loss_pct": 0.0,
+        "total_pnl_pct": report.total_return_pct,
+    }
+    # profit factor / avg win / avg loss из by_tier_direction
+    win_pnls = []
+    loss_pnls = []
+    for gs in getattr(report, "by_tier_direction", {}).values():
+        if gs.avg_win_pct > 0:
+            win_pnls.append(gs.avg_win_pct)
+        if gs.avg_loss_pct > 0:
+            loss_pnls.append(gs.avg_loss_pct)
+    if win_pnls:
+        result["avg_win_pct"] = sum(win_pnls) / len(win_pnls)
+    if loss_pnls:
+        result["avg_loss_pct"] = sum(loss_pnls) / len(loss_pnls)
+    total_win = sum(w * (w / 100) for w in win_pnls)  # rough
+    total_loss = sum(l * (l / 100) for l in loss_pnls)
+    if total_loss > 0:
+        result["profit_factor"] = total_win / total_loss
+    # breakdown by tier/direction
+    breakdown = {}
+    for key, gs in getattr(report, "by_tier_direction", {}).items():
+        if gs.total_trades <= 0:
+            continue
+        breakdown[key] = {
+            "count": gs.total_trades,
+            "win_rate": gs.win_rate,
+            "profit_factor": gs.profit_factor if gs.profit_factor > 0 else 0.0,
+        }
+    result["breakdown"] = breakdown
+    result["max_drawdown_pct"] = report.max_drawdown_pct
+    # equity curve — кумулятивный PnL по хронологии из outcomes.jsonl
+    try:
+        validator = report  # actually BacktestValidator instance? No, report is BacktestReport
+    except Exception:
+        pass
+    return result
+
+
 async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/backtest — показать отчёт бэктеста и валидацию сигналов."""
+    """/backtest — показать отчёт бэктеста и валидацию сигналов (tier-aware)."""
     if not update.message:
         return
+    uid = _uid(update)
+    tier = get_user_tier(uid)
     try:
-        from stock_signal_analyzer.backtest_validator import (
-            BacktestValidator, format_backtest_report, format_validation_result, get_validator
-        )
+        from stock_signal_analyzer.backtest_validator import BacktestValidator
+        from stock_signal_analyzer.telegram_format import format_backtest_telegram
         validator = BacktestValidator()
         report = validator.generate_report()
         if not report:
@@ -2857,8 +2980,41 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
 
-        body = format_backtest_report(report)
-        # body — строка, отправляем целиком (или чанками по 4096 если длинная)
+        # Build plain report dict
+        raw = _build_telegram_backtest_report(report)
+
+        # Premium: equity curve + Sharpe-like from chronological outcomes
+        if tier == "premium":
+            try:
+                outcomes = validator._load_outcomes()
+                outcomes_sorted = sorted(
+                    outcomes,
+                    key=lambda r: r.get("exit_date") or r.get("entry_date") or "",
+                )
+                equity = [0.0]
+                for r in outcomes_sorted:
+                    pnl = r.get("pnl_pct")
+                    if pnl is not None:
+                        try:
+                            equity.append(equity[-1] + float(pnl))
+                        except (TypeError, ValueError):
+                            equity.append(equity[-1])
+                    else:
+                        equity.append(equity[-1])
+                raw["equity_curve"] = equity
+                # Sharpe-like: mean(returns)/std(returns) of daily PnL (approx)
+                pnls = [float(r.get("pnl_pct", 0)) for r in outcomes_sorted if r.get("pnl_pct") is not None]
+                if len(pnls) > 1:
+                    mean_pnl = sum(pnls) / len(pnls)
+                    variance = sum((p - mean_pnl) ** 2 for p in pnls) / (len(pnls) - 1)
+                    std_pnl = variance ** 0.5
+                    raw["sharpe_like"] = mean_pnl / std_pnl if std_pnl > 0 else 0.0
+                else:
+                    raw["sharpe_like"] = 0.0
+            except Exception:
+                pass
+
+        body = format_backtest_telegram(raw, tier)
         for i in range(0, max(1, len(body)), 4096):
             chunk = body[i:i + 4096].strip()
             if chunk:
@@ -2869,6 +3025,178 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def on_menu_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await cmd_backtest(update, context)
+
+
+# ── Tier-based commands ──────────────────────────────────────────────────────
+
+
+async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/screen — скринер топ сигналов (tier-limited)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    tier = get_user_tier(uid)
+    limits = get_tier_limits(tier)
+
+    from stock_signal_analyzer.subscriptions import check_command_rate_limit
+    allowed, msg = check_command_rate_limit(uid, "screen")
+    if not allowed:
+        await update.message.reply_text(f"⛔ {msg}")
+        return
+
+    market = "all"
+    if context.args:
+        m = str(context.args[0]).strip().lower()
+        if m in ("us", "ru", "all"):
+            market = m
+
+    try:
+        from stock_signal_analyzer.screener import run_screen
+        from stock_signal_analyzer.telegram_format import format_screen_results
+        result = run_screen(
+            market=market,
+            min_score=-1.0,
+            max_results=limits.screen_max_results,
+            fast_mode=True,
+            cache_ttl=limits.screen_cache_ttl,
+        )
+        body = format_screen_results(result.get("results", []), limits.screen_max_results)
+        await update.message.reply_text(body, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_clusters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/clusters <ticker> — объёмный профиль (Pro+)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not check_feature_access(uid, "clusters"):
+        await update.message.reply_text("🔬 Кластеры доступны с тарифа Pro.")
+        return
+
+    from stock_signal_analyzer.subscriptions import check_command_rate_limit
+    allowed, msg = check_command_rate_limit(uid, "clusters")
+    if not allowed:
+        await update.message.reply_text(f"⛔ {msg}")
+        return
+
+    symbol = ""
+    if context.args:
+        symbol = sanitize_command_args([context.args[0]])[0]
+    if not symbol:
+        await update.message.reply_text("Введите тикер: /clusters AAPL")
+        return
+
+    try:
+        from stock_signal_analyzer.market_data import fetch_history
+        from stock_signal_analyzer.volume_clusters import analyze_volume_clusters
+        from stock_signal_analyzer.telegram_format import format_clusters_telegram
+        hist = fetch_history(symbol, period="60d")
+        if hist is None or hist.empty:
+            await update.message.reply_text(f"Нет данных для {symbol}")
+            return
+        result = analyze_volume_clusters(hist)
+        body = format_clusters_telegram(result)
+        await update.message.reply_text(body, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_mlscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/mlscore — ML scoring info (Premium)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not check_feature_access(uid, "mlscore"):
+        await update.message.reply_text("🧠 ML Score доступен только на Premium.")
+        return
+
+    try:
+        from stock_signal_analyzer.ml_scoring import RankEnsemble
+        from stock_signal_analyzer.telegram_format import format_mlscore_telegram
+        ensemble = RankEnsemble()
+        ensemble.fit()
+        body = format_mlscore_telegram(ensemble)
+        await update.message.reply_text(body, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/portfolio — открытые позиции (Pro+)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not check_feature_access(uid, "portfolio"):
+        await update.message.reply_text("📁 Портфель доступен с тарифа Pro.")
+        return
+
+    from stock_signal_analyzer.subscriptions import check_command_rate_limit
+    allowed, msg = check_command_rate_limit(uid, "portfolio")
+    if not allowed:
+        await update.message.reply_text(f"⛔ {msg}")
+        return
+
+    try:
+        from stock_signal_analyzer.outcome_tracker import get_open_signals_for_user
+        from stock_signal_analyzer.telegram_format import format_portfolio_telegram
+        signals = get_open_signals_for_user(uid)
+        body = format_portfolio_telegram(signals)
+        await update.message.reply_text(body, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/alerts — настройка алертов (Premium)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not check_feature_access(uid, "alerts"):
+        await update.message.reply_text("🔔 Алерты доступны только на Premium.")
+        return
+
+    try:
+        from stock_signal_analyzer.db import get_session, UserAlert
+        with get_session(read_only=True) as session:
+            rows = session.query(UserAlert).filter_by(user_id=uid, is_active=True).all()
+        lines = ["🔔 <b>Активные алерты</b>"]
+        if rows:
+            for r in rows:
+                lines.append(
+                    f"  {r.alert_type} {r.condition} {r.threshold or r.target_tier or r.target_direction}"
+                )
+        else:
+            lines.append("Нет активных алертов.")
+        lines.append("\nИспользуйте /alerts_add для добавления (в разработке).")
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def on_menu_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_screen(update, context)
+
+
+async def on_menu_clusters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    uid = _uid(update)
+    _set_pending_action(context, "clusters")
+    await update.message.reply_text("Введите тикер для кластерного анализа:")
+
+
+async def on_menu_mlscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_mlscore(update, context)
+
+
+async def on_menu_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_portfolio(update, context)
+
+
+async def on_menu_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await cmd_alerts(update, context)
 
 
 async def on_menu_learning(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3273,6 +3601,11 @@ def main() -> int:
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("force_learn", cmd_force_learn))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
+    app.add_handler(CommandHandler("screen", cmd_screen))
+    app.add_handler(CommandHandler("clusters", cmd_clusters))
+    app.add_handler(CommandHandler("mlscore", cmd_mlscore))
+    app.add_handler(CommandHandler("portfolio", cmd_portfolio))
+    app.add_handler(CommandHandler("alerts", cmd_alerts))
     # Settings callbacks
     app.add_handler(CallbackQueryHandler(_on_settings_callback, pattern=r"^set\|"))
     app.add_handler(
@@ -3305,6 +3638,12 @@ def main() -> int:
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Получать learning report$"), on_menu_toggle_learn_report))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Принудительное обучение$"), on_menu_force_learn))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Бэктест$"), on_menu_backtest))
+    app.add_handler(MessageHandler(filters.Regex(r"^🧰 Инструменты$"), on_menu_section_tools))
+    app.add_handler(MessageHandler(filters.Regex(r"^📊 Скринер$"), on_menu_screen))
+    app.add_handler(MessageHandler(filters.Regex(r"^🔬 Кластеры$"), on_menu_clusters))
+    app.add_handler(MessageHandler(filters.Regex(r"^🧠 ML Score$"), on_menu_mlscore))
+    app.add_handler(MessageHandler(filters.Regex(r"^📁 Портфель$"), on_menu_portfolio))
+    app.add_handler(MessageHandler(filters.Regex(r"^🔔 Алерты$"), on_menu_alerts))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в обучение$"), on_menu_back_to_learning))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в разделы$"), on_menu_back_sections))
     app.add_handler(MessageHandler(filters.Regex(r"^(?:[^\w]+\s*)?Назад в настройки$"), on_menu_back_to_settings))
