@@ -91,6 +91,9 @@ chown -R "$RUN_USER":"$RUN_USER" "$VENV_DIR" 2>/dev/null || true
 "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel -q
 "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
 "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements-api.txt" -q 2>/dev/null || true
+
+# Масштабирование: PostgreSQL + Redis + Celery
+"$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements-scale.txt" -q 2>/dev/null || true
 ok "Python зависимости установлены"
 
 # T-Bank SDK (опционально)
@@ -165,6 +168,7 @@ else
     TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
     FH_KEY="${FINNHUB_API_KEY:-}"
     PG_KEY="${POLYGON_API_KEY:-}"
+    TB_TOKEN="${TINKOFF_INVEST_TOKEN:-}"
     ADMIN_ID="${ADMIN_CHAT_ID:-}"
     ADMIN_UID="${ADMIN_USER_ID:-}"
     API_KEY="${API_SECRET_KEY:-}"
@@ -182,6 +186,9 @@ else
         fi
         if [ -z "$FH_KEY" ]; then
             read -r -p "  Finnhub API Key (Enter = пропустить): " FH_KEY
+        fi
+        if [ -z "$TB_TOKEN" ]; then
+            read -r -p "  T-Bank (Tinkoff) Invest Token (Enter = пропустить): " TB_TOKEN
         fi
         # Admin ID — обязательно, повторяет пока не введёшь
         while [ -z "$ADMIN_ID" ]; do
@@ -227,6 +234,7 @@ ADMIN_USER_ID=${ADMIN_UID}
 # ── API ключи ─────────────────────────────────
 FINNHUB_API_KEY=${FH_KEY}
 POLYGON_API_KEY=${PG_KEY}
+TINKOFF_INVEST_TOKEN=${TB_TOKEN}
 
 # ── API security ──────────────────────────────
 API_SECRET_KEY=${API_KEY}

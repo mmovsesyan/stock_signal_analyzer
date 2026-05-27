@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -217,8 +217,19 @@ def _news_item_weight(it: NewsItem, kind: str, now: float) -> float:
     else:
         w = 0.32
     if it.published_ts:
-        age_d = max(0.0, (now - float(it.published_ts)) / 86400.0)
-        w *= float(0.25 + 0.75 * np.exp(-age_d / 2.0))
+        age_h = max(0.0, (now - float(it.published_ts)) / 3600.0)
+        # Recency weighting: breaking news gets higher weight
+        if age_h <= 1.0:
+            recency_mult = 3.0
+        elif age_h <= 4.0:
+            recency_mult = 2.0
+        elif age_h <= 24.0:
+            recency_mult = 1.5
+        else:
+            recency_mult = 1.0
+        age_d = age_h / 24.0
+        decay = float(0.25 + 0.75 * np.exp(-age_d / 2.0))
+        w *= recency_mult * decay
     else:
         w *= 0.88
     return float(max(0.05, w))
@@ -359,21 +370,24 @@ def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tup
             except ImportError:
                 pass
 
-        for future in as_completed(futures, timeout=15):
-            source = futures[future]
-            try:
-                result = future.result(timeout=5)
-                if source == 'ticker':
-                    ticker_news = result
-                elif source == 'finnhub':
-                    fh_news = result
-                elif source == 'macro':
-                    macro_news = result
-                elif source == 'polygon':
-                    polygon_news = result
-            except Exception as e:
-                # Логируем, но не падаем - продолжаем с пустым списком
-                _log.warning("News fetch failed for source '%s': %s", source, e)
+        try:
+            for future in as_completed(futures, timeout=15):
+                source = futures[future]
+                try:
+                    result = future.result(timeout=5)
+                    if source == 'ticker':
+                        ticker_news = result
+                    elif source == 'finnhub':
+                        fh_news = result
+                    elif source == 'macro':
+                        macro_news = result
+                    elif source == 'polygon':
+                        polygon_news = result
+                except Exception as e:
+                    # Логируем, но не падаем - продолжаем с пустым списком
+                    _log.warning("News fetch failed for source '%s': %s", source, e)
+        except (TimeoutError, FutureTimeoutError):
+            _log.warning("News parallel fetch timed out after 15s — using partial results")
 
     return ticker_news, fh_news, macro_news, polygon_news
 

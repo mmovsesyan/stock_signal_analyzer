@@ -268,7 +268,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
     # Для РФ-тикеров при доступном SDK сразу идём в T-Bank: это быстрее и без шума Yahoo.
     # Минимум 30 свечей нужно для RSI/MACD/ADX. Если T-Bank отдаёт мало — fallback на MOEX ISS.
     _MIN_CANDLES = 30
-    if sym.endswith(".ME") and _tbank_available():
+    if _tbank_available():
         tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
         if tb_hist is not None and len(tb_hist) >= _MIN_CANDLES:
             profile = classify_instrument(sym, {})
@@ -306,7 +306,7 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
             info, hist = {}, pd.DataFrame()
 
     # Fallback на T-Bank API для РФ-тикеров
-    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and sym.endswith(".ME"):
+    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and _tbank_available():
         _log.info("Yahoo Finance не отдал данные по %s, пробуем T-Bank API…", sym)
         tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
         if tb_hist is not None and len(tb_hist) >= _MIN_CANDLES:
@@ -323,8 +323,8 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
             return result
 
     # Fallback на MOEX ISS (бесплатно, без токена) для РФ-тикеров
-    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and sym.endswith(".ME"):
-        _log.info("T-Bank недоступен для %s, пробуем MOEX ISS…", sym)
+    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES):
+        _log.info("Yahoo/T-Bank не дали данных по %s, пробуем MOEX ISS…", sym)
         try:
             from .moex_iss import fetch_moex_history
             moex_hist = fetch_moex_history(sym, days=400)
@@ -347,9 +347,9 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
             _log.warning("MOEX ISS fallback failed for %s: %s", sym, e)
 
     # Fallback на Yahoo Finance без суффикса .ME для РФ-тикеров (TCSG и др.)
-    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and sym.endswith(".ME"):
+    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES):
         plain_sym = sym.replace(".ME", "")
-        _log.info("MOEX ISS недоступен для %s, пробуем Yahoo Finance (%s)…", sym, plain_sym)
+        _log.info("MOEX ISS не дал данных по %s, пробуем Yahoo Finance (%s)…", sym, plain_sym)
         try:
             info_yf, hist_yf = _fetch_yf_data(plain_sym, period)
             if hist_yf is not None and not hist_yf.empty and len(hist_yf) >= _MIN_CANDLES:
@@ -416,7 +416,7 @@ def fetch_history(symbol: str, period: str = "6mo", interval: str = "1d") -> Tic
     sym = symbol.strip().upper()
     ysym = _symbol_for_yahoo(sym)
 
-    if sym.endswith(".ME") and _tbank_available():
+    if _tbank_available():
         tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
         if tb_hist is not None and not tb_hist.empty:
             last = float(tb_hist["Close"].iloc[-1])
@@ -436,6 +436,18 @@ def fetch_history(symbol: str, period: str = "6mo", interval: str = "1d") -> Tic
         _log.warning("Yahoo Finance circuit breaker OPEN for %s — skipping YF.", sym)
 
     if hist is None or hist.empty:
+        if _tbank_available():
+            _log.info("Yahoo Finance не отдал данные по %s, пробуем T-Bank API…", sym)
+            tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
+            if tb_hist is not None and not tb_hist.empty:
+                last = float(tb_hist["Close"].iloc[-1])
+                return TickerSnapshot(
+                    symbol=sym,
+                    last_close=last,
+                    currency=tb_currency or "RUB",
+                    company_name=tb_name or sym,
+                    history=tb_hist,
+                )
         raise ValueError(
             f"Нет данных по тикеру {sym}. Проверьте биржу/суффикс (например SBER.ME для Мосбиржи)."
         )

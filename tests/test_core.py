@@ -568,6 +568,69 @@ def test_score_headlines_includes_fin_boost():
     assert result.fin_boost_avg > 0
 
 
+def test_news_item_weight_recency_breaking():
+    """Новость < 1 часа получает recency multiplier 3.0."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 1800)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 3.0 * decay ~1.0 = ~3.0
+    assert w > 2.5
+
+
+def test_news_item_weight_recency_4h():
+    """Новость 2-4 часа получает recency multiplier 2.0."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 3 * 3600)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 2.0 * decay ~0.9 = ~1.8
+    assert 1.5 < w < 2.5
+
+
+def test_news_item_weight_recency_day():
+    """Новость 12-24 часа получает recency multiplier 1.5."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 18 * 3600)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 1.5 * decay ~0.7 = ~1.05
+    assert 0.8 < w < 1.5
+
+
+def test_news_item_weight_old_decay():
+    """Старые новости (>24ч) получают только экспоненциальный decay без recency boost."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 72 * 3600)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 1.0 * decay ~0.25 = ~0.25
+    assert w < 0.5
+
+
+def test_ensemble_score_with_finbert():
+    """Ensemble: VADER 0.35 + FinBERT 0.65 blending."""
+    from stock_signal_analyzer.finbert_sentiment import ensemble_score
+    vader = [0.2, -0.3, 0.0]
+    finbert = [0.6, -0.1, 0.4]
+    out = ensemble_score(vader, finbert, vader_weight=0.35, finbert_weight=0.65)
+    assert len(out) == 3
+    assert abs(out[0] - (0.2 * 0.35 + 0.6 * 0.65)) < 1e-6
+    assert abs(out[1] - (-0.3 * 0.35 + -0.1 * 0.65)) < 1e-6
+
+
+def test_ensemble_score_empty_finbert_fallback():
+    """Если FinBERT не доступен, ensemble возвращает VADER без изменений."""
+    from stock_signal_analyzer.finbert_sentiment import ensemble_score
+    vader = [0.2, -0.3]
+    out = ensemble_score(vader, [], vader_weight=0.35, finbert_weight=0.65)
+    assert out == vader
+
+
+def test_sentiment_fallback_without_finbert():
+    """score_headlines работает без FinBERT (VADER-only fallback)."""
+    items = [NewsItem(title="Apple beats estimates for Q3 earnings", link="", source="test", published_ts=None)]
+    result = score_headlines(items)
+    assert result.headlines_used == 1
+    assert result.compound != 0.0  # VADER + financial boost даёт ненулевой результат
+
+
 # ===========================================================================
 # momentum.py — ROC acceleration
 # ===========================================================================
