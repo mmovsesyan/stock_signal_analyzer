@@ -568,6 +568,42 @@ def test_score_headlines_includes_fin_boost():
     assert result.fin_boost_avg > 0
 
 
+def test_news_item_weight_recency_breaking():
+    """Новость < 1 часа получает recency multiplier 3.0."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 1800)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 3.0 * decay ~1.0 = ~3.0
+    assert w > 2.5
+
+
+def test_news_item_weight_recency_4h():
+    """Новость 2-4 часа получает recency multiplier 2.0."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 3 * 3600)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 2.0 * decay ~0.9 = ~1.8
+    assert 1.5 < w < 2.5
+
+
+def test_news_item_weight_recency_day():
+    """Новость 12-24 часа получает recency multiplier 1.5."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 18 * 3600)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 1.5 * decay ~0.7 = ~1.05
+    assert 0.8 < w < 1.5
+
+
+def test_news_item_weight_old_decay():
+    """Старые новости (>24ч) получают только экспоненциальный decay без recency boost."""
+    now = 1_000_000.0
+    it = NewsItem(title="t", link="", source="ticker", published_ts=now - 72 * 3600)
+    w = _news_item_weight(it, "ticker", now)
+    # ticker base 1.0 * recency 1.0 * decay ~0.25 = ~0.25
+    assert w < 0.5
+
+
 # ===========================================================================
 # momentum.py — ROC acceleration
 # ===========================================================================

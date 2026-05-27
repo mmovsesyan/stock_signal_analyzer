@@ -217,8 +217,19 @@ def _news_item_weight(it: NewsItem, kind: str, now: float) -> float:
     else:
         w = 0.32
     if it.published_ts:
-        age_d = max(0.0, (now - float(it.published_ts)) / 86400.0)
-        w *= float(0.25 + 0.75 * np.exp(-age_d / 2.0))
+        age_h = max(0.0, (now - float(it.published_ts)) / 3600.0)
+        # Recency weighting: breaking news gets higher weight
+        if age_h <= 1.0:
+            recency_mult = 3.0
+        elif age_h <= 4.0:
+            recency_mult = 2.0
+        elif age_h <= 24.0:
+            recency_mult = 1.5
+        else:
+            recency_mult = 1.0
+        age_d = age_h / 24.0
+        decay = float(0.25 + 0.75 * np.exp(-age_d / 2.0))
+        w *= recency_mult * decay
     else:
         w *= 0.88
     return float(max(0.05, w))
