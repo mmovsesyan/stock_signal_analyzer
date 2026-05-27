@@ -9,10 +9,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+
+from .volume_clusters import analyze_volume_clusters
 
 
 @dataclass
@@ -25,6 +27,12 @@ class KeyLevels:
     r1: float
     r2: float
     detail: str
+    # Volume cluster levels
+    poc: float | None = None
+    value_area_low: float | None = None
+    value_area_high: float | None = None
+    hvn_levels: list[tuple[float, float]] = field(default_factory=list)
+    lvn_levels: list[tuple[float, float]] = field(default_factory=list)
 
 
 def _classic_pivots(high: float, low: float, close: float) -> tuple[float, float, float, float, float]:
@@ -133,10 +141,20 @@ def compute_key_levels(hist: pd.DataFrame) -> KeyLevels:
         f"сопротивление: {nearest_resistance:.2f} ({res_dist:+.1f}%)"
     )
 
+    # Volume cluster enrichment
+    vc = analyze_volume_clusters(hist, n_bins=30)
+    if vc.poc is not None:
+        detail += f" | {vc.detail}"
+
     return KeyLevels(
         nearest_support=nearest_support,
         nearest_resistance=nearest_resistance,
         pivot=pivot,
         s1=s1, s2=s2, r1=r1, r2=r2,
         detail=detail,
+        poc=vc.poc,
+        value_area_low=vc.value_area_low,
+        value_area_high=vc.value_area_high,
+        hvn_levels=vc.hvn_levels,
+        lvn_levels=vc.lvn_levels,
     )
