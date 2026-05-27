@@ -55,6 +55,20 @@ from .trade_plan import TradePlan, build_trade_plan, trade_plan_to_dict
 from .universe import InstrumentProfile, select_component_weights
 from .volume_pressure import VolumePressureResult, analyze_volume_pressure
 
+# ML ensemble (lazy-loaded)
+from .ml_scoring import RankEnsemble, blend_ml_score
+
+# Module-level singleton for ML ensemble
+_ML_ENSEMBLE: RankEnsemble | None = None
+
+
+def _get_ml_ensemble() -> RankEnsemble:
+    """Ленивый синглтон RankEnsemble."""
+    global _ML_ENSEMBLE
+    if _ML_ENSEMBLE is None:
+        _ML_ENSEMBLE = RankEnsemble()
+    return _ML_ENSEMBLE
+
 
 # ── Константы ────────────────────────────────────────────────────────────────
 
@@ -140,8 +154,10 @@ class SignalReport:
     analyst_detail: str = ""
     earnings_detail: str = ""
     # Backtest validation
-    validation_advice: str = ""  # "✅ Advisable" / "⚠️ Not validated" / "ℹ️ Insufficient data"
+    validation_advice: str = ""  # "Advisable" / "Not validated" / "Insufficient data"
     validation_confidence: float = 0.0  # 0-1, confidence based on historical performance
+    # ML ensemble score
+    ml_score: float | None = None
 
 
 # ── Приватные датаклассы для промежуточных результатов ───────────────────────
@@ -951,6 +967,25 @@ def build_report(
     inputs = _gather_inputs(symbol, key, use_finnhub_ws, ws_seconds, volume_tape_ws, fast_mode)
     bundle = _compute_score(inputs)
 
+    # ── ML RankEnsemble blend ──
+    ml_score: float | None = None
+    blended_score = bundle.total
+    try:
+        ensemble = _get_ml_ensemble()
+        ml_score = ensemble.predict(
+            technical=inputs.tech.score,
+            momentum=inputs.mom.score,
+            news=inputs.news_score,
+            volume=inputs.vol_res.score,
+            score=bundle.total,
+            confidence=bundle.confidence,
+            direction="long" if bundle.total > 0 else ("short" if bundle.total < 0 else "neutral"),
+            tier=bundle.signal_tier,
+        )
+        blended_score = blend_ml_score(heuristic=bundle.total, ml=ml_score, ml_weight=0.30)
+    except Exception as exc:
+        _log.debug("ML blend skipped for %s: %s", symbol, exc)
+
     risk = (
         "Не инвестиционный совет. Модели: AQR MTF momentum, DE Shaw z-score, "
         "Bridgewater regime/vol-target, Kelly sizing, circuit breaker. "
@@ -962,7 +997,7 @@ def build_report(
     ca_rm = inputs.cross_asset.risk_multiplier if inputs.cross_asset else 1.0
     pos_size_res = compute_position_size(
         confidence=bundle.confidence,
-        signal_strength=bundle.total,
+        signal_strength=blended_score,
         current_vol_annual=cur_vol,
         regime_risk_mult=ca_rm,
     )
@@ -981,8 +1016,8 @@ def build_report(
         symbol=inputs.snap.symbol,
         company=inputs.snap.company_name,
         instrument_label=inputs.profile.label,
-        verdict=_verdict_from_score(bundle.total, bundle.confidence),
-        score=bundle.total,
+        verdict=_verdict_from_score(blended_score, bundle.confidence),
+        score=blended_score,
         score_before_macro=bundle.score_pre_macro,
         technical_score=inputs.tech.score,
         momentum_score=inputs.mom.score,
@@ -1018,11 +1053,12 @@ def build_report(
         cross_asset_detail=inputs.cross_asset.detail if inputs.cross_asset else "",
         position_size_detail=pos_size_res.detail,
         quant_score=quant_sc,
+        ml_score=ml_score,
     )
 
     has_pat = bool(inputs.tech.pattern_summary and inputs.tech.pattern_summary.strip())
     tp = build_trade_plan(
-        score=bundle.total,
+        score=blended_score,
         ref_price=rep.ref_price,
         atr_pct=inputs.atr_pct,
         signal_tier=bundle.signal_tier,
