@@ -9,6 +9,8 @@ LABEL version="1.2.0"
 RUN apt-get update && apt-get install -y \
     git \
     curl \
+    build-essential \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Создать рабочую директорию
@@ -28,9 +30,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements-scale.txt && \
     pip install --no-cache-dir -r requirements-dev.txt
 
-# T-Bank SDK (отдельно, может быть недоступен при сборке)
-RUN pip install --no-cache-dir tinkoff-investments 2>/dev/null || \
-    pip install --no-cache-dir --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments || \
+# T-Bank SDK (из приватного PyPI T-Bank; может быть недоступен при сборке)
+RUN pip install --no-cache-dir -r requirements-tbank.txt 2>/dev/null || \
     echo "T-Bank SDK not available at build time - will retry at startup"
 
 # Скрипт автоустановки SDK при старте (если не установился при сборке)
@@ -42,9 +43,6 @@ COPY . .
 
 # Создать директории для данных
 RUN mkdir -p /data/signals /data/outcomes /app/logs
-
-# Создать непривилегированного пользователя и передать права
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app /data
 
 # Переменные окружения по умолчанию
 ENV SSA_SIGNAL_LOG=/data/signals/signals.jsonl
