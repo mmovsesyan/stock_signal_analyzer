@@ -359,21 +359,24 @@ def _fetch_news_parallel(symbol: str, company_name: str, key: str | None) -> tup
             except ImportError:
                 pass
 
-        for future in as_completed(futures, timeout=15):
-            source = futures[future]
-            try:
-                result = future.result(timeout=5)
-                if source == 'ticker':
-                    ticker_news = result
-                elif source == 'finnhub':
-                    fh_news = result
-                elif source == 'macro':
-                    macro_news = result
-                elif source == 'polygon':
-                    polygon_news = result
-            except Exception as e:
-                # Логируем, но не падаем - продолжаем с пустым списком
-                _log.warning("News fetch failed for source '%s': %s", source, e)
+        try:
+            for future in as_completed(futures, timeout=15):
+                source = futures[future]
+                try:
+                    result = future.result(timeout=5)
+                    if source == 'ticker':
+                        ticker_news = result
+                    elif source == 'finnhub':
+                        fh_news = result
+                    elif source == 'macro':
+                        macro_news = result
+                    elif source == 'polygon':
+                        polygon_news = result
+                except Exception as e:
+                    # Логируем, но не падаем - продолжаем с пустым списком
+                    _log.warning("News fetch failed for source '%s': %s", source, e)
+        except TimeoutError:
+            _log.warning("News parallel fetch timed out after 15s — using partial results")
 
     return ticker_news, fh_news, macro_news, polygon_news
 
