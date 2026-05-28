@@ -95,6 +95,27 @@ def test_format_clusters_telegram():
     assert "HVN" in text
 
 
+def test_format_clusters_telegram_dataclass():
+    from stock_signal_analyzer.volume_clusters import VolumeClusterResult
+    result = VolumeClusterResult(
+        poc=150.0,
+        poc_volume=1000.0,
+        value_area_low=148.0,
+        value_area_high=152.0,
+        hvn_levels=[(149.0, 500.0), (151.0, 600.0)],
+        lvn_levels=[(147.0, 100.0)],
+        total_volume=5000.0,
+    )
+    text = format_clusters_telegram(result)
+    assert "POC" in text
+    assert "150.00" in text
+    assert "Value Area" in text
+    assert "HVN" in text
+    assert "149.00" in text
+    assert "LVN" in text
+    assert "147.00" in text
+
+
 def test_format_clusters_telegram_empty():
     assert "нет данных" in format_clusters_telegram({})
 

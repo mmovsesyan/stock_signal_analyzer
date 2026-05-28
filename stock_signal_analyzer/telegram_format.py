@@ -574,24 +574,45 @@ def format_backtest_telegram(report: dict, tier: str = "free") -> str:
     return "\n".join(lines)
 
 
-def format_clusters_telegram(result: dict) -> str:
-    """Форматировать анализ объёмных кластеров для Telegram."""
+def format_clusters_telegram(result) -> str:
+    """Форматировать анализ объёмных кластеров для Telegram.
+
+    Принимает dict или VolumeClusterResult (dataclass).
+    """
     if not result:
         return "🔬 Кластеры: нет данных."
+
+    def _get(name: str):
+        if isinstance(result, dict):
+            return result.get(name)
+        return getattr(result, name, None)
+
+    def _prices(levels, limit: int = 5):
+        """Извлечь цены из списка float или списка tuple (price, volume)."""
+        out: list[float] = []
+        for item in levels[:limit]:
+            if isinstance(item, (list, tuple)):
+                out.append(float(item[0]))
+            else:
+                out.append(float(item))
+        return out
+
     lines = ["🔬 <b>Volume Clusters</b>"]
-    poc = result.get("poc")
+    poc = _get("poc")
     if poc is not None:
-        lines.append(f"POC (точка максимального объёма): <b>{poc:.2f}</b>")
-    va_low = result.get("value_area_low")
-    va_high = result.get("value_area_high")
+        lines.append(f"POC (точка максимального объёма): <b>{float(poc):.2f}</b>")
+    va_low = _get("value_area_low")
+    va_high = _get("value_area_high")
     if va_low is not None and va_high is not None:
-        lines.append(f"Value Area (70%): <b>{va_low:.2f}</b> — <b>{va_high:.2f}</b>")
-    hvn = result.get("hvn_levels", [])
-    lvn = result.get("lvn_levels", [])
+        lines.append(f"Value Area (70%): <b>{float(va_low):.2f}</b> — <b>{float(va_high):.2f}</b>")
+    hvn = _get("hvn_levels") or []
+    lvn = _get("lvn_levels") or []
     if hvn:
-        lines.append(f"HVN (высокий объём): {', '.join(f'{v:.2f}' for v in hvn[:5])}")
+        prices = _prices(hvn)
+        lines.append(f"HVN (высокий объём): {', '.join(f'{v:.2f}' for v in prices)}")
     if lvn:
-        lines.append(f"LVN (низкий объём): {', '.join(f'{v:.2f}' for v in lvn[:5])}")
+        prices = _prices(lvn)
+        lines.append(f"LVN (низкий объём): {', '.join(f'{v:.2f}' for v in prices)}")
     return "\n".join(lines)
 
 
