@@ -461,22 +461,49 @@ def sanitize_command_args(args: list[str]) -> tuple[str, bool, bool, bool]:
 
 
 def format_screen_results(results: list[dict], max_results: int = 10) -> str:
-    """Краткий список результатов скринера для Telegram."""
+    """Краткий список результатов скринера для Telegram.
+
+    Разделяет на две секции:
+      - A/B tier: торговые сигналы (🟢/🔴)
+      - C tier: наблюдение (⚪), не входить
+    """
     if not results:
         return "📊 Нет сигналов по заданным критериям."
-    lines = [f"📊 <b>Топ сигналов</b> (показано {min(len(results), max_results)} из {len(results)})"]
-    for r in results[:max_results]:
-        tier = r.get("signal_tier", "C")
-        direction = r.get("direction", "none")
-        score = r.get("score", 0)
-        sym = _esc(r.get("symbol", "?"))
-        comp = _esc(r.get("company", ""))
-        conf = r.get("confidence", 0)
-        dir_icon = "🟢" if direction == "long" else ("🔴" if direction == "short" else "⚪")
-        lines.append(
-            f"{dir_icon} <b>{sym}</b> {comp}\n"
-            f"   Score: <b>{score:+.2f}</b> | Tier: <b>{tier}</b> | Conf: {conf:.0%}"
-        )
+
+    ab_signals = [r for r in results[:max_results] if r.get("signal_tier") in ("A", "B")]
+    c_signals = [r for r in results[:max_results] if r.get("signal_tier") == "C"]
+
+    lines: list[str] = [f"📊 <b>Топ сигналов</b> (показано {min(len(results), max_results)} из {len(results)})"]
+
+    if ab_signals:
+        lines.append("")
+        lines.append("<b>🟢🔴 Торговые сигналы (A/B)</b>")
+        for r in ab_signals:
+            direction = r.get("direction", "none")
+            score = r.get("score", 0)
+            sym = _esc(r.get("symbol", "?"))
+            comp = _esc(r.get("company", ""))
+            conf = r.get("confidence", 0)
+            tier = r.get("signal_tier", "C")
+            dir_icon = "🟢" if direction == "long" else ("🔴" if direction == "short" else "⚪")
+            lines.append(
+                f"{dir_icon} <b>{sym}</b> {comp}\n"
+                f"   Score: <b>{score:+.2f}</b> | Tier: <b>{tier}</b> | Conf: {conf:.0%}"
+            )
+
+    if c_signals:
+        lines.append("")
+        lines.append("<b>⚪ Наблюдение (класс C — не входить)</b>")
+        for r in c_signals:
+            score = r.get("score", 0)
+            sym = _esc(r.get("symbol", "?"))
+            comp = _esc(r.get("company", ""))
+            conf = r.get("confidence", 0)
+            lines.append(
+                f"⚪ <b>{sym}</b> {comp}\n"
+                f"   Score: <b>{score:+.2f}</b> | Conf: {conf:.0%}"
+            )
+
     return "\n".join(lines)
 
 
