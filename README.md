@@ -13,8 +13,8 @@
   <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker" alt="Docker">
   <img src="https://img.shields.io/badge/AI-Ollama_LLM-orange" alt="AI">
   <img src="https://img.shields.io/badge/Markets-US_&_RU-green" alt="Markets">
-  <img src="https://img.shields.io/badge/Tests-132_passed-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/Version-2.5.3-purple" alt="Version">
+  <img src="https://img.shields.io/badge/Tests-192_passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-2.5.4-purple" alt="Version">
 </p>
 
 ---
@@ -80,19 +80,20 @@ cd stock_signal_analyzer
 ### Прямые команды
 
 ```bash
-./scripts/deploy.sh install     # Полная установка (с нуля)
-./scripts/deploy.sh configure   # Перенастроить API ключи
-./scripts/deploy.sh start       # Запустить сервисы
-./scripts/deploy.sh stop        # Остановить
-./scripts/deploy.sh restart     # Перезапустить
-./scripts/deploy.sh status      # Статус и health check
-./scripts/deploy.sh logs        # Логи (выбор сервиса)
-./scripts/deploy.sh update-deps # Обновить Python зависимости
-./scripts/deploy.sh update      # git pull + пересборка
-./scripts/deploy.sh learning    # Управление самообучением
-./scripts/deploy.sh backtest    # Бэктестирование
-./scripts/deploy.sh tests       # Запустить pytest
-./scripts/deploy.sh uninstall   # Удалить всё
+./scripts/deploy.sh install      # Полная установка (с нуля)
+./scripts/deploy.sh configure    # Перенастроить API ключи
+./scripts/deploy.sh start        # Запустить сервисы
+./scripts/deploy.sh stop         # Остановить
+./scripts/deploy.sh restart      # Перезапустить
+./scripts/deploy.sh status       # Статус и health check
+./scripts/deploy.sh logs         # Логи (выбор сервиса)
+./scripts/deploy.sh update-deps  # Обновить Python зависимости
+./scripts/deploy.sh update       # git pull + пересборка + fix_old_signals
+./scripts/deploy.sh fix-signals  # Исправить старые сигналы (trade plans)
+./scripts/deploy.sh learning     # Управление самообучением
+./scripts/deploy.sh backtest     # Бэктестирование
+./scripts/deploy.sh tests        # Запустить pytest
+./scripts/deploy.sh uninstall    # Удалить всё
 ```
 
 ---
@@ -225,13 +226,19 @@ nano .env
 | `cache.py` | Redis-backed cache с TTL для expensive вычислений (analyze, и др.) |
 | `circuit_breaker.py` | Circuit breaker для внешних API (Polygon, Finnhub, Yahoo, T-Bank) |
 | `rate_limiter.py` | Redis-backed sliding-window rate limiter per client |
-| `db.py` | PostgreSQL через SQLAlchemy: пользователи, сигналы, outcomes |
+| `db.py` | PostgreSQL через SQLAlchemy: пользователи, сигналы, outcomes, alerts |
 | `subscriptions.py` | Тарифы Free/Pro/Premium и лимиты |
 | `risk_manager.py` | Sizing: Kelly criterion, vol targeting, drawdown control |
 | `polygon_data.py` | Интеграция с Polygon API (котировки, новости) |
 | `admin_alerts.py` | Уведомления админу в Telegram при сбоях (circuit breaker, quant failures) |
 | `config_validator.py` | Валидация символов: regex `^[A-Z0-9.\-]{1,20}$` |
 | `universe.py` | Списки тикеров + автоопределение рынка (RU → `.ME`) |
+| `screener.py` | Параллельный скрининг 89 тикеров (ThreadPoolExecutor, cache) |
+| `volume_clusters.py` | Объёмный анализ: POC, Value Area, HVN, LVN |
+| `ml_scoring.py` | RankEnsemble (LightGBM + ExtraTrees + HistGradientBoosting) |
+| `moex_iss.py` | MOEX ISS REST API: котировки TQBR, объёмы |
+| `tbank_invest.py` | T-Bank Invest API (gRPC): real-time котировки РФ |
+| `fix_old_signals.py` | Ретроактивное добавление trade plans к старым сигналам |
 
 ---
 
@@ -277,6 +284,10 @@ engine.py — применяет скорректированные веса (bl
 | Уведомления | ❌ | ✅ | ✅ |
 | Per-user learning | ❌ | ❌ | ✅ |
 | Watchlist | 5 | 30 | 100 |
+| `/clusters` | ❌ | ✅ | ✅ |
+| `/portfolio` | ❌ | ✅ | ✅ |
+| `/alerts` | ❌ | ❌ | ✅ |
+| `/mlscore` | ❌ | ❌ | ✅ |
 
 Включить: `SUBSCRIPTION_ENABLED=1` в `.env`.
 
@@ -302,23 +313,30 @@ docker compose exec api python3 -m pytest tests/ -v
 
 ### Аналитика
 
-| Команда | Описание |
-|---------|----------|
-| `/signal AAPL` | Полный анализ с торговым планом (10-30 сек) |
-| `/signal SBER` | Анализ российской акции (авто `.ME`) |
-| `/signal SBER.ME` | Анализ российской акции (явный суффикс) |
-| `/price AAPL` | Быстрая котировка |
-| `/dashboard` | Свод по watchlist |
+| Команда | Описание | Тариф |
+|---------|----------|:-----:|
+| `/signal AAPL` | Полный анализ с торговым планом (10-30 сек) | Free+ |
+| `/signal SBER` | Анализ российской акции (авто `.ME`) | Free+ |
+| `/signal SBER.ME` | Анализ российской акции (явный суффикс) | Free+ |
+| `/price AAPL` | Быстрая котировка | Free+ |
+| `/dashboard` | Свод по watchlist | Free+ |
+| `/screen` | Скринер топ сигналов по рынку (US/RU/все) | Free+ |
+| `/clusters AAPL` | Объёмный профиль (POC, Value Area, HVN/LVN) | Pro+ |
+| `/mlscore` | ML RankEnsemble — важность фич и статус обучения | Premium |
 
 ### Управление
 
-| Команда | Описание |
-|---------|----------|
-| `/settings` | Интерактивные настройки (inline-кнопки) |
-| `/watchlist add AAPL MSFT` | Добавить в watchlist |
-| `/collect` | Запустить массовый сбор сигналов |
-| `/status` | Статус системы |
-| `/export` | Выгрузить лог сигналов |
+| Команда | Описание | Тариф |
+|---------|----------|:-----:|
+| `/settings` | Интерактивные настройки (inline-кнопки) | Free+ |
+| `/watchlist add AAPL MSFT` | Добавить в watchlist | Free+ |
+| `/collect` | Запустить массовый сбор сигналов | Free+ |
+| `/status` | Статус системы | Free+ |
+| `/export` | Выгрузить лог сигналов | Free+ |
+| `/portfolio` | Открытые позиции (от outcome_tracker) | Pro+ |
+| `/alerts` | Список активных алертов | Premium |
+| `/alerts_add score > 0.30` | Добавить алерт по score/tier/direction | Premium |
+| `/alerts_remove 3` | Удалить алерт по ID | Premium |
 
 ### Настройки
 
@@ -424,6 +442,23 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 ---
 
 ## ✅ Что нового
+
+### v2.5.4 (2026-05-28) — Tier-based команды, self-learning loop, багфиксы
+
+- **Tier-based Telegram команды** (`telegram_bot.py` + `subscriptions.py`) — `/screen`, `/clusters` (Pro+), `/mlscore` (Premium), `/portfolio` (Pro+), `/alerts`, `/alerts_add`, `/alerts_remove` (Premium). Каждая команда проверяет тариф и rate limit
+- **Алерты** (`telegram_bot.py` + `db.py`) — добавление/удаление алертов по score, tier, direction. Отображение с ID для удобного удаления. Модель `UserAlert` в PostgreSQL
+- **ML Score** (`ml_scoring.py`) — исправлен `NameError` (`datetime` не импортирован). `RankEnsemble.fit()` теперь сохраняет `last_fit_at` корректно
+- **Screener timeout fix** (`screener.py`) — `concurrent.futures.as_completed` в Python 3.9 выбрасывает `concurrent.futures.TimeoutError`, а не встроенный. Теперь таймаут корректно ловится и pending futures отменяются
+- **Verdict синхронизирован с tier** (`engine.py`) — `_verdict_from_score` теперь учитывает tier: A=«сильная уверенность», B=«умеренная», C=threshold-based. Исправлено несоответствие «tier=A, verdict=нейтрально»
+- **B-tier threshold для уведомлений** (`telegram_bot.py`) — снижен с `|score| < 0.35` до `|score| < 0.20`, соответствует реальному порогу B-tier
+- **Self-learning thresholds** (`engine.py` + `risk_context.py`) — ML optimal thresholds подгружаются перед `classify_signal_tier()`. A-tier: 0.40→0.28, B-tier: 0.26→0.16. Пороги ML применяются как floor (не ниже базового)
+- **Alignment amplification** (`engine.py`) — при 3+ согласованных компонентах +0.12–0.20 к score. Sentiment dampening: сильный тех. сигнал противостоит противоположным новостям
+- **Quant model weights** (`engine.py`) — MTF 0.22, z-score 0.12, trend 0.14
+- **Deduplication 1 день** (`signal_log.py`) — с промоушном tier (C→B→A). Централизованная загрузка JSONL
+- **fix_old_signals.py** (`scripts/`) — ретроактивно добавляет trade plans к старым C-сигналам. Интегрирован в `deploy.sh update`
+- **Docker ignore** (`.dockerignore`) — `scripts/fix_old_signals.py` теперь включается в образ, исправлена ошибка «No such file or directory» при `do_fix_signals()`
+- **_online_hint** (`engine.py`) — для `.ME` тикеров в `fast_mode` честно сообщает «пропущено в быстром режиме» вместо обвинения MOEX ISS
+- **Tests:** 192 passed
 
 ### v2.5.3 (2026-05-23) — Выбор рынка для уведомлений вне списка
 
@@ -549,5 +584,5 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 ---
 
 <p align="center">
-  <strong>Version 2.5.2</strong> • Updated 2026-05-23
+  <strong>Version 2.5.4</strong> • Updated 2026-05-28
 </p>
