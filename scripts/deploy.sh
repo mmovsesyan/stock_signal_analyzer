@@ -942,6 +942,33 @@ do_scale() {
 #  ОБНОВЛЕНИЕ
 # ═══════════════════════════════════════════════════════════════════════
 
+do_fix_signals() {
+    header "Исправление старых сигналов"
+
+    source "$ENV_FILE" 2>/dev/null || true
+    local data_dir="${STOCK_SIGNAL_DATA:-/var/lib/stock_signal_analyzer}"
+
+    if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
+        # Docker mode
+        info "Запускаю fix_old_signals.py в контейнере api..."
+        if docker compose ps api 2>/dev/null | grep -q "Up"; then
+            docker compose exec -T api python scripts/fix_old_signals.py
+        else
+            warn "Контейнер api не запущен. Пропускаю."
+        fi
+    else
+        # systemd/local mode
+        local venv_python="$PROJECT_DIR/venv/bin/python"
+        if [ -f "$venv_python" ]; then
+            info "Запускаю fix_old_signals.py..."
+            "$venv_python" "$PROJECT_DIR/scripts/fix_old_signals.py"
+        else
+            warn "venv не найден. Запустите: python3 scripts/fix_old_signals.py"
+        fi
+    fi
+    ok "Готово"
+}
+
 do_update() {
     header "Обновление"
 
@@ -949,6 +976,9 @@ do_update() {
 
     info "Получаю обновления..."
     git pull origin main 2>/dev/null || git pull 2>/dev/null || warn "git pull не удался"
+
+    # Исправить старые сигналы (критично после изменений thresholds/trade_plan)
+    do_fix_signals
 
     if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
         # Docker mode
@@ -1271,8 +1301,11 @@ main_menu() {
         echo "   12) 📈 Бэктест"
         echo "   13) 🧪 Запустить тесты"
         echo ""
+        echo "  ── Обслуживание ──────────────────────"
+        echo "   14) 🔧 Исправить старые сигналы"
+        echo ""
         echo "  ── Прочее ─────────────────────────────"
-        echo "   14) 🗑️  Удалить всё"
+        echo "   15) 🗑️  Удалить всё"
         echo "    0) Выход"
         echo ""
 
@@ -1292,7 +1325,8 @@ main_menu() {
             11) do_learning ;;
             12) do_backtest ;;
             13) do_run_tests ;;
-            14) do_uninstall ;;
+            14) do_fix_signals ;;
+            15) do_uninstall ;;
             0|q|exit) echo ""; ok "До встречи!"; exit 0 ;;
             *)  warn "Неизвестный пункт" ;;
         esac
@@ -1307,40 +1341,42 @@ main_menu() {
 # ═══════════════════════════════════════════════════════════════════════
 
 case "${1:-}" in
-    install)    do_install ;;
-    configure)  do_configure ;;
-    start)      do_start ;;
-    stop)       do_stop ;;
-    restart)    do_restart ;;
-    status)     do_status ;;
-    logs)       do_logs ;;
-    scale)      do_scale ;;
-    update-deps) do_update_deps ;;
-    update)     do_update ;;
-    learning)   do_learning ;;
-    backtest)   do_backtest ;;
-    tests)      do_run_tests ;;
-    uninstall)  do_uninstall ;;
+    install)      do_install ;;
+    configure)    do_configure ;;
+    start)        do_start ;;
+    stop)         do_stop ;;
+    restart)      do_restart ;;
+    status)       do_status ;;
+    logs)         do_logs ;;
+    scale)        do_scale ;;
+    update-deps)  do_update_deps ;;
+    update)       do_update ;;
+    fix-signals)  do_fix_signals ;;
+    learning)     do_learning ;;
+    backtest)     do_backtest ;;
+    tests)        do_run_tests ;;
+    uninstall)    do_uninstall ;;
     help|--help|-h)
         echo "Stock Signal Analyzer — Deploy & Manage"
         echo ""
         echo "Использование: ./scripts/deploy.sh [команда]"
         echo ""
         echo "Команды:"
-        echo "  install     Полная установка"
-        echo "  configure   Настроить ключи"
-        echo "  start       Запустить сервисы"
-        echo "  stop        Остановить"
-        echo "  restart     Перезапустить"
-        echo "  status      Статус и health"
-        echo "  logs        Логи"
-        echo "  scale       Масштабировать workers"
-        echo "  update-deps Обновить зависимости"
-        echo "  update      Обновить код"
-        echo "  learning    Управление обучением"
-        echo "  backtest    Бэктестирование"
-        echo "  tests       Запустить тесты"
-        echo "  uninstall   Удалить"
+        echo "  install      Полная установка"
+        echo "  configure    Настроить ключи"
+        echo "  start        Запустить сервисы"
+        echo "  stop         Остановить"
+        echo "  restart      Перезапустить"
+        echo "  status       Статус и health"
+        echo "  logs         Логи"
+        echo "  scale        Масштабировать workers"
+        echo "  update-deps  Обновить зависимости"
+        echo "  update       Обновить код"
+        echo "  fix-signals  Исправить старые сигналы (добавить trade plans)"
+        echo "  learning     Управление обучением"
+        echo "  backtest     Бэктестирование"
+        echo "  tests        Запустить тесты"
+        echo "  uninstall    Удалить"
         echo ""
         echo "Telegram бот: /signal /settings /watchlist /dashboard"
         echo "Без аргументов — интерактивное меню."
