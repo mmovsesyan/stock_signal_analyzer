@@ -159,10 +159,10 @@ class BacktestValidator:
         win_pnls = [r.get("pnl_pct", 0) for r in wins if r.get("pnl_pct") is not None]
         loss_pnls = [abs(r.get("pnl_pct", 0)) for r in losses if r.get("pnl_pct") is not None]
 
-        total = len(records)
         n_wins = len(wins)
         n_losses = len(losses)
-        win_rate = n_wins / total if total > 0 else 0.0
+        decisive = n_wins + n_losses
+        win_rate = n_wins / decisive if decisive > 0 else 0.0
 
         avg_pnl = sum(pnl_values) / len(pnl_values) if pnl_values else 0.0
         avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else 0.0
@@ -280,7 +280,7 @@ class BacktestValidator:
 
         win_rate = total_wins / total_trades if total_trades > 0 else 0.0
         total_pnl = sum(all_pnls)
-        avg_pnl = total_pnl / len(matching_groups) if matching_groups else 0.0
+        avg_pnl = total_pnl / total_trades if total_trades > 0 else 0.0
 
         total_win_sum = sum(g.wins * g.avg_win_pct for g in matching_groups)
         total_loss_sum = sum(g.losses * g.avg_loss_pct for g in matching_groups)
@@ -363,7 +363,7 @@ class BacktestValidator:
             wins=total_wins,
             win_rate=total_wins / total_trades if total_trades > 0 else 0.0,
             total_pnl_pct=total_pnl,
-            avg_pnl_pct=total_pnl / len(groups) if groups else 0.0,
+            avg_pnl_pct=total_pnl / total_trades if total_trades > 0 else 0.0,
         )
 
     def generate_report(self) -> BacktestReport | None:

@@ -22,8 +22,9 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-# Т-Банк комиссия: 0.3% на вход + 0.3% на выход = 0.6% round-trip
-_COMMISSION_PCT = 0.3 * 2
+# PnL в outcomes.jsonl уже net (slippage + commission вычтены в outcome_tracker).
+# Дополнительных вычетов здесь не нужно.
+_COMMISSION_PCT = 0.0
 
 
 @dataclass
@@ -105,11 +106,9 @@ class BacktestReport:
         return outcomes
 
     @staticmethod
-    def _net_pnl(gross_pnl_pct: float | None) -> float:
-        """PnL за вычетом комиссии Т-Банка."""
-        if gross_pnl_pct is None:
-            return 0.0
-        return gross_pnl_pct - _COMMISSION_PCT
+    def _safe_pnl(pnl_pct: float | None) -> float:
+        """Вернуть PnL как есть (уже net в outcomes)."""
+        return pnl_pct if pnl_pct is not None else 0.0
 
     def _build_equity_curve(self, outcomes: list[dict[str, Any]]) -> list[EquityPoint]:
         """Построить эквити-кривую от хронологически отсортированных сделок."""
@@ -120,7 +119,7 @@ class BacktestReport:
         equity: list[EquityPoint] = []
         running = 100.0
         for i, rec in enumerate(sorted_outcomes, start=1):
-            pnl = self._net_pnl(rec.get("pnl_pct"))
+            pnl = self._safe_pnl(rec.get("pnl_pct"))
             running += running * (pnl / 100.0)
             date = rec.get("exit_date") or rec.get("checked_at") or ""
             if isinstance(date, str):
@@ -164,9 +163,9 @@ class BacktestReport:
         losses = [r for r in records if r.get("outcome") == "loss"]
         timeouts = [r for r in records if r.get("outcome") == "timeout"]
 
-        win_pnls = [self._net_pnl(r.get("pnl_pct")) for r in wins]
-        loss_pnls = [self._net_pnl(r.get("pnl_pct")) for r in losses]
-        all_pnls = [self._net_pnl(r.get("pnl_pct")) for r in records]
+        win_pnls = [self._safe_pnl(r.get("pnl_pct")) for r in wins]
+        loss_pnls = [self._safe_pnl(r.get("pnl_pct")) for r in losses]
+        all_pnls = [self._safe_pnl(r.get("pnl_pct")) for r in records]
 
         total = len(wins) + len(losses)
         win_rate = len(wins) / total if total > 0 else 0.0
@@ -203,9 +202,9 @@ class BacktestReport:
         losses = [r for r in decisive if r.get("outcome") == "loss"]
         timeouts = [r for r in outcomes if r.get("outcome") == "timeout"]
 
-        win_pnls = [self._net_pnl(r.get("pnl_pct")) for r in wins]
-        loss_pnls = [self._net_pnl(r.get("pnl_pct")) for r in losses]
-        all_decisive_pnls = [self._net_pnl(r.get("pnl_pct")) for r in decisive]
+        win_pnls = [self._safe_pnl(r.get("pnl_pct")) for r in wins]
+        loss_pnls = [self._safe_pnl(r.get("pnl_pct")) for r in losses]
+        all_decisive_pnls = [self._safe_pnl(r.get("pnl_pct")) for r in decisive]
 
         total_decisive = len(wins) + len(losses)
         win_rate = len(wins) / total_decisive if total_decisive > 0 else 0.0
@@ -280,7 +279,7 @@ def format_report(result: BacktestResult) -> str:
         f"Profit factor: {result.profit_factor:.2f}",
         f"Sharpe-like: {result.sharpe_like:.2f}",
         f"Max drawdown: {result.max_drawdown_pct:.1f}%",
-        f"Total return: {result.total_return_pct:+.2f}%  (комиссия: {result.commission_pct:.2f}%)",
+        f"Total return: {result.total_return_pct:+.2f}%  (комиссия уже учтена в PnL)",
         "",
         "── По тирам ──",
     ]
