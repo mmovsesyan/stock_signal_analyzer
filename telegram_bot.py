@@ -3122,11 +3122,11 @@ async def cmd_clusters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         from stock_signal_analyzer.market_data import fetch_history
         from stock_signal_analyzer.volume_clusters import analyze_volume_clusters
         from stock_signal_analyzer.telegram_format import format_clusters_telegram
-        hist = await loop.run_in_executor(None, lambda: fetch_history(symbol, period="60d"))
-        if hist is None or hist.empty:
+        snapshot = await loop.run_in_executor(None, lambda: fetch_history(symbol, period="60d"))
+        if snapshot is None or snapshot.history is None or snapshot.history.empty:
             await update.message.reply_text(f"Нет данных для {symbol}")
             return
-        result = await loop.run_in_executor(None, lambda: analyze_volume_clusters(hist))
+        result = await loop.run_in_executor(None, lambda: analyze_volume_clusters(snapshot.history))
         body = format_clusters_telegram(result)
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
     except Exception as e:
