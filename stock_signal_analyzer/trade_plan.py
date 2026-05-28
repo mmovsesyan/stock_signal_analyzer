@@ -251,13 +251,16 @@ def build_trade_plan(
         t1_m *= 0.8
         t2_m *= 0.8
 
-    # Directional regime adjustments
+    # Directional regime adjustments: favorable when aligned, conservative when against
     if market_regime is not None:
-        if market_regime.regime == "bull":
+        aligned = (direction == "long" and market_regime.regime == "bull") or (
+            direction == "short" and market_regime.regime == "bear"
+        )
+        if aligned:
             stop_m *= 0.95
             t1_m *= 1.10
             t2_m *= 1.10
-        elif market_regime.regime == "bear":
+        elif market_regime.regime in ("bull", "bear"):
             stop_m *= 1.10
             t1_m *= 0.95
             t2_m *= 0.95
