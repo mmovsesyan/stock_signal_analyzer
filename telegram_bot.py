@@ -2349,6 +2349,25 @@ async def on_pending_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _cmd_signal_message_with_args(update.message, [sym])
         return
 
+    if pending == "clusters":
+        sym, _, _, bad = sanitize_command_args(args)
+        uid = _uid(update)
+        if bad or not sym:
+            _clear_pending_action(context)
+            await update.message.reply_text(
+                "Не понял тикер. Пример: <code>AAPL</code> или <code>SBER.ME</code>\n"
+                "Попробуйте ещё раз через меню.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_tools_menu_keyboard(uid) if uid else _main_menu_keyboard(),
+            )
+            return
+        _clear_pending_action(context)
+        from stock_signal_analyzer.universe import resolve_symbol_market
+        sym = resolve_symbol_market(sym)
+        context.args = [sym]
+        await cmd_clusters(update, context)
+        return
+
     if pending == "add_custom":
         uid = _uid(update)
         if not uid:
