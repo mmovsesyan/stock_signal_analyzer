@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 from .engine import SignalReport, build_report
 from .trade_plan import trade_plan_to_dict
@@ -91,20 +91,24 @@ def run_screen(
 
     workers = min(max_workers, len(universe)) if universe else 1
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(_run_screen_single, sym, fast_mode): sym
-            for sym in universe
-        }
-        try:
-            for future in as_completed(futures, timeout=total_timeout):
-                report = future.result(timeout=per_future_timeout)
-                if report is None or report.score < min_score:
-                    continue
-                results.append(_report_to_screen_item(report))
-        except TimeoutError:
-            unfinished = sum(1 for f in futures if not f.done())
-            log.warning("Screen total timeout reached, %d unfinished", unfinished)
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures = {
+        executor.submit(_run_screen_single, sym, fast_mode): sym
+        for sym in universe
+    }
+    try:
+        for future in as_completed(futures, timeout=total_timeout):
+            report = future.result(timeout=per_future_timeout)
+            if report is None or report.score < min_score:
+                continue
+            results.append(_report_to_screen_item(report))
+    except TimeoutError:
+        unfinished = sum(1 for f in futures if not f.done())
+        log.warning("Screen total timeout reached, %d unfinished", unfinished)
+        for f in futures:
+            f.cancel()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     results.sort(key=lambda x: x["score"], reverse=True)
     results = results[:max_results]
