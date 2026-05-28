@@ -3050,8 +3050,8 @@ async def on_menu_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ── Tier-based commands ──────────────────────────────────────────────────────
 
 
-async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/screen — скринер топ сигналов (tier-limited)."""
+async def _run_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, market: str) -> None:
+    """Общая логика скринера с заданным рынком."""
     if not update.message:
         return
     uid = _uid(update)
@@ -3066,7 +3066,7 @@ async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text(f"⛔ {msg}")
             return
 
-    market = "all"
+    # Позволяем переопределить рынок через аргумент (для /screen)
     if context.args:
         m = str(context.args[0]).strip().lower()
         if m in ("us", "ru", "all"):
@@ -3091,6 +3091,21 @@ async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/screen — скринер топ сигналов (tier-limited)."""
+    await _run_screen(update, context, market="all")
+
+
+async def cmd_screen_ru(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/screen_ru — скринер только российских акций."""
+    await _run_screen(update, context, market="ru")
+
+
+async def cmd_screen_us(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/screen_us — скринер только US акций."""
+    await _run_screen(update, context, market="us")
 
 
 async def cmd_clusters(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3748,6 +3763,8 @@ async def post_init(application: Application) -> None:
         BotCommand("stats", "Статистика исходов"),
         BotCommand("backtest", "Бэктест и валидация сигналов"),
         BotCommand("screen", "Скринер топ сигналов"),
+        BotCommand("screen_ru", "Скринер РФ акций"),
+        BotCommand("screen_us", "Скринер US акций"),
         BotCommand("clusters", "Объёмный профиль тикера"),
         BotCommand("mlscore", "ML scoring ансамбля"),
         BotCommand("portfolio", "Открытые позиции"),
@@ -3862,6 +3879,8 @@ def main() -> int:
     app.add_handler(CommandHandler("force_learn", cmd_force_learn))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
     app.add_handler(CommandHandler("screen", cmd_screen))
+    app.add_handler(CommandHandler("screen_ru", cmd_screen_ru))
+    app.add_handler(CommandHandler("screen_us", cmd_screen_us))
     app.add_handler(CommandHandler("clusters", cmd_clusters))
     app.add_handler(CommandHandler("mlscore", cmd_mlscore))
     app.add_handler(CommandHandler("portfolio", cmd_portfolio))
