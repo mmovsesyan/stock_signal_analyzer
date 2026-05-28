@@ -187,10 +187,28 @@ def tbank_volume_context_enabled() -> bool:
     return v not in ("0", "false", "no", "off")
 
 
+# LRU cache for instrument lookups: avoids repeated FindInstrument gRPC calls
+_INSTRUMENT_CACHE: dict[str, tuple[Any, float]] = {}
+_INSTRUMENT_CACHE_TTL_SEC = 3600.0
+
+
 def _find_instrument(client: Any, ticker: str) -> Any | None:
-    """Ищет инструмент по тикеру, возвращает акцию с доступными торгами (TQBR приоритет)."""
+    """Ищет инструмент по тикеру, возвращает акцию с доступными торгами (TQBR приоритет).
+
+    Результаты кэшируются на 1 час, чтобы избежать повторных gRPC-вызовов
+    при скрининге десятков тикеров.
+    """
+    cache_key = ticker.upper()
+    now = time.time()
+    cached = _INSTRUMENT_CACHE.get(cache_key)
+    if cached is not None:
+        result, ts = cached
+        if now - ts < _INSTRUMENT_CACHE_TTL_SEC:
+            return result
+
     found = client.instruments.find_instrument(query=ticker)
     if not found.instruments:
+        _INSTRUMENT_CACHE[cache_key] = (None, now)
         return None
     # Фильтруем: только акции (share), доступные для торговли, предпочтительно TQBR
     matches = [
@@ -200,11 +218,14 @@ def _find_instrument(client: Any, ticker: str) -> Any | None:
         and getattr(x, "api_trade_available_flag", False)
     ]
     if not matches:
+        _INSTRUMENT_CACHE[cache_key] = (None, now)
         return None
-    return next(
+    result = next(
         (m for m in matches if getattr(m, "class_code", "") == "TQBR"),
         matches[0]
     )
+    _INSTRUMENT_CACHE[cache_key] = (result, now)
+    return result
 
 
 @_retry_unavailable()

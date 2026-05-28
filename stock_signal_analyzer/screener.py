@@ -71,9 +71,9 @@ def run_screen(
     max_results: int = 20,
     fast_mode: bool = True,
     cache_ttl: int = 300,
-    max_workers: int = 8,
-    total_timeout: int = 120,
-    per_future_timeout: int = 25,
+    max_workers: int = 16,
+    total_timeout: int = 300,
+    per_future_timeout: int = 45,
 ) -> dict:
     """Проскринить вселенную тикеров и вернуть отранжированные сигналы.
 
