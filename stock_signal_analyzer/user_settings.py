@@ -35,12 +35,16 @@ _log = logging.getLogger(__name__)
 
 def _db_user_to_prefs(user: DbUser) -> UserPrefs:
     """Конвертировать ORM User в UserPrefs dataclass."""
+    detail = user.last_notify_detail or {}
+    # Синхронизируем last_notify_ts из detail для совместимости
+    last_notify_ts = {str(k): float(v["ts"]) for k, v in detail.items() if v.get("ts")}
     return UserPrefs(
         watchlist=user.watchlist_symbols(),
         notify_strong_outside=user.notify_strong_outside,
         strong_threshold=user.strong_threshold,
         notify_cooldown_sec=user.notify_cooldown_sec,
-        last_notify_ts={},  # Загружается отдельно через NotifyLog
+        last_notify_ts=last_notify_ts,
+        last_notify_detail={str(k): dict(v) for k, v in detail.items()},
         autocollect_tickers=list(user.autocollect_tickers or []),
         use_default_tickers=user.use_default_tickers,
         tier=user.tier or "free",
@@ -76,6 +80,7 @@ def _prefs_to_db_dict(prefs: UserPrefs) -> dict[str, Any]:
         "notify_outside_scope": prefs.notify_outside_scope,
         "last_bot_msg_id": prefs.last_bot_msg_id,
         "last_bot_msg_has_reply_kb": prefs.last_bot_msg_has_reply_kb,
+        "last_notify_detail": prefs.last_notify_detail,
     }
 
 

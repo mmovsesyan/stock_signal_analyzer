@@ -25,4 +25,7 @@ if ! python -c "import tinkoff.invest" 2>/dev/null; then
   fi
 fi
 
+# Run DB migrations
+python /app/scripts/migrate_add_last_notify.py || true
+
 exec "$@"

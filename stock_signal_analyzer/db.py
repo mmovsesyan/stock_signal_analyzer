@@ -98,6 +98,7 @@ class User(Base):
     notify_outside_scope = Column(String(10), default="all")
     last_bot_msg_id = Column(Integer, default=0)
     last_bot_msg_has_reply_kb = Column(Boolean, default=False)
+    last_notify_detail = Column(JSON, default=dict)
 
     # Relations
     watchlist = relationship("Watchlist", back_populates="user", cascade="all, delete-orphan")
