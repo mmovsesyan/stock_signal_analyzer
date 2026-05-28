@@ -688,10 +688,12 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
     if has_intra and intra is not None:
         aligned_components.append(intra.score)
     active_aligned = [c for c in aligned_components if abs(c) > 0.05]
+    # Предварительная confidence из core-компонент (нужна для boost ДО финального расчёта)
+    _core_conf = _component_confidence(active_aligned) if len(active_aligned) >= 2 else 0.0
     if len(active_aligned) >= 3:
         signs = [np.sign(c) for c in active_aligned]
         if abs(sum(signs)) == len(signs):  # все одного знака
-            alignment_boost = 0.12 + 0.08 * confidence
+            alignment_boost = 0.12 + 0.08 * _core_conf
             raw_total = float(np.clip(raw_total + np.sign(raw_total) * alignment_boost, -1.0, 1.0))
 
     raw_total = float(
