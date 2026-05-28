@@ -61,24 +61,24 @@ class TestBacktestReport:
         assert result.timeouts == 1
         # Win rate among decisive trades (2 wins / 4 decisive)
         assert result.win_rate == 0.5
-        # net PnL = gross - 0.6% commission
-        # wins: 5.0-0.6=4.4, 8.0-0.6=7.4  avg_win = 5.9
-        assert result.avg_win_pct == pytest.approx(5.9, abs=0.01)
-        # losses: -4.0-0.6=-4.6, -6.0-0.6=-6.6  avg_loss = -5.6
-        assert result.avg_loss_pct == pytest.approx(-5.6, abs=0.01)
-        # all decisive net: 4.4, 7.4, -4.6, -6.6  avg = 0.15
-        assert result.avg_pnl_pct == pytest.approx(0.15, abs=0.01)
-        # gross profit = 4.4 + 7.4 = 11.8; gross loss = 4.6 + 6.6 = 11.2; PF = 11.8 / 11.2
-        assert result.profit_factor == pytest.approx(1.05, abs=0.01)
-        assert result.commission_pct == 0.6
+        # PnL in outcomes.jsonl is already net (outcome_tracker subtracts commission)
+        # wins: 5.0, 8.0  avg_win = 6.5
+        assert result.avg_win_pct == pytest.approx(6.5, abs=0.01)
+        # losses: -4.0, -6.0  avg_loss = -5.0
+        assert result.avg_loss_pct == pytest.approx(-5.0, abs=0.01)
+        # all decisive net: 5.0, 8.0, -4.0, -6.0  avg = 0.75
+        assert result.avg_pnl_pct == pytest.approx(0.75, abs=0.01)
+        # gross profit = 5.0 + 8.0 = 13.0; gross loss = 4.0 + 6.0 = 10.0; PF = 13.0 / 10.0
+        assert result.profit_factor == pytest.approx(1.30, abs=0.01)
+        assert result.commission_pct == 0.0
 
     def test_equity_curve_and_drawdown(self, sample_outcomes_file):
         report = BacktestReport(outcomes_path=sample_outcomes_file)
         result = report.generate()
         assert len(result.equity_curve) == 5
         assert result.equity_curve[0].trade_num == 1
-        # Starting equity 100, first trade net +4.4%
-        assert result.equity_curve[0].equity == pytest.approx(104.4, abs=0.01)
+        # Starting equity 100, first trade net +5.0% (commission already in pnl)
+        assert result.equity_curve[0].equity == pytest.approx(105.0, abs=0.01)
         # Max drawdown should be positive after a losing streak
         assert result.max_drawdown_pct >= 0.0
 
@@ -133,4 +133,5 @@ class TestBacktestReport:
         report = BacktestReport(outcomes_path=sample_outcomes_file)
         result = report.generate()
         # Sharpe-like = mean/std * sqrt(n)
-        assert result.sharpe_like == pytest.approx(0.03, abs=0.05)  # near zero with mixed returns
+        # Returns: 5.0, 8.0, -4.0, -6.0 — mean=0.75, std≈6.80, sharpe≈0.22
+        assert result.sharpe_like == pytest.approx(0.22, abs=0.05)
