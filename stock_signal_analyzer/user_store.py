@@ -42,6 +42,8 @@ class UserPrefs:
     notify_cooldown_sec: int = 86_400
     """Последнее уведомление: тикер -> unix time."""
     last_notify_ts: dict[str, float] = field(default_factory=dict)
+    """Детали последнего уведомления: тикер -> {ts, tier, direction}."""
+    last_notify_detail: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Тикеры для автосбора (если пусто - используются дефолтные)."""
     autocollect_tickers: list[str] = field(default_factory=list)
     """Использовать дефолтные тикеры в автосборе."""
@@ -128,6 +130,7 @@ def _prefs_from_dict(d: dict[str, Any]) -> UserPrefs:
         strong_threshold=float(d.get("strong_threshold", 0.35)),
         notify_cooldown_sec=int(d.get("notify_cooldown_sec", 86_400)),
         last_notify_ts={str(k): float(v) for k, v in (d.get("last_notify_ts") or {}).items()},
+        last_notify_detail={str(k): dict(v) for k, v in (d.get("last_notify_detail") or {}).items()},
         autocollect_tickers=list(d.get("autocollect_tickers") or []),
         use_default_tickers=bool(d.get("use_default_tickers", True)),
         tier=str(d.get("tier", "free")),
@@ -183,19 +186,61 @@ def all_user_ids(path: Path | None = None) -> list[int]:
     return out
 
 
-def can_notify_again(prefs: UserPrefs, symbol: str) -> bool:
+def can_notify_again(
+    prefs: UserPrefs,
+    symbol: str,
+    tier: str | None = None,
+    direction: str | None = None,
+) -> bool:
     sym = normalize_symbol(symbol)
-    ts = prefs.last_notify_ts.get(sym)
-    # cooldown=0 означает force-refresh — всегда разрешить
-    if prefs.notify_cooldown_sec == 0:
+
+    # Fallback: старый режим без tier/direction (для обратной совместимости)
+    if tier is None or direction is None:
+        ts = prefs.last_notify_ts.get(sym)
+        if prefs.notify_cooldown_sec == 0:
+            return True
+        if ts is None:
+            return True
+        last_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
+        today = datetime.now(timezone.utc).date()
+        return last_date < today
+
+    # Новая логика: проверяем tier/direction перед повтором
+    detail = prefs.last_notify_detail.get(sym)
+    if detail is None:
         return True
+
+    tier_order = {"A": 3, "B": 2, "C": 1}
+    current_rank = tier_order.get(tier, 0)
+    prev_rank = tier_order.get(detail.get("tier", ""), 0)
+    if current_rank > prev_rank:
+        return True  # tier улучшился — разрешаем повтор
+
+    prev_direction = detail.get("direction", "")
+    if direction != prev_direction:
+        return True  # направление изменилось — разрешаем повтор
+
+    # Проверяем прошёл ли календарный день
+    ts = detail.get("ts")
     if ts is None:
         return True
-    # Календарный день: одно уведомление на тикер в сутки (UTC)
     last_date = datetime.fromtimestamp(ts, tz=timezone.utc).date()
     today = datetime.now(timezone.utc).date()
     return last_date < today
 
 
-def mark_notified(prefs: UserPrefs, symbol: str) -> None:
-    prefs.last_notify_ts[normalize_symbol(symbol)] = time.time()
+def mark_notified(
+    prefs: UserPrefs,
+    symbol: str,
+    tier: str | None = None,
+    direction: str | None = None,
+) -> None:
+    sym = normalize_symbol(symbol)
+    now = time.time()
+    prefs.last_notify_ts[sym] = now
+    if tier is not None:
+        prefs.last_notify_detail[sym] = {
+            "ts": now,
+            "tier": tier,
+            "direction": direction or "",
+        }

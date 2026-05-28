@@ -3526,8 +3526,6 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # ── 1. Уведомления по WATCHLIST (сильные сигналы по вашим тикерам) ──
         for sym in list(prefs.watchlist):
-            if not can_notify_again(prefs, sym):
-                continue
             try:
                 rep = await loop.run_in_executor(
                     None,
@@ -3536,6 +3534,10 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 continue
             tier = getattr(rep, "signal_tier", "C")
+            direction = rep.trade_plan.direction if rep.trade_plan else "neutral"
+            # Фильтр дубликатов: пропускаем, если тот же tier+направление уже уведомляли сегодня
+            if not can_notify_again(prefs, sym, tier=tier, direction=direction):
+                continue
             # Только A/B tier: C — observation, не отправляем в уведомления
             if tier == "C":
                 continue
@@ -3554,7 +3556,7 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             try:
                 for chunk in split_telegram_html(text):
                     await bot.send_message(chat_id=uid, text=chunk, parse_mode=ParseMode.HTML)
-                mark_notified(prefs, sym)
+                mark_notified(prefs, sym, tier=tier, direction=direction)
                 changed = True
                 try:
                     from stock_signal_analyzer.max_notify import send_signal_to_max, max_available
@@ -3591,8 +3593,6 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 return None
 
         for sym, cs in strong:
-            if not can_notify_again(prefs, sym):
-                continue
             # Фильтр по рынку (US / RU / ALL)
             scope = prefs.notify_outside_scope
             if scope == "us" and sym.upper().endswith(".ME"):
@@ -3603,6 +3603,10 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             if rep is None:
                 continue
             tier = getattr(rep, "signal_tier", "?")
+            direction = rep.trade_plan.direction if rep.trade_plan else "neutral"
+            # Фильтр дубликатов: пропускаем, если тот же tier+направление уже уведомляли сегодня
+            if not can_notify_again(prefs, sym, tier=tier, direction=direction):
+                continue
             if min_tier == "A" and tier != "A":
                 continue
             # Только A/B tier: C — observation, не отправляем
@@ -3619,7 +3623,7 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             try:
                 for chunk in split_telegram_html(text):
                     await bot.send_message(chat_id=uid, text=chunk, parse_mode=ParseMode.HTML)
-                mark_notified(prefs, sym)
+                mark_notified(prefs, sym, tier=tier, direction=direction)
                 changed = True
                 try:
                     from stock_signal_analyzer.max_notify import send_signal_to_max, max_available
@@ -3683,17 +3687,18 @@ async def daily_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         lines: list[str] = ["📈 <b>Ежедневный дайджест сигналов</b>\n"]
 
         for sym, rep in digest_signals:
-            if not can_notify_again(prefs, sym):
-                continue
             tier = getattr(rep, "signal_tier", "?")
             direction = rep.trade_plan.direction if rep.trade_plan else "neutral"
+            # Фильтр дубликатов для дайджеста
+            if not can_notify_again(prefs, sym, tier=tier, direction=direction):
+                continue
             arrow = "🟢" if direction == "long" else ("🔴" if direction == "short" else "⚪")
             verdict = rep.verdict[:120] + "..." if len(rep.verdict) > 120 else rep.verdict
             lines.append(
                 f"{arrow} <b>{_esc(sym)}</b> — класс <b>{tier}</b> | score {rep.score:+.3f} | {direction.upper()}\n"
                 f"   {verdict}\n"
             )
-            mark_notified(prefs, sym)
+            mark_notified(prefs, sym, tier=tier, direction=direction)
 
         if len(lines) == 1:
             continue  # нет новых сигналов для этого пользователя
