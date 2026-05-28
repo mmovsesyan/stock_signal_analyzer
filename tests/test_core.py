@@ -178,9 +178,9 @@ def test_analyze_technical_bearish_trend_negative_score():
 # ===========================================================================
 
 def test_component_confidence_identical_components():
-    """Все компоненты одинаковые → высокая confidence (согласованность + диверсификация)."""
+    """Все компоненты одинаковые → максимальная confidence (согласованность + сила + alignment bonus)."""
     conf = _component_confidence([0.5, 0.5, 0.5, 0.5])
-    assert conf == pytest.approx(0.825)
+    assert conf == pytest.approx(1.0)
 
 
 def test_component_confidence_max_spread_is_low():
@@ -337,7 +337,7 @@ def test_classify_signal_tier_weak_score_is_C():
 
 def test_classify_signal_tier_moderate_conditions_is_B():
     """Средние условия → 'B'."""
-    tier, _ = classify_signal_tier(**_good_tier_kwargs(total=0.4, confidence=0.5))
+    tier, _ = classify_signal_tier(**_good_tier_kwargs(total=0.20, confidence=0.5))
     assert tier == "B"
 
 
@@ -647,11 +647,11 @@ def test_momentum_returns_acceleration():
 
 
 def test_momentum_overextension_dampens():
-    """Перерастяжение (|ret_5d| > 2×ATR%) при низком ADX → score ≈ 0."""
+    """Перерастяжение (|ret_5d| > 2.5×ATR%) при низком ADX → score демпфируется (0.5×)."""
     prices = [100.0] * 20 + [100.0, 100.0, 100.0, 100.0, 100.0, 120.0]
     close = _make_close(prices)
     result = analyze_momentum(close, atr_pct=2.0, adx14=18.0)
-    assert abs(result.score) < 0.4
+    assert abs(result.score) < 0.6  # мягче чем раньше (<0.4), но всё ещё демпфирован
 
 
 def test_momentum_conflicting_timeframes_weakens():
@@ -824,10 +824,10 @@ def test_trade_plan_low_adx_no_plan():
 def test_trade_plan_low_score_no_plan():
     """|score| < _DIR_THRESHOLD → нет торгового плана."""
     tp = build_trade_plan(
-        score=0.22, ref_price=100.0, atr_pct=2.0,
+        score=0.10, ref_price=100.0, atr_pct=2.0,
         signal_tier='A', adx14=25.0
     )
-    assert tp.direction == 'none', "|score|=0.22 должен блокировать план (порог 0.23)"
+    assert tp.direction == 'none', "|score|=0.10 должен блокировать план (порог 0.12)"
 
 
 def test_trade_plan_zero_risk_no_plan():
@@ -888,24 +888,24 @@ def _make_mock_report(**kwargs):
 
 def test_signal_filter_adx_hard_block():
     """ADX < 20 при adx_hard_block=True → блокировка."""
-    sf = get_balanced_filter()
+    sf = SignalFilter(min_tier='B', min_adx=20.0, adx_hard_block=True)
     report = _make_mock_report(adx14=18.0)
     result = sf.filter(report)
     assert result.should_trade is False
     assert 'ADX' in result.reason or 'боковик' in result.reason.lower()
 
 
-def test_signal_filter_score_below_030_blocked():
-    """|score| < 0.30 → всегда блокировка."""
+def test_signal_filter_score_below_018_blocked():
+    """|score| < 0.18 → блокировка для balanced фильтра."""
     sf = get_balanced_filter()
-    report = _make_mock_report(score=0.25)
+    report = _make_mock_report(score=0.15)
     result = sf.filter(report)
     assert result.should_trade is False
 
 
 def test_signal_filter_tier_c_blocked():
-    """Tier C → блокировка для всех фильтров."""
-    for sf in [get_conservative_filter(), get_balanced_filter()]:
+    """Tier C → блокировка для conservative фильтра."""
+    for sf in [get_conservative_filter()]:
         report = _make_mock_report(signal_tier='C')
         result = sf.filter(report)
         assert result.should_trade is False
@@ -935,29 +935,29 @@ def test_signal_filter_volume_below_avg_reduces_quality():
 # risk_context.py — ADX threshold in tier B (FIXES 2026-05-13)
 # ===========================================================================
 
-def test_classify_tier_b_requires_adx_20():
-    """ADX < 20 без паттерна → не tier B (должен быть C)."""
+def test_classify_tier_b_requires_adx_16():
+    """ADX < 16 без паттерна → не tier B (должен быть C)."""
     tier, _ = classify_signal_tier(
-        total=0.45, confidence=0.6, macro_dampening=0.90,
-        adx14=19.0, news_score=0.2,
+        total=0.20, confidence=0.6, macro_dampening=0.90,
+        adx14=14.0, news_score=0.2,
         has_chart_pattern=False,
         weekly_aligned=True, earnings_window=False, index_headwind=False,
         market_regime="neutral", directional_regime=None,
     )
-    assert tier == 'C', f"ADX=19 без паттерна должен дать C, получили {tier}"
+    assert tier == 'C', f"ADX=14 без паттерна должен дать C, получили {tier}"
 
 
-def test_classify_tier_b_confidence_50():
-    """Tier B требует confidence >= 0.45 (в neutral режиме)."""
+def test_classify_tier_b_confidence_40():
+    """Tier B требует confidence >= 0.40 (в neutral режиме)."""
     tier, rationale = classify_signal_tier(
-        total=0.45, confidence=0.44, macro_dampening=0.90,
+        total=0.45, confidence=0.38, macro_dampening=0.90,
         adx14=22.0, news_score=0.2,
         has_chart_pattern=False,
         weekly_aligned=True, earnings_window=False, index_headwind=False,
         market_regime="neutral", directional_regime=None,
     )
-    # Confidence < 0.45 → не tier B в neutral режиме
-    assert tier == 'C', f"confidence=0.44 < 0.45 должен дать C, получили {tier}"
+    # Confidence < 0.40 → не tier B в neutral режиме
+    assert tier == 'C', f"confidence=0.38 < 0.40 должен дать C, получили {tier}"
 
 
 # ===========================================================================

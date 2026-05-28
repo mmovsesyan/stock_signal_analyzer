@@ -30,10 +30,10 @@ _log = logging.getLogger(__name__)
 
 # Пороги для валидации сигнала
 _MIN_TRADES = 15           # минимум сделок для статистики
-_MIN_WIN_RATE = 0.50       # минимальный win rate (50%)
-_MIN_PROFIT_FACTOR = 0.8   # минимальный profit factor
-_TARGET_WIN_RATE = 0.60    # целевой win rate (60% — для win rate >65%)
-_TARGET_PROFIT_FACTOR = 1.5  # целевой profit factor
+_MIN_WIN_RATE = 0.55       # минимальный win rate (55%)
+_MIN_PROFIT_FACTOR = 1.0   # минимальный profit factor (убыточные стратегии блокируем)
+_TARGET_WIN_RATE = 0.65    # целевой win rate (65% — проф. стандарт)
+_TARGET_PROFIT_FACTOR = 2.0  # целевой profit factor
 
 
 @dataclass
@@ -333,7 +333,7 @@ class BacktestValidator:
             confidence = min(1.0, confidence + 0.2)
             reasons.append(f"✅ Высокая историческая эффективность: WR={win_rate:.0%}, PF={pf:.2f}")
 
-        should_advice = confidence >= 0.5 and total_trades >= min_trades
+        should_advice = confidence >= 0.6 and total_trades >= min_trades
 
         reason_text = " | ".join(reasons) if reasons else "Историческая статистика положительна"
 

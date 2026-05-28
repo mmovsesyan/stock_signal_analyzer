@@ -41,16 +41,16 @@ class SignalFilter:
 
     def __init__(
         self,
-        min_tier: str = 'A',
-        min_confidence: float = 0.50,
-        min_adx: float = 20.0,
+        min_tier: str = 'B',
+        min_confidence: float = 0.40,
+        min_adx: float = 16.0,
         min_volume_score: float = 0.0,
-        min_macro_dampening: float = 0.85,
-        min_score: float = 0.30,
+        min_macro_dampening: float = 0.80,
+        min_score: float = 0.20,
         require_weekly_alignment: bool = True,
         avoid_earnings_window: bool = True,
-        require_volume_above_avg: bool = True,
-        adx_hard_block: bool = True,
+        require_volume_above_avg: bool = False,
+        adx_hard_block: bool = False,
     ):
         """
         Args:
@@ -206,11 +206,11 @@ def get_conservative_filter() -> SignalFilter:
     """
     return SignalFilter(
         min_tier='A',
-        min_confidence=0.55,  # Мин. порог для tier A
-        min_adx=25.0,
+        min_confidence=0.50,
+        min_adx=22.0,
         min_volume_score=0.0,
-        min_macro_dampening=0.90,
-        min_score=0.40,
+        min_macro_dampening=0.88,
+        min_score=0.30,
         require_weekly_alignment=True,
         avoid_earnings_window=True,
         require_volume_above_avg=True,
@@ -230,15 +230,15 @@ def get_balanced_filter() -> SignalFilter:
     """
     return SignalFilter(
         min_tier='B',
-        min_confidence=0.50,  # Мин. порог для tier B
-        min_adx=20.0,
+        min_confidence=0.40,
+        min_adx=16.0,
         min_volume_score=0.0,
-        min_macro_dampening=0.85,
-        min_score=0.30,
+        min_macro_dampening=0.80,
+        min_score=0.18,
         require_weekly_alignment=True,
         avoid_earnings_window=True,
-        require_volume_above_avg=True,
-        adx_hard_block=True,
+        require_volume_above_avg=False,
+        adx_hard_block=False,
     )
 
 
@@ -253,15 +253,15 @@ def get_aggressive_filter() -> SignalFilter:
     Пороги: confidence >= 0.45, ADX > 20 (мягкий штраф, не блок)
     """
     return SignalFilter(
-        min_tier='B',
-        min_confidence=0.45,
-        min_adx=20.0,
+        min_tier='C',
+        min_confidence=0.35,
+        min_adx=14.0,
         min_volume_score=0.0,
-        min_macro_dampening=0.80,
-        min_score=0.25,
+        min_macro_dampening=0.75,
+        min_score=0.12,
         require_weekly_alignment=False,
-        avoid_earnings_window=True,
-        require_volume_above_avg=True,
+        avoid_earnings_window=False,
+        require_volume_above_avg=False,
         adx_hard_block=False,
     )
 

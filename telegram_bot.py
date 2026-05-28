@@ -24,6 +24,7 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import time as _time
 
 import stenv
 
@@ -3407,11 +3408,11 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception:
                 continue
             tier = getattr(rep, "signal_tier", "C")
-            # Класс C — уведомлять только при |score| >= 0.35
-            if tier == "C" and abs(rep.score) < 0.35:
+            # Только A/B tier: C — observation, не отправляем в уведомления
+            if tier == "C":
                 continue
-            # Класс B — только если abs(score) >= 0.35 (порог A)
-            if tier == "B" and abs(rep.score) < 0.35:
+            # Класс B — уведомлять если |score| >= 0.20 (реальный порог B-tier)
+            if tier == "B" and abs(rep.score) < 0.20:
                 continue
             # Пользовательский фильтр
             from stock_signal_analyzer.signal_filter import should_trade_signal
@@ -3476,11 +3477,11 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             tier = getattr(rep, "signal_tier", "?")
             if min_tier == "A" and tier != "A":
                 continue
-            # Класс C — не уведомлять
+            # Только A/B tier: C — observation, не отправляем
             if tier == "C":
                 continue
-            # Класс B — только если abs(score) >= 0.35 (порог A)
-            if tier == "B" and abs(rep.score) < 0.35:
+            # Класс B — уведомлять если |score| >= 0.20 (реальный порог B-tier)
+            if tier == "B" and abs(rep.score) < 0.20:
                 continue
             # Пользовательский фильтр
             from stock_signal_analyzer.signal_filter import should_trade_signal
@@ -3504,6 +3505,79 @@ async def notify_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         if changed:
             save_prefs(uid, prefs)
+
+
+async def daily_digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ежедневный дайджест A-tier + сильных B-tier сигналов для Pro/Premium.
+
+    Запускается один раз в день (по умолчанию 09:00 UTC).
+    Отправляет подписчикам сводку лучших сигналов, которые ещё не отправлялись сегодня.
+    """
+    bot = context.application.bot
+    loop = asyncio.get_running_loop()
+    min_tier = (os.environ.get("NOTIFY_MIN_TIER") or "").strip().upper()
+
+    # Сканируем рынок: A-tier + B-tier с высоким score ("идущие к A")
+    try:
+        strong = await loop.run_in_executor(None, lambda: scan_strong_outside_watchlist([], threshold=0.20, max_symbols=60))
+    except Exception:
+        log.exception("daily_digest: scan failed")
+        return
+
+    # Фильтруем только A и сильные B (score >= 0.25 для B)
+    digest_signals: list[tuple[str, Any]] = []
+    for sym, rep in strong:
+        tier = getattr(rep, "signal_tier", "C")
+        if tier == "C":
+            continue
+        if tier == "B" and abs(rep.score) < 0.25:
+            continue
+        if min_tier == "A" and tier != "A":
+            continue
+        digest_signals.append((sym, rep))
+        if len(digest_signals) >= 5:
+            break
+
+    if not digest_signals:
+        log.info("daily_digest: нет A/сильных B сигналов")
+        return
+
+    # Отправляем каждому pro/premium пользователю
+    for uid in all_user_ids():
+        try:
+            from stock_signal_analyzer.subscriptions import check_feature_access
+            if not check_feature_access(uid, "daily_digest"):
+                continue
+        except Exception:
+            continue
+
+        prefs = load_prefs(uid)
+        lines: list[str] = ["📈 <b>Ежедневный дайджест сигналов</b>\n"]
+
+        for sym, rep in digest_signals:
+            if not can_notify_again(prefs, sym):
+                continue
+            tier = getattr(rep, "signal_tier", "?")
+            direction = rep.trade_plan.direction if rep.trade_plan else "neutral"
+            arrow = "🟢" if direction == "long" else ("🔴" if direction == "short" else "⚪")
+            verdict = rep.verdict[:120] + "..." if len(rep.verdict) > 120 else rep.verdict
+            lines.append(
+                f"{arrow} <b>{_esc(sym)}</b> — класс <b>{tier}</b> | score {rep.score:+.3f} | {direction.upper()}\n"
+                f"   {verdict}\n"
+            )
+            mark_notified(prefs, sym)
+
+        if len(lines) == 1:
+            continue  # нет новых сигналов для этого пользователя
+
+        lines.append("\n<i>Уведомления приходят один раз в сутки. Управляйте через /settings.</i>")
+        text = "\n".join(lines)
+        try:
+            for chunk in split_telegram_html(text):
+                await bot.send_message(chat_id=uid, text=chunk, parse_mode=ParseMode.HTML)
+            save_prefs(uid, prefs)
+        except Exception:
+            log.exception("daily_digest send failed uid=%s", uid)
 
 
 async def autocollect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3569,6 +3643,12 @@ async def post_init(application: Application) -> None:
     if learn_sec > 0:
         jq.run_repeating(learning_job, interval=learn_sec, first=300, name="learning")
         log.info("JobQueue: самообучение каждые %s с", learn_sec)
+
+    # Ежедневный дайджест A-tier + сильных B-tier (09:00 UTC)
+    digest_hour = int(os.environ.get("DAILY_DIGEST_HOUR", "9"))
+    digest_minute = int(os.environ.get("DAILY_DIGEST_MINUTE", "0"))
+    jq.run_daily(daily_digest_job, time=_time(hour=digest_hour, minute=digest_minute), name="daily_digest")
+    log.info("JobQueue: ежедневный дайджест в %02d:%02d UTC", digest_hour, digest_minute)
 
 
 async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

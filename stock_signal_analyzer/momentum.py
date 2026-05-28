@@ -65,17 +65,21 @@ def analyze_momentum(
 
     score = float(np.clip(0.35 * s5 + 0.25 * s10 + 0.25 * s20 + 0.15 * s_accel, -1.0, 1.0))
 
-    # Mean-reversion filter
+    # Mean-reversion filter (мягче в сильном тренде)
     overextended = False
     if atr_pct is not None and atr_pct > 0:
-        threshold = 2.0 * atr_pct / 100.0
-        if abs(r5) > threshold and adx14 < 25.0:
-            score *= 0.3
+        threshold = 2.5 * atr_pct / 100.0  # порог выше (2.5x вместо 2.0x)
+        if abs(r5) > threshold and adx14 < 20.0:
+            score *= 0.5  # штраф мягче (0.5 вместо 0.3)
+            overextended = True
+        elif abs(r5) > threshold and adx14 >= 20.0:
+            # В сильном тренде перерастяжение = продолжение, не отскок
+            score *= 0.85
             overextended = True
 
     # Trend alignment: если 5d и 20d в разных направлениях → ослабить
     if r5 * r20 < 0 and abs(r5) > 0.01 and abs(r20) > 0.01:
-        score *= 0.7
+        score *= 0.8  # мягче (0.8 вместо 0.7)
 
     parts = [f"5д: {r5*100:.2f}%", f"10д: {r10*100:.2f}%", f"20д: {r20*100:.2f}%"]
     if abs(accel) > 0.005:

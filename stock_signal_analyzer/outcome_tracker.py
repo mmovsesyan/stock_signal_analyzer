@@ -131,8 +131,17 @@ class OutcomeTracker:
                         trade_plan = signal.get('trade_plan')
                         if not trade_plan:
                             trade_plan = self._extract_trade_plan(signal)
-                        if not trade_plan or trade_plan.get('direction') in ('none', '', None):
+                        if not trade_plan:
                             continue
+                        # Allow tracking for 'none' if we can infer direction from score
+                        direction = trade_plan.get('direction')
+                        if direction in ('none', '', None):
+                            score = signal.get('score', 0)
+                            if abs(score) > 0.05:
+                                inferred = 'long' if score > 0 else 'short'
+                                trade_plan['direction'] = inferred
+                            else:
+                                continue
                         signal['trade_plan'] = trade_plan
                         signals.append(signal)
                         seen_ids.add(signal_id)
@@ -273,6 +282,10 @@ class OutcomeTracker:
         target1_price = trade_plan['target1_price']
         target2_price = trade_plan['target2_price']
         max_hold_days = trade_plan.get('max_hold_days', 15)
+        # Trailing fields may be stored as tp_trailing_step_pct or trailing_step_pct
+        trailing_step = trade_plan.get('tp_trailing_step_pct') or trade_plan.get('trailing_step_pct', 0.0)
+        if trailing_step is None:
+            trailing_step = 0.0
 
         # Проверить, не истёк ли срок
         now = datetime.now(timezone.utc)
@@ -313,6 +326,12 @@ class OutcomeTracker:
                     hold_days=days_since
                 )
 
+            # Trailing stop state
+            highest_price = entry_price
+            lowest_price = entry_price
+            trailing_stop = stop_price
+            target1_reached = False
+
             # Проверить каждый день — правильное определение порядка выходов
             for i, (date, row) in enumerate(hist.iterrows()):
                 if i == 0:
@@ -321,10 +340,43 @@ class OutcomeTracker:
                 high = float(row['High'])
                 low = float(row['Low'])
 
+                # Update trailing stop
+                if direction == 'long':
+                    if high > highest_price:
+                        highest_price = high
+                        # After target1 reached, trail by trailing_step
+                        if target1_reached and trailing_step > 0:
+                            new_trail = highest_price * (1 - trailing_step / 100)
+                            trailing_stop = max(trailing_stop, new_trail)
+                else:
+                    if low < lowest_price:
+                        lowest_price = low
+                        if target1_reached and trailing_step > 0:
+                            new_trail = lowest_price * (1 + trailing_step / 100)
+                            trailing_stop = min(trailing_stop, new_trail)
+
+                # Check target1 for trailing activation
+                if not target1_reached:
+                    if direction == 'long' and target1_price > 0 and high >= target1_price:
+                        target1_reached = True
+                        trailing_stop = max(trailing_stop, entry_price)  # breakeven
+                    elif direction == 'short' and target1_price > 0 and low <= target1_price:
+                        target1_reached = True
+                        trailing_stop = min(trailing_stop, entry_price)  # breakeven
+
                 if direction == 'long':
                     stop_hit = stop_price > 0 and low <= stop_price
+                    trailing_hit = target1_reached and trailing_stop > stop_price and low <= trailing_stop
                     tp2_hit = target2_price > 0 and high >= target2_price
                     tp1_hit = target1_price > 0 and high >= target1_price
+
+                    # Trailing stop (after target1 reached) — booked as win_t1
+                    if trailing_hit:
+                        pnl_pct = self._calculate_pnl(entry_price, trailing_stop, direction)
+                        return SignalOutcome(
+                            signal_id=signal_id, symbol=symbol, outcome='win_t1',
+                            exit_price=trailing_stop, exit_date=date, pnl_pct=pnl_pct, hold_days=i
+                        )
 
                     # Gap-aware: если открытие ниже стопа (gap down), реальный выход по open
                     open_price = float(row.get('Open', entry_price))
@@ -382,8 +434,17 @@ class OutcomeTracker:
 
                 elif direction == 'short':
                     stop_hit = stop_price > 0 and high >= stop_price
+                    trailing_hit = target1_reached and trailing_stop < stop_price and high >= trailing_stop
                     tp2_hit = target2_price > 0 and low <= target2_price
                     tp1_hit = target1_price > 0 and low <= target1_price
+
+                    # Trailing stop (after target1 reached) — booked as win_t1
+                    if trailing_hit:
+                        pnl_pct = self._calculate_pnl(entry_price, trailing_stop, direction)
+                        return SignalOutcome(
+                            signal_id=signal_id, symbol=symbol, outcome='win_t1',
+                            exit_price=trailing_stop, exit_date=date, pnl_pct=pnl_pct, hold_days=i
+                        )
 
                     # Gap-aware: если открытие выше стопа (gap up), реальный выход по open
                     open_price = float(row.get('Open', entry_price))

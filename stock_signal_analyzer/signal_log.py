@@ -51,7 +51,37 @@ def make_signal_id(symbol: str, ts_utc: str) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
-def recent_signal_exists(path: str | None, symbol: str, days: int = 7) -> bool:
+def get_recent_signal_tier(path: str | None, symbol: str, days: int = 1) -> str | None:
+    """Get the most recent signal tier for a symbol within N days."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)
+        latest_tier: str | None = None
+        latest_ts: datetime | None = None
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if rec.get("symbol", "").upper() == symbol.upper():
+                        ts_str = rec.get("ts_utc", "")
+                        if ts_str:
+                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            if ts >= cutoff:
+                                if latest_ts is None or ts > latest_ts:
+                                    latest_ts = ts
+                                    latest_tier = rec.get("signal_tier")
+                except (json.JSONDecodeError, ValueError):
+                    continue
+        return latest_tier
+    except OSError:
+        return None
+
+
+def recent_signal_exists(path: str | None, symbol: str, days: int = 1) -> bool:
     """Проверить, был ли сигнал на этот тикер за последние N дней."""
     if not path or not os.path.exists(path):
         return False
@@ -75,6 +105,88 @@ def recent_signal_exists(path: str | None, symbol: str, days: int = 7) -> bool:
     except OSError:
         pass
     return False
+
+
+def _default_data_dir() -> str:
+    """Base data directory from env or default."""
+    return os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer")
+
+
+def load_jsonl_records(
+    filename: str,
+    data_dir: str | None = None,
+    max_records: int = 5000,
+    filter_fn: Any = None,
+) -> list[dict[str, Any]]:
+    """Load records from a JSONL file inside the data directory.
+
+    Args:
+        filename: e.g. 'outcomes.jsonl' or 'signals.jsonl'
+        data_dir: override data directory; uses STOCK_SIGNAL_DATA by default
+        max_records: maximum number of records to return (from end of file)
+        filter_fn: optional callable(record) -> bool; only keep records where True
+    """
+    base = data_dir or _default_data_dir()
+    path = os.path.join(base, filename)
+    if not os.path.exists(path):
+        return []
+
+    records: list[dict[str, Any]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if filter_fn is None or filter_fn(rec):
+                        records.append(rec)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+    except OSError:
+        return []
+
+    if max_records > 0 and len(records) > max_records:
+        return records[-max_records:]
+    return records
+
+
+def load_outcomes_records(
+    max_records: int = 5000,
+    data_dir: str | None = None,
+    exclude_open: bool = True,
+) -> list[dict[str, Any]]:
+    """Load outcome records (closed signals with PnL).
+
+    Args:
+        max_records: max records to load
+        data_dir: override data directory
+        exclude_open: skip records with outcome='open'
+    """
+    def _filter(rec: dict[str, Any]) -> bool:
+        if exclude_open and rec.get("outcome") == "open":
+            return False
+        return True
+
+    return load_jsonl_records(
+        "outcomes.jsonl",
+        data_dir=data_dir,
+        max_records=max_records,
+        filter_fn=_filter,
+    )
+
+
+def load_signal_records(
+    max_records: int = 5000,
+    data_dir: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load signal log records."""
+    return load_jsonl_records(
+        os.path.basename(os.environ.get("SSA_SIGNAL_LOG", "signals.jsonl")),
+        data_dir=data_dir,
+        max_records=max_records,
+    )
 
 
 def build_record_from_report(

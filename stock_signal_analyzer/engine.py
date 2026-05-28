@@ -43,7 +43,7 @@ from .risk_manager import (
     load_drawdown_state,
 )
 from .sentiment import SentimentResult, score_headlines
-from .signal_log import append_signal_record, build_record_from_report, log_path_from_env, recent_signal_exists
+from .signal_log import append_signal_record, build_record_from_report, log_path_from_env, recent_signal_exists, get_recent_signal_tier
 from .technical import TechnicalScore, analyze_technical
 from .timing_context import (
     build_timing_context,
@@ -301,7 +301,15 @@ def _component_confidence(components: list[float]) -> float:
     dominance_ratio = max_strength / (avg_strength + 1e-9)
     diversity = float(np.clip(2.0 / dominance_ratio, 0.3, 1.0))
 
-    confidence = sign_agreement * 0.45 + avg_strength * 0.35 + diversity * 0.20
+    # Бонус за сильную согласованность: если все 4+ компоненты одного знака
+    # и средняя сила > 0.15 — confidence может превышать 0.80
+    alignment_bonus = 0.0
+    if sign_agreement >= 0.85 and avg_strength > 0.15:
+        alignment_bonus = 0.10
+    if sign_agreement >= 0.95 and avg_strength > 0.25:
+        alignment_bonus = 0.18
+
+    confidence = sign_agreement * 0.45 + avg_strength * 0.35 + diversity * 0.20 + alignment_bonus
     return float(np.clip(confidence, 0.15, 1.0))
 
 
@@ -646,6 +654,18 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
     macro_ctx = inputs.macro_ctx
     hist = inputs.hist
 
+    # ── Sentiment dampening ──
+    # Когда технический сигнал сильный (|tech|>0.5) а sentiment против —
+    # не даём одной новости перевернуть сильный тех.сигнал.
+    # Когда sentiment согласован — усиливаем его.
+    tech_strong = abs(tech.score) > 0.5
+    aligned = np.sign(tech.score) == np.sign(news_score) if abs(news_score) > 0.1 else True
+    if tech_strong and not aligned:
+        news_score *= 0.5
+    elif tech_strong and aligned:
+        news_score *= 1.15
+    news_score = float(np.clip(news_score, -1.0, 1.0))
+
     # ── Classic core components ──
     if has_intra:
         core = wt * tech.score + wm * mom.score + wn * news_score + wi * intra.score
@@ -657,28 +677,42 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
             core = (wt / s0) * tech.score + (wm / s0) * mom.score + (wn / s0) * news_score
     raw_total = float(np.clip(core, -1.0, 1.0))
 
+    # ── Alignment amplification ──
+    # Когда все основные компоненты согласованы по знаку — усиливаем сигнал
+    # (это ключевой момент для получения более решительных score)
+    aligned_components = [tech.score, mom.score, news_score, vol_res.score]
+    if has_intra and intra is not None:
+        aligned_components.append(intra.score)
+    active_aligned = [c for c in aligned_components if abs(c) > 0.05]
+    if len(active_aligned) >= 3:
+        signs = [np.sign(c) for c in active_aligned]
+        if abs(sum(signs)) == len(signs):  # все одного знака
+            alignment_boost = 0.12 + 0.08 * confidence
+            raw_total = float(np.clip(raw_total + np.sign(raw_total) * alignment_boost, -1.0, 1.0))
+
     raw_total = float(
         np.clip((1.0 - VOL_BLEND) * raw_total + VOL_BLEND * vol_res.score, -1.0, 1.0)
     )
 
     # ── Quant model blending ──
     # MTF momentum, z-score, trend strength вносят в итоговый score
+    # Усилены веса для более решительных сигналов
     quant_adj = 0.0
     quant_parts: list[float] = []
 
     if inputs.mtf_mom is not None and abs(inputs.mtf_mom.score) > 0.01:
-        quant_adj += 0.15 * inputs.mtf_mom.score
+        quant_adj += 0.22 * inputs.mtf_mom.score
         quant_parts.append(inputs.mtf_mom.score)
 
     if inputs.zscore is not None and abs(inputs.zscore.composite) > 0.01:
         ca_bias = inputs.cross_asset.strategy_bias if inputs.cross_asset else "neutral"
-        zs_weight = 0.12 if ca_bias == "mean-reversion" else 0.08
+        zs_weight = 0.18 if ca_bias == "mean-reversion" else 0.12
         quant_adj += zs_weight * inputs.zscore.composite
         quant_parts.append(inputs.zscore.composite)
 
     if inputs.trend_str is not None and abs(inputs.trend_str.score) > 0.01:
         ca_bias = inputs.cross_asset.strategy_bias if inputs.cross_asset else "neutral"
-        tr_weight = 0.14 if ca_bias == "momentum" else 0.10
+        tr_weight = 0.20 if ca_bias == "momentum" else 0.14
         quant_adj += tr_weight * inputs.trend_str.score
         quant_parts.append(inputs.trend_str.score)
 
@@ -796,6 +830,19 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
     timing_detail = " | ".join(context_notes) if context_notes else "—"
 
     has_pat = bool(tech.pattern_summary and tech.pattern_summary.strip())
+
+    # Load ML-learned optimal thresholds (if available) to refine tier classification
+    _opt_score_thr: float | None = None
+    _opt_conf_thr: float | None = None
+    try:
+        from .llm_learning import load_learning_state
+        _ls = load_learning_state()
+        if _ls and _ls.total_outcomes_analyzed >= 30:
+            _opt_score_thr = _ls.optimal_score_threshold
+            _opt_conf_thr = _ls.optimal_confidence_threshold
+    except Exception:
+        pass
+
     signal_tier, tier_rationale = classify_signal_tier(
         total=total,
         confidence=confidence,
@@ -808,6 +855,8 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
         index_headwind=idx_hw,
         market_regime=inputs.cross_asset.risk_regime if inputs.cross_asset else "neutral",
         directional_regime=inputs.market_regime,
+        optimal_score_threshold=_opt_score_thr,
+        optimal_confidence_threshold=_opt_conf_thr,
     )
 
     sent = inputs.sent
@@ -1000,6 +1049,7 @@ def build_report(
         signal_strength=blended_score,
         current_vol_annual=cur_vol,
         regime_risk_mult=ca_rm,
+        tier=bundle.signal_tier,
     )
 
     # Quant score: contribution of new models to final score
@@ -1098,10 +1148,17 @@ def build_report(
     # ── Фильтрация + дедупликация перед записью в лог ─────────────────────────────
     log_p = log_path_from_env()
     if log_p:
-        # 1. Дедупликация: не записывать, если уже есть сигнал на этот тикер за последние 7 дней
-        is_duplicate = recent_signal_exists(log_p, rep.symbol, days=7)
+        # 1. Дедупликация: 1 сигнал/день на тикер, НО разрешаем если tier улучшился
+        prev_tier = get_recent_signal_tier(log_p, rep.symbol, days=1)
+        tier_order = {"A": 3, "B": 2, "C": 1}
+        current_rank = tier_order.get(rep.signal_tier, 0)
+        prev_rank = tier_order.get(prev_tier, 0) if prev_tier else 0
+        is_duplicate = prev_tier is not None and current_rank <= prev_rank
         if is_duplicate:
-            _log.debug("Signal for %s skipped: duplicate within 7 days", rep.symbol)
+            _log.debug(
+                "Signal for %s skipped: duplicate within 1 day (tier %s not improved from %s)",
+                rep.symbol, rep.signal_tier, prev_tier,
+            )
         else:
             # Записываем все сигналы с торговым планом (для проверки исходов)
             # Фильтр используется только для логирования/отладки, не для блокировки

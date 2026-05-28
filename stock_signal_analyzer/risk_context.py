@@ -54,6 +54,8 @@ def classify_signal_tier(
     index_headwind: bool = False,
     market_regime: str = "neutral",
     directional_regime: MarketRegime | None = None,
+    optimal_score_threshold: float | None = None,
+    optimal_confidence_threshold: float | None = None,
 ) -> tuple[str, str]:
     """
     A — строгий набор условий: сильный score, высокая confidence, тренд, нет конфликтов.
@@ -63,34 +65,40 @@ def classify_signal_tier(
     reasons_a: list[str] = []
 
     # Dynamic thresholds based on directional regime
-    # Neutral defaults: calibrated for typical score distribution
-    score_thr = 0.40
-    conf_thr = 0.55
-    adx_thr = 20.0
+    # Calibrated for actual score distribution (post-boost engine)
+    score_thr = 0.28
+    conf_thr = 0.50
+    adx_thr = 18.0
 
     if directional_regime is not None:
         if directional_regime.regime == "bull":
             if total > 0:
-                score_thr = 0.35  # aligned long
-                conf_thr = 0.50
-                adx_thr = 16.0
+                score_thr = 0.24  # aligned long (lower = more signals in trend)
+                conf_thr = 0.45
+                adx_thr = 14.0
             else:
-                score_thr = 0.42  # counter-trend short
-                conf_thr = 0.55
-                adx_thr = 20.0
+                score_thr = 0.32  # counter-trend short
+                conf_thr = 0.50
+                adx_thr = 18.0
         elif directional_regime.regime == "bear":
             if total < 0:
-                score_thr = 0.35  # aligned short
-                conf_thr = 0.50
-                adx_thr = 16.0
+                score_thr = 0.24  # aligned short
+                conf_thr = 0.45
+                adx_thr = 14.0
             else:
-                score_thr = 0.42  # counter-trend long
-                conf_thr = 0.55
-                adx_thr = 20.0
+                score_thr = 0.32  # counter-trend long
+                conf_thr = 0.50
+                adx_thr = 18.0
         elif directional_regime.regime == "sideways":
-            score_thr = 0.38
-            conf_thr = 0.55
-            adx_thr = 20.0
+            score_thr = 0.30
+            conf_thr = 0.50
+            adx_thr = 18.0
+
+    # Apply ML-learned optimal thresholds as floor (never lower than base)
+    if optimal_score_threshold is not None and optimal_score_threshold > score_thr:
+        score_thr = optimal_score_threshold
+    if optimal_confidence_threshold is not None and optimal_confidence_threshold > conf_thr:
+        conf_thr = optimal_confidence_threshold
 
     if abs_t < score_thr:
         reasons_a.append(f"|итог|={abs_t:.2f}<{score_thr:.2f}")
@@ -117,23 +125,23 @@ def classify_signal_tier(
             "Высокое качество: сильный сигнал, согласованность компонентов, благоприятный контекст.",
         )
 
-    # Tier B: динамические пороги ADX (строже в боковике/нейтрале, мягче в тренде)
-    tier_b_score_thr = 0.26
-    tier_b_conf_thr = 0.45
-    tier_b_adx_thr = 20.0
+    # Tier B: динамические пороги (мягче в тренде, строже в боковике)
+    tier_b_score_thr = 0.16
+    tier_b_conf_thr = 0.40
+    tier_b_adx_thr = 16.0
     if directional_regime is not None and directional_regime.regime in ("bull", "bear"):
         aligned = (
             (directional_regime.regime == "bull" and total > 0)
             or (directional_regime.regime == "bear" and total < 0)
         )
         if aligned:
-            tier_b_score_thr = 0.24
-            tier_b_conf_thr = 0.40
-            tier_b_adx_thr = 18.0
+            tier_b_score_thr = 0.14
+            tier_b_conf_thr = 0.35
+            tier_b_adx_thr = 14.0
     if (
         abs_t >= tier_b_score_thr
         and confidence >= tier_b_conf_thr
-        and macro_dampening >= 0.85
+        and macro_dampening >= 0.80
         and adx14 >= tier_b_adx_thr
     ):
         return (

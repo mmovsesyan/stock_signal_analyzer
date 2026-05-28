@@ -77,16 +77,18 @@ def kelly_criterion(
     )
 
 
-def kelly_from_confidence(confidence: float, signal_strength: float) -> KellyResult:
+def kelly_from_confidence(confidence: float, signal_strength: float, tier: str = "C") -> KellyResult:
     """
     Proxy Kelly, когда нет бэктест-статистики.
-    Оценка win_rate из confidence + |signal|.
+    Оценка win_rate из confidence + |signal| + tier.
     """
-    base_wr = 0.45 + 0.15 * confidence
-    strength_bonus = min(0.08, abs(signal_strength) * 0.1)
-    est_wr = float(np.clip(base_wr + strength_bonus, 0.35, 0.68))
+    # Tier bonus: A-класс = более высокая оценка WR
+    tier_bonus = {"A": 0.08, "B": 0.04, "C": 0.0}.get(tier, 0.0)
+    base_wr = 0.50 + 0.20 * confidence + tier_bonus
+    strength_bonus = min(0.12, abs(signal_strength) * 0.15)
+    est_wr = float(np.clip(base_wr + strength_bonus, 0.40, 0.75))
 
-    est_rr = 1.5 + 0.5 * confidence
+    est_rr = 1.8 + 0.7 * confidence
     return kelly_criterion(est_wr, est_rr, 1.0)
 
 
@@ -382,9 +384,10 @@ def compute_position_size(
     current_vol_annual: float,
     drawdown_state: DrawdownState | None = None,
     regime_risk_mult: float = 1.0,
+    tier: str = "C",
 ) -> PositionSizeResult:
     """
-    Институциональный sizing: Kelly × vol_target × circuit_breaker × regime.
+    Институциональный sizing: Kelly × vol_target × circuit_breaker × regime × tier.
     Использует реальный Kelly из outcomes.jsonl если есть ≥30 сделок.
     """
     # Пробуем реальный Kelly из статистики сделок
@@ -394,7 +397,7 @@ def compute_position_size(
         kelly_note = "real"
     else:
         # Fallback на confidence-based proxy
-        kelly = kelly_from_confidence(confidence, signal_strength)
+        kelly = kelly_from_confidence(confidence, signal_strength, tier=tier)
         kelly_note = "proxy"
 
     kelly_pct = kelly.half_kelly * 100.0
@@ -404,7 +407,9 @@ def compute_position_size(
     dd_state = evaluate_drawdown(drawdown_state)
     dd_mult = dd_state.risk_multiplier
 
-    base = 25.0 + 75.0 * confidence
+    # Tier-based base sizing: A=агрессивнее, C=консервативнее
+    tier_mult = {"A": 1.0, "B": 0.85, "C": 0.6}.get(tier, 0.6)
+    base = (25.0 + 75.0 * confidence) * tier_mult
     combined = min(base, kelly_pct, vol_pct) * dd_mult * regime_risk_mult
     final = float(np.clip(combined, 5.0, 100.0))
 

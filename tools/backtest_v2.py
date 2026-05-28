@@ -270,7 +270,7 @@ def _simulate_on_candles(
             tier_idx = tier_order.get(tier, 2)
             if tier_idx > min_tier_idx:
                 continue
-            if abs(score) < 0.23:
+            if abs(score) < 0.12:
                 continue
 
             # Генерируем торговый план

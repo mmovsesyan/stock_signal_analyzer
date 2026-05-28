@@ -189,29 +189,47 @@ def analyze_technical(hist: pd.DataFrame) -> TechnicalScore:
     macd_bull = m > s
 
     trend = 0.0
+    trend_strength = 0.0
     if last > sma20 > sma50:
         trend = 1.0
+        trend_strength = 1.0
     elif last < sma20 < sma50:
         trend = -1.0
+        trend_strength = 1.0
     elif last > sma50:
         trend = 0.4
+        trend_strength = 0.4
     elif last < sma50:
         trend = -0.4
+        trend_strength = 0.4
 
+    # Golden/Death cross boost (SMA20 пересекает SMA50)
+    cross_boost = 0.0
+    if len(close) >= 55:
+        sma20_prev = float(close.iloc[-2:].rolling(20).mean().iloc[0])
+        sma50_prev = float(close.iloc[-2:].rolling(50).mean().iloc[0])
+        if sma20_prev <= sma50_prev and sma20 > sma50:
+            cross_boost = 0.25  # Golden cross
+        elif sma20_prev >= sma50_prev and sma20 < sma50:
+            cross_boost = -0.25  # Death cross
+
+    # RSI: усиленная компонента — в тренде RSI "залипает", это не минус
     if rsi < 30:
-        if trend <= -0.8:
-            rsi_component = -0.15
+        if trend_strength >= 0.8:
+            # Перепродан в сильном бычьем тренде = отскок вверх
+            rsi_component = 0.6
         else:
             rsi_component = (30 - rsi) / 30 * 0.9
     elif rsi > 70:
-        if trend >= 0.8:
-            rsi_component = 0.15
+        if trend_strength <= -0.8:
+            # Перекуплен в сильном медвежьем тренде = отскок вниз
+            rsi_component = -0.6
         else:
             rsi_component = -(rsi - 70) / 30 * 0.9
     else:
         rsi_component = (rsi - 50) / 40 * 0.3
 
-    macd_c = 0.6 if macd_bull else -0.6
+    macd_c = 0.7 if macd_bull else -0.7
 
     # MACD histogram divergence
     macd_div_adj, macd_div_note = _macd_histogram_divergence(close)
@@ -220,11 +238,14 @@ def analyze_technical(hist: pd.DataFrame) -> TechnicalScore:
     bb_sq = _bollinger_squeeze(close)
     bb_boost = 0.0
     if bb_sq and adx_val < 20.0:
-        # Squeeze в боковике: вероятен пробой, усиливаем направленный сигнал
-        bb_boost = 0.08 * np.sign(trend) if abs(trend) > 0.3 else 0.0
+        bb_boost = 0.12 * np.sign(trend) if abs(trend) > 0.3 else 0.0
+
+    # Trend amplification: в сильном тренде (ADX > 25) увеличиваем вес тренда
+    trend_weight = 0.35 if adx_val > 25.0 else 0.30
+    rsi_weight = 0.25 if adx_val > 25.0 else 0.30
 
     score = float(np.clip(
-        0.30 * rsi_component + 0.30 * trend + 0.25 * macd_c + 0.10 * macd_div_adj + 0.05 * bb_boost,
+        rsi_weight * rsi_component + trend_weight * trend + 0.25 * macd_c + 0.10 * macd_div_adj + 0.05 * bb_boost + cross_boost,
         -1.0, 1.0,
     ))
 

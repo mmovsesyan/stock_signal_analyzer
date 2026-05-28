@@ -199,9 +199,12 @@ def analyze_volume_pressure(
 
     if spike:
         if base > 0.05:
-            base = min(base * 1.15, 1.0)
+            base = min(base * 1.25, 1.0)
         elif base < -0.05:
-            base = max(base * 1.15, -1.0)
+            base = max(base * 1.25, -1.0)
+        # Volume spike в направлении сигнала = сильное подтверждение
+        if abs(base) > 0.15:
+            base = float(np.clip(base * 1.15, -1.0, 1.0))
 
     parts = [
         f"CMF(20)≈{cmf:+.3f} (давление денег)",
