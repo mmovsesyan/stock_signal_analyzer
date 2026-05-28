@@ -326,6 +326,21 @@ class OutcomeTracker:
                     hold_days=days_since
                 )
 
+            # Ensure forward-looking, skip entry day and earlier
+            hist = hist.sort_index()
+            entry_date_date = entry_date.date()
+            hist = hist[hist.index.date > entry_date_date]
+            if hist.empty:
+                return SignalOutcome(
+                    signal_id=signal_id,
+                    symbol=symbol,
+                    outcome='open',
+                    exit_price=None,
+                    exit_date=None,
+                    pnl_pct=None,
+                    hold_days=days_since
+                )
+
             # Trailing stop state
             highest_price = entry_price
             lowest_price = entry_price
@@ -333,9 +348,7 @@ class OutcomeTracker:
             target1_reached = False
 
             # Проверить каждый день — правильное определение порядка выходов
-            for i, (date, row) in enumerate(hist.iterrows()):
-                if i == 0:
-                    continue  # Пропустить день входа
+            for i, (date, row) in enumerate(hist.iterrows(), start=1):
 
                 high = float(row['High'])
                 low = float(row['Low'])

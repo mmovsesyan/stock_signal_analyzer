@@ -68,7 +68,7 @@ def _tk_history(symbol: str, start: datetime, end: datetime) -> pd.DataFrame | N
         if hasattr(df.index, 'tz') and df.index.tz is None:
             df.index = df.index.tz_localize(timezone.utc)
         mask = (df.index >= start) & (df.index <= end)
-        return df.loc[mask] if mask.any() else df
+        return df.loc[mask] if mask.any() else None
     except Exception as e:
         _log.debug("T-Bank history failed for %s: %s", symbol, e)
         return None
