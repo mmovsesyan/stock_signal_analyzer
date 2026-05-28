@@ -356,7 +356,11 @@ def _online_hint(symbol: str, has_intra: bool, finnhub_configured: bool) -> str:
     return "Онлайн: Finnhub не вернул котировку (ключ, лимит или тикер)."
 
 
-def _verdict_from_score(x: float, confidence: float) -> str:
+def _verdict_from_score(x: float, confidence: float, tier: str = "C") -> str:
+    if tier == "A":
+        return "СИГНАЛ: ожидается давление вверх (сильная уверенность)" if x >= 0 else "СИГНАЛ: ожидается давление вниз (сильная уверенность)"
+    if tier == "B":
+        return "СИГНАЛ: ожидается давление вверх (умеренная уверенность)" if x >= 0 else "СИГНАЛ: ожидается давление вниз (умеренная уверенность)"
     thr = _VERDICT_BASE_THR + _VERDICT_CONF_SCALE * (1.0 - float(np.clip(confidence, 0.0, 1.0)))
     if x >= thr:
         return "СИГНАЛ: ожидается давление вверх (ограниченная уверенность)"
@@ -1066,7 +1070,7 @@ def build_report(
         symbol=inputs.snap.symbol,
         company=inputs.snap.company_name,
         instrument_label=inputs.profile.label,
-        verdict=_verdict_from_score(blended_score, bundle.confidence),
+        verdict=_verdict_from_score(blended_score, bundle.confidence, bundle.signal_tier),
         score=blended_score,
         score_before_macro=bundle.score_pre_macro,
         technical_score=inputs.tech.score,
