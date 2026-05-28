@@ -348,8 +348,8 @@ def _online_hint(symbol: str, has_intra: bool, finnhub_configured: bool) -> str:
     sym = symbol.strip().upper()
     if sym.endswith(".ME"):
         return (
-            "Онлайн: нет данных MOEX ISS (сеть/тикер/сессия). "
-            "Опционально: pip install -r requirements-tbank.txt (или tinkoff-investments) и TINKOFF_INVEST_TOKEN — см. docs/TINKOFF.md."
+            "Онлайн: пропущено в быстром режиме (fast_mode). "
+            "Для полного анализа с MOEX ISS используйте /signal без флага fast."
         )
     if not finnhub_configured:
         return "Онлайн: задайте FINNHUB_API_KEY — иначе для US нет потока котировок в этом блоке."
