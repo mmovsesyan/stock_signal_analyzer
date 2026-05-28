@@ -80,8 +80,9 @@ def _load_signal_history(max_records: int = 500) -> list[dict[str, Any]]:
                         continue
                     try:
                         r = json.loads(line)
-                        # Пропускаем open (ещё нет результата)
-                        if r.get("outcome") == "open":
+                        outcome = r.get("outcome", "")
+                        # Пропускаем open и timeout — обучение только по TP/SL
+                        if outcome in ("open", "timeout"):
                             continue
                         records.append(r)
                     except json.JSONDecodeError:

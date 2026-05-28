@@ -115,7 +115,7 @@ def _load_outcomes_from_db() -> list[OutcomeRecord]:
             rows = (
                 session.query(DbOutcome, DbSignal)
                 .join(DbSignal, DbOutcome.signal_id == DbSignal.id)
-                .filter(DbOutcome.outcome != 'open')
+                .filter(DbOutcome.outcome.notin_(['open', 'timeout']))
                 .limit(5000)
                 .all()
             )
@@ -167,7 +167,7 @@ def _load_outcomes() -> list[OutcomeRecord]:
                     continue
                 try:
                     r = json.loads(line)
-                    if r.get("outcome") in ("open", None):
+                    if r.get("outcome") in ("open", "timeout", None):
                         continue
                     pnl = r.get("outcome_pnl") or r.get("pnl_pct")
                     if pnl is None:
