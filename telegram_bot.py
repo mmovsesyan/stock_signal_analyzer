@@ -3205,13 +3205,141 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         lines = ["🔔 <b>Активные алерты</b>"]
         if rows:
             for r in rows:
-                lines.append(
-                    f"  {r.alert_type} {r.condition} {r.threshold or r.target_tier or r.target_direction}"
-                )
+                val = r.threshold if r.threshold is not None else (r.target_tier or r.target_direction or "—")
+                lines.append(f"  ID <b>{r.id}</b>: {r.alert_type} {r.condition} {val}")
         else:
             lines.append("Нет активных алертов.")
-        lines.append("\nИспользуйте /alerts_add для добавления (в разработке).")
+        lines.append("\nДобавить: <code>/alerts_add score &gt; 0.30</code>")
+        lines.append("Удалить: <code>/alerts_remove &lt;id&gt;</code>")
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_alerts_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/alerts_add — добавить алерт (Premium)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not _is_admin(uid) and not check_feature_access(uid, "alerts"):
+        await update.message.reply_text("🔔 Алерты доступны только на Premium.")
+        return
+
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Использование:\n"
+            "<code>/alerts_add score &gt; 0.30</code>\n"
+            "<code>/alerts_add score &lt; -0.20</code>\n"
+            "<code>/alerts_add tier A</code>\n"
+            "<code>/alerts_add direction long</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    alert_type = args[0].lower()
+    condition = None
+    threshold = None
+    target_tier = None
+    target_direction = None
+
+    if alert_type == "score":
+        if len(args) < 3:
+            await update.message.reply_text("Укажите условие и значение: <code>/alerts_add score &gt; 0.30</code>", parse_mode=ParseMode.HTML)
+            return
+        raw_op = args[1]
+        raw_val = args[2]
+        op_map = {">": "gt", ">=": "gte", "<": "lt", "<=": "lte", "=": "eq", "==": "eq"}
+        condition = op_map.get(raw_op)
+        if condition is None:
+            await update.message.reply_text(f"Неизвестное условие: {raw_op}. Используйте &gt;, &lt;, =", parse_mode=ParseMode.HTML)
+            return
+        try:
+            threshold = float(raw_val)
+        except ValueError:
+            await update.message.reply_text(f"Некорректное число: {raw_val}")
+            return
+        alert_type = "score_threshold"
+    elif alert_type == "tier":
+        if len(args) < 2:
+            await update.message.reply_text("Укажите тир: <code>/alerts_add tier A</code>", parse_mode=ParseMode.HTML)
+            return
+        target_tier = args[1].upper()
+        condition = "eq"
+    elif alert_type == "direction":
+        if len(args) < 2:
+            await update.message.reply_text("Укажите направление: <code>/alerts_add direction long</code>", parse_mode=ParseMode.HTML)
+            return
+        target_direction = args[1].lower()
+        condition = "eq"
+    else:
+        await update.message.reply_text(f"Неизвестный тип алерта: {alert_type}. Используйте score, tier или direction.")
+        return
+
+    loop = asyncio.get_running_loop()
+    try:
+        from stock_signal_analyzer.db import get_session, UserAlert
+
+        def _create():
+            with get_session() as session:
+                alert = UserAlert(
+                    user_id=uid,
+                    alert_type=alert_type,
+                    condition=condition,
+                    threshold=threshold,
+                    target_tier=target_tier,
+                    target_direction=target_direction,
+                    is_active=True,
+                    cooldown_sec=3600,
+                )
+                session.add(alert)
+                session.commit()
+                return alert.id
+
+        alert_id = await loop.run_in_executor(None, _create)
+        await update.message.reply_text(f"✅ Алерт добавлен (ID: <b>{alert_id}</b>).", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
+
+
+async def cmd_alerts_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/alerts_remove — удалить алерт по ID (Premium)."""
+    if not update.message:
+        return
+    uid = _uid(update)
+    if not _is_admin(uid) and not check_feature_access(uid, "alerts"):
+        await update.message.reply_text("🔔 Алерты доступны только на Premium.")
+        return
+
+    args = context.args or []
+    if len(args) < 1:
+        await update.message.reply_text("Использование: <code>/alerts_remove &lt;id&gt;</code>", parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        alert_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("ID алерта должен быть числом.")
+        return
+
+    loop = asyncio.get_running_loop()
+    try:
+        from stock_signal_analyzer.db import get_session, UserAlert
+
+        def _delete():
+            with get_session() as session:
+                alert = session.query(UserAlert).filter_by(id=alert_id, user_id=uid).first()
+                if not alert:
+                    return False
+                session.delete(alert)
+                session.commit()
+                return True
+
+        ok = await loop.run_in_executor(None, _delete)
+        if ok:
+            await update.message.reply_text(f"✅ Алерт <b>{alert_id}</b> удалён.", parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text("Алерт не найден или не принадлежит вам.")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
 
@@ -3614,6 +3742,9 @@ async def post_init(application: Application) -> None:
         BotCommand("learning", "Отчёт обучения и LLM"),
         BotCommand("stats", "Статистика исходов"),
         BotCommand("backtest", "Бэктест и валидация сигналов"),
+        BotCommand("alerts", "Активные алерты"),
+        BotCommand("alerts_add", "Добавить алерт"),
+        BotCommand("alerts_remove", "Удалить алерт"),
         BotCommand("help", "Помощь"),
     ]
     try:
@@ -3726,6 +3857,8 @@ def main() -> int:
     app.add_handler(CommandHandler("mlscore", cmd_mlscore))
     app.add_handler(CommandHandler("portfolio", cmd_portfolio))
     app.add_handler(CommandHandler("alerts", cmd_alerts))
+    app.add_handler(CommandHandler("alerts_add", cmd_alerts_add))
+    app.add_handler(CommandHandler("alerts_remove", cmd_alerts_remove))
     # Settings callbacks
     app.add_handler(CallbackQueryHandler(_on_settings_callback, pattern=r"^set\|"))
     app.add_handler(
