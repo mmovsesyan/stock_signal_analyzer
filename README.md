@@ -453,6 +453,7 @@ curl -X POST http://localhost:8000/webhook/tradingview \
 - **B-tier threshold для уведомлений** (`telegram_bot.py`) — снижен с `|score| < 0.35` до `|score| < 0.20`, соответствует реальному порогу B-tier
 - **Self-learning thresholds** (`engine.py` + `risk_context.py`) — ML optimal thresholds подгружаются перед `classify_signal_tier()`. A-tier: 0.40→0.28, B-tier: 0.26→0.16. Пороги ML применяются как floor (не ниже базового)
 - **Alignment amplification** (`engine.py`) — при 3+ согласованных компонентах +0.12–0.20 к score. Sentiment dampening: сильный тех. сигнал противостоит противоположным новостям
+- **Directional regime adjustment** (`trade_plan.py`) — корректировка bull/bear теперь учитывает direction сигнала: aligned with trend = tighter stop / wider target; against-trend = conservative. Исправлено отклонение плана для MGNT.ME short-in-bear (R:R 1.41→1.83)
 - **Quant model weights** (`engine.py`) — MTF 0.22, z-score 0.12, trend 0.14
 - **Deduplication 1 день** (`signal_log.py`) — с промоушном tier (C→B→A). Централизованная загрузка JSONL
 - **fix_old_signals.py** (`scripts/`) — ретроактивно добавляет trade plans к старым C-сигналам. Интегрирован в `deploy.sh update`
