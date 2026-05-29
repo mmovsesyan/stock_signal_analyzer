@@ -190,7 +190,7 @@ class BacktestValidator:
             tier=tier,
             direction=direction,
             market=market,
-            total_trades=total,
+            total_trades=len(records),
             wins=n_wins,
             losses=n_losses,
             timeouts=len(timeouts),
