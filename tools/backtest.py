@@ -25,6 +25,38 @@ from typing import Any
 
 import yfinance as yf
 
+# Fallback для российских тикеров (yfinance не отдаёт .ME с 2022)
+try:
+    from stock_signal_analyzer.tbank_invest import fetch_daily_history
+except Exception:
+    fetch_daily_history = None  # type: ignore[assignment]
+
+
+def _fetch_history(symbol: str, start: str, end: str) -> "pd.DataFrame | None":
+    """Загрузить историю: yfinance для US, T-Bank для RU (.ME)."""
+    import pandas as pd
+
+    is_ru = symbol.upper().endswith(".ME")
+
+    if is_ru and fetch_daily_history is not None:
+        # T-Bank возвращает days, фильтруем по start/end вручную
+        days = (datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")).days + 30
+        df = fetch_daily_history(symbol, days=max(days, 60))
+        if df is not None and not df.empty:
+            df = df.loc[start:end]
+            if not df.empty:
+                return df
+        return None
+
+    # yfinance для US и остальных
+    try:
+        hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
+    except Exception:
+        return None
+    if hist is None or hist.empty:
+        return None
+    return hist
+
 
 @dataclass
 class TradeResult:
@@ -126,11 +158,7 @@ def _simulate_trade(
     start = (dt_signal + timedelta(days=1)).strftime("%Y-%m-%d")
     end = (dt_signal + timedelta(days=max_hold + 7)).strftime("%Y-%m-%d")
 
-    try:
-        hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
-    except Exception:
-        return None
-
+    hist = _fetch_history(symbol, start, end)
     if hist is None or hist.empty:
         return None
 
@@ -347,10 +375,7 @@ def _forward_metrics(signals: list[dict[str, Any]]) -> ForwardMetrics:
             continue
         start = (dt_signal + timedelta(days=1)).strftime("%Y-%m-%d")
         end = (dt_signal + timedelta(days=15)).strftime("%Y-%m-%d")
-        try:
-            hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
-        except Exception:
-            continue
+        hist = _fetch_history(symbol, start, end)
         if hist is None or hist.empty or len(hist) < 2:
             continue
         entry = float(hist.iloc[0].get("Open", 0))

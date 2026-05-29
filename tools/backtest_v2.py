@@ -93,8 +93,21 @@ class BacktestResult:
 
 
 def _fetch_history(symbol: str, days: int) -> pd.DataFrame | None:
-    """Загрузить историю для бэктеста с retry."""
+    """Загрузить историю для бэктеста с retry. US — yfinance, RU (.ME) — T-Bank."""
     import time
+
+    is_ru = symbol.upper().endswith(".ME")
+
+    # T-Bank fallback для российских тикеров
+    if is_ru:
+        try:
+            from stock_signal_analyzer.tbank_invest import fetch_daily_history
+            df = fetch_daily_history(symbol, days=days + 30)
+            if df is not None and not df.empty and len(df) >= 60:
+                return df
+        except Exception as e:
+            print(f"  Ошибка T-Bank {symbol}: {e}", file=sys.stderr)
+        return None
 
     def _fetch():
         end = datetime.now(timezone.utc)
