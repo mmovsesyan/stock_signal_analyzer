@@ -86,7 +86,7 @@ def _close_services():
         _tbank_services = None
 
 
-def _retry_unavailable(max_retries=2, backoff=0.5):
+def _retry_unavailable(max_retries=2, backoff=1.0):
     def decorator(func):
         def wrapper(*args, **kwargs):
             for attempt in range(max_retries + 1):
@@ -192,6 +192,7 @@ _INSTRUMENT_CACHE: dict[str, tuple[Any, float]] = {}
 _INSTRUMENT_CACHE_TTL_SEC = 3600.0
 
 
+@_retry_unavailable()
 def _find_instrument(client: Any, ticker: str) -> Any | None:
     """Ищет инструмент по тикеру, возвращает акцию с доступными торгами (TQBR приоритет).
 

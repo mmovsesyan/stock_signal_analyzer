@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# gRPC timeout для T-Bank API (предотвращает зависания при UNAVAILABLE)
+export GRPC_PYTHON_DEFAULT_TIMEOUT_SECONDS=5
+
 if ! python -c "import tinkoff.invest" 2>/dev/null; then
   if python -c "import t_tech.invest" 2>/dev/null; then
     # t-tech-investments установлен, но импортируется как t_tech.invest
