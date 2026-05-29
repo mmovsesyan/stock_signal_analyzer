@@ -36,8 +36,68 @@ except Exception:
     fetch_daily_history = None  # type: ignore[assignment]
 
 
+def _fetch_moex_history(symbol: str, start: str, end: str) -> "pd.DataFrame | None":
+    """Fallback: история через MOEX ISS API (без токена, работает из любой страны)."""
+    import json
+    import urllib.request
+
+    import pandas as pd
+
+    ticker = symbol.upper().replace(".ME", "")
+    url = (
+        f"https://iss.moex.com/iss/history/engines/stock/markets/shares/securities/{ticker}.json"
+        f"?from={start}&till={end}&interval=24"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    rows = data.get("history", {}).get("data", [])
+    if not rows:
+        return None
+
+    cols = data.get("history", {}).get("columns", [])
+    try:
+        idx_date = cols.index("TRADEDATE")
+        idx_open = cols.index("OPEN")
+        idx_high = cols.index("HIGH")
+        idx_low = cols.index("LOW")
+        idx_close = cols.index("CLOSE")
+        idx_vol = cols.index("VOLUME")
+    except ValueError:
+        return None
+
+    records = []
+    dates = []
+    for r in rows:
+        try:
+            records.append(
+                {
+                    "Open": float(r[idx_open]),
+                    "High": float(r[idx_high]),
+                    "Low": float(r[idx_low]),
+                    "Close": float(r[idx_close]),
+                    "Volume": float(r[idx_vol]),
+                }
+            )
+            dates.append(r[idx_date])
+        except (ValueError, TypeError, IndexError):
+            continue
+
+    if not records:
+        return None
+
+    df = pd.DataFrame(records, index=pd.to_datetime(dates, errors="coerce"))
+    df = df[~df.index.isna()].sort_index()
+    if df.empty:
+        return None
+    return df
+
+
 def _fetch_history(symbol: str, start: str, end: str) -> "pd.DataFrame | None":
-    """Загрузить историю: yfinance для US, T-Bank для RU (.ME)."""
+    """Загрузить историю: yfinance для US, T-Bank или MOEX для RU (.ME)."""
     import pandas as pd
 
     is_ru = symbol.upper().endswith(".ME")
@@ -51,14 +111,19 @@ def _fetch_history(symbol: str, start: str, end: str) -> "pd.DataFrame | None":
                     df = df.loc[start:end]
                     if not df.empty:
                         return df
-                print(f"  ⚠ T-Bank не вернул данные для {symbol} (проверьте TINKOFF_INVEST_TOKEN)", file=sys.stderr)
+                print(f"  ⚠ T-Bank не вернул данные для {symbol}", file=sys.stderr)
             except Exception as e:
                 print(f"  ⚠ Ошибка T-Bank {symbol}: {e}", file=sys.stderr)
         else:
-            print(f"  ⚠ T-Bank SDK не установлен ({symbol} пропущен). Установите: pip install -r requirements-tbank.txt", file=sys.stderr)
-        # Даём шанс yfinance (редко работает для .ME, но на всякий случай)
+            print(f"  ⚠ T-Bank SDK не установлен ({symbol}), пробую MOEX...", file=sys.stderr)
 
-    # yfinance для US и fallback для RU
+        # MOEX ISS fallback (без токена, работает из любой страны)
+        df = _fetch_moex_history(symbol, start, end)
+        if df is not None and not df.empty:
+            return df
+        print(f"  ⚠ MOEX ISS не вернул данные для {symbol}", file=sys.stderr)
+
+    # yfinance для US и последний fallback для RU
     try:
         hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
     except Exception:
