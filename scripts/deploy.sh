@@ -1030,7 +1030,7 @@ do_update_deps() {
             warn "pip не обновился: $pip_out"
         fi
 
-        for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-dev.txt; do
+        for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-tbank.txt requirements-dev.txt; do
             if [ -f "$PROJECT_DIR/$reqfile" ]; then
                 info "Обновляю $reqfile..."
                 local out
