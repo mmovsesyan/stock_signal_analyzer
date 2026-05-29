@@ -124,8 +124,10 @@ def _fetch_history(symbol: str, start: str, end: str) -> "pd.DataFrame | None":
         print(f"  ⚠ MOEX ISS не вернул данные для {symbol}", file=sys.stderr)
 
     # yfinance для US и последний fallback для RU
+    # Нормализация: yfinance использует дефис вместо точки (BRK.B → BRK-B)
+    yf_symbol = symbol.replace(".", "-") if not is_ru else symbol
     try:
-        hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
+        hist = yf.Ticker(yf_symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
     except Exception:
         return None
     if hist is None or hist.empty:

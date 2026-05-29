@@ -182,7 +182,9 @@ def _fetch_history(symbol: str, days: int) -> pd.DataFrame | None:
     def _fetch():
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=days + 30)  # запас для индикаторов
-        t = yf.Ticker(symbol)
+        # Нормализация: yfinance использует дефис вместо точки (BRK.B → BRK-B)
+        yf_symbol = symbol.replace(".", "-") if not is_ru else symbol
+        t = yf.Ticker(yf_symbol)
         hist = t.history(start=start.strftime("%Y-%m-%d"),
                         end=end.strftime("%Y-%m-%d"),
                         interval="1d", auto_adjust=True)
