@@ -105,9 +105,10 @@ def _fetch_history(symbol: str, days: int) -> pd.DataFrame | None:
             df = fetch_daily_history(symbol, days=days + 30)
             if df is not None and not df.empty and len(df) >= 60:
                 return df
+            print(f"  ⚠ T-Bank не вернул данные для {symbol} (проверьте TINKOFF_INVEST_TOKEN)", file=sys.stderr)
         except Exception as e:
-            print(f"  Ошибка T-Bank {symbol}: {e}", file=sys.stderr)
-        return None
+            print(f"  ⚠ Ошибка T-Bank {symbol}: {e}", file=sys.stderr)
+        # Fallback на yfinance ниже (редко работает для .ME)
 
     def _fetch():
         end = datetime.now(timezone.utc)

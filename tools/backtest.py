@@ -38,17 +38,23 @@ def _fetch_history(symbol: str, start: str, end: str) -> "pd.DataFrame | None":
 
     is_ru = symbol.upper().endswith(".ME")
 
-    if is_ru and fetch_daily_history is not None:
-        # T-Bank возвращает days, фильтруем по start/end вручную
-        days = (datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")).days + 30
-        df = fetch_daily_history(symbol, days=max(days, 60))
-        if df is not None and not df.empty:
-            df = df.loc[start:end]
-            if not df.empty:
-                return df
-        return None
+    if is_ru:
+        if fetch_daily_history is not None:
+            try:
+                days = (datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")).days + 30
+                df = fetch_daily_history(symbol, days=max(days, 60))
+                if df is not None and not df.empty:
+                    df = df.loc[start:end]
+                    if not df.empty:
+                        return df
+                print(f"  ⚠ T-Bank не вернул данные для {symbol} (проверьте TINKOFF_INVEST_TOKEN)", file=sys.stderr)
+            except Exception as e:
+                print(f"  ⚠ Ошибка T-Bank {symbol}: {e}", file=sys.stderr)
+        else:
+            print(f"  ⚠ T-Bank SDK не установлен ({symbol} пропущен). Установите: pip install -r requirements-tbank.txt", file=sys.stderr)
+        # Даём шанс yfinance (редко работает для .ME, но на всякий случай)
 
-    # yfinance для US и остальных
+    # yfinance для US и fallback для RU
     try:
         hist = yf.Ticker(symbol).history(start=start, end=end, interval="1d", auto_adjust=True)
     except Exception:
