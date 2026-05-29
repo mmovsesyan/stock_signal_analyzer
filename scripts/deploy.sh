@@ -540,13 +540,31 @@ do_install() {
 
         do_start_docker
 
-        # Проверка T-Bank SDK
+        # Проверка T-Bank SDK + принудительная установка если entrypoint.sh не справился
         header "Проверка T-Bank SDK"
         for svc in api worker bot; do
             if docker compose exec -T "$svc" python -c "import tinkoff.invest" 2>/dev/null; then
                 ok "T-Bank SDK в $svc: OK"
             else
-                warn "T-Bank SDK в $svc: не найден (entrypoint.sh попробует установить при старте)"
+                warn "T-Bank SDK в $svc: не найден, устанавливаю принудительно..."
+                docker compose exec -T "$svc" bash -c '
+                    if pip install -q tinkoff-investments 2>/dev/null; then
+                        echo "T-Bank SDK installed from PyPI"
+                    else
+                        pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments
+                    fi
+                    # Symlink
+                    SITE=$(python -c "import site; print(site.getsitepackages()[0])")
+                    if [ -d "$SITE/t_tech" ] && [ ! -d "$SITE/tinkoff" ]; then
+                        ln -s "$SITE/t_tech" "$SITE/tinkoff"
+                        echo "T-Bank SDK linked"
+                    fi
+                '
+                if docker compose exec -T "$svc" python -c "import tinkoff.invest" 2>/dev/null; then
+                    ok "T-Bank SDK в $svc: установлен и работает"
+                else
+                    fail "T-Bank SDK в $svc: НЕ удалось установить. Russian tickers (.ME) will fail."
+                fi
             fi
         done
 
@@ -1106,12 +1124,37 @@ do_backtest() {
         "Назад"
     local choice=$?
 
+    # Проверка T-Bank SDK перед бэктестом (нужен для .ME тикеров)
+    if ! docker compose exec -T api python -c "import tinkoff.invest" 2>/dev/null; then
+        warn "T-Bank SDK не найден в контейнере api, устанавливаю..."
+        docker compose exec -T api bash -c '
+            if pip install -q tinkoff-investments 2>/dev/null; then
+                echo "T-Bank SDK installed from PyPI"
+            else
+                pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments
+            fi
+            SITE=$(python -c "import site; print(site.getsitepackages()[0])")
+            if [ -d "$SITE/t_tech" ] && [ ! -d "$SITE/tinkoff" ]; then
+                ln -s "$SITE/t_tech" "$SITE/tinkoff"
+            fi
+        '
+    fi
+
     case $choice in
         0)
+            local default_log
+            if docker compose exec -T api test -f /data/signals/signals.jsonl 2>/dev/null; then
+                default_log="/data/signals/signals.jsonl"
+            elif docker compose exec -T api test -f /data/signals.jsonl 2>/dev/null; then
+                default_log="/data/signals.jsonl"
+            else
+                default_log="/data/signals/signals.jsonl"
+            fi
             local log_path
-            log_path=$(ask_input "Путь к signals.jsonl" "/data/signals/signals.jsonl")
+            log_path=$(ask_input "Путь к signals.jsonl" "$default_log")
             local tier
             tier=$(ask_input "Минимальный класс (A/B/C)" "B")
+            info "Запускаю бэктест v1: $log_path (tier ≥ $tier)..."
             docker compose exec -T api python tools/backtest.py "$log_path" --min-tier "$tier"
             ;;
         1)
@@ -1119,6 +1162,7 @@ do_backtest() {
             symbols=$(ask_input "Тикеры через пробел" "AAPL MSFT GOOGL")
             local days
             days=$(ask_input "Период (дней)" "180")
+            info "Запускаю бэктест v2: $symbols ($days дней)..."
             docker compose exec -T api python tools/backtest_v2.py --symbols $symbols --days "$days"
             ;;
         2) return ;;
@@ -1138,6 +1182,22 @@ do_learning() {
         "Показать IC scores" \
         "Назад"
     local choice=$?
+
+    # Проверка T-Bank SDK перед обучением (может понадобиться для данных .ME)
+    if ! docker compose exec -T api python -c "import tinkoff.invest" 2>/dev/null; then
+        warn "T-Bank SDK не найден в контейнере api, устанавливаю..."
+        docker compose exec -T api bash -c '
+            if pip install -q tinkoff-investments 2>/dev/null; then
+                echo "T-Bank SDK installed from PyPI"
+            else
+                pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments
+            fi
+            SITE=$(python -c "import site; print(site.getsitepackages()[0])")
+            if [ -d "$SITE/t_tech" ] && [ ! -d "$SITE/tinkoff" ]; then
+                ln -s "$SITE/t_tech" "$SITE/tinkoff"
+            fi
+        '
+    fi
 
     case $choice in
         0)
