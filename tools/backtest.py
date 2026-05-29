@@ -21,9 +21,13 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import yfinance as yf
+
+# Добавить корень проекта в path (как в backtest_v2.py)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Fallback для российских тикеров (yfinance не отдаёт .ME с 2022)
 try:
