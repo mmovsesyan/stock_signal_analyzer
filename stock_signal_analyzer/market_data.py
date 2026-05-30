@@ -18,6 +18,9 @@ from .universe import InstrumentProfile, classify_instrument, history_period_for
 
 _log = logging.getLogger(__name__)
 
+# Suppress yfinance internal ERROR logs for missing fundamentals (expected for .ME tickers)
+logging.getLogger("yfinance").setLevel(logging.WARNING)
+
 # Circuit breaker for Yahoo Finance (primary data source)
 # Tuned for batch scans: higher threshold + longer recovery to survive
 # rate-limit spikes during scheduler collection of ~30 tickers.
