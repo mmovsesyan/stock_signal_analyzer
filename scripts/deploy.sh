@@ -1042,6 +1042,21 @@ do_update() {
         info "Перезапускаю с новым кодом..."
         docker compose up -d
         sleep 3
+
+        # Проверка Kronos deps после обновления образов
+        if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
+            info "Проверка Kronos Foundation Model..."
+            for svc in api worker bot; do
+                if docker compose exec -T "$svc" python -c "import torch, einops" 2>/dev/null; then
+                    ok "Kronos deps в $svc: OK"
+                else
+                    warn "Kronos deps в $svc: не найдены, устанавливаю..."
+                    docker compose exec -T "$svc" pip install -q -r /app/requirements-kronos.txt \
+                        && ok "Kronos deps в $svc: установлены" || warn "Kronos deps в $svc: не установились"
+                fi
+            done
+        fi
+
         ok "Обновление завершено (Docker)"
     else
         # systemd/local mode
