@@ -1,0 +1,19 @@
+{
+  "weight_adjustments": {},
+  "recommendations": [
+    "Нужно минимум 20 закрытых сигналов для обучения"
+  ],
+  "win_patterns": [],
+  "loss_patterns": [],
+  "optimal_score_threshold": 0.25,
+  "optimal_confidence_threshold": 0.55,
+  "total_outcomes_analyzed": 2,
+  "win_rate": 0.0,
+  "avg_win_pct": 0.0,
+  "avg_loss_pct": 0.0,
+  "last_updated": "2026-05-30T19:13:35.538509+00:00",
+  "data_hash": "",
+  "ic_scores": {},
+  "llm_used": false,
+  "llm_provider": ""
+}

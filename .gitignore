@@ -189,9 +189,3 @@ cython_debug/
 # Marketing materials
 docs/reddit_post.md
 .gstack/
-
-# Runtime data (live state, not source code)
-data/learning_state.json
-data/outcomes.jsonl
-data/signals.jsonl
-data/stock_signals.db
