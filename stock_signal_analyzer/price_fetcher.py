@@ -298,6 +298,13 @@ def fetch_price_for_outcome(symbol: str, date: datetime | None = None) -> float 
     start = date - timedelta(days=5)
     hist = fetch_history(symbol, start, end)
     if hist is None or hist.empty:
+        # Fallback: попробовать текущую цену (если date — сегодня или вчера)
+        now = datetime.now(timezone.utc)
+        if (now - date).days <= 1:
+            price = fetch_current_price(symbol)
+            if price is not None:
+                _log.debug("Outcome price for %s: using current price=%.4f (history not found)", symbol, price)
+                return price
         return None
 
     # Ищем ближайшую дату >= date
