@@ -155,8 +155,12 @@ def fetch_tqbr_quote(secid: str, timeout: float = 12.0) -> MoexQuote:
             rm = m
             break
     if rm is None:
-        row = m_rows[0]
-        rm = {c: row[i] for i, c in enumerate(m_cols) if i < len(row)}
+        return MoexQuote(
+            secid=sid,
+            last=None,
+            change_pct_from_prev=None,
+            detail=f"SECID {sid} не найден в ответе MOEX TQBR.",
+        )
     last = rm.get("LAST")
     ch = rm.get("LASTTOPREVPRICE")
     if isinstance(ch, (int, float)):
@@ -203,8 +207,13 @@ def fetch_tqbr_volume_today(secid: str, timeout: float = 12.0) -> MoexVolumeToda
             rm = m
             break
     if rm is None:
-        row = m_rows[0]
-        rm = {c: row[i] for i, c in enumerate(m_cols) if i < len(row)}
+        return MoexVolumeToday(
+            secid=sid,
+            voltoday=None,
+            valtoday=None,
+            numtrades=None,
+            detail=f"SECID {sid} не найден в ответе MOEX TQBR.",
+        )
 
     def _f(x: object) -> float | None:
         if x is None or x == "":

@@ -2600,12 +2600,12 @@ def _check_alert_and_record(sym: str, score: float, tier: str, direction: str) -
                     arrow = "📈" if delta > 0 else "📉"
                     alert_text = f"{arrow} {sym}: score {prev.score:+.2f} → {score:+.2f} (Δ{delta:+.2f})"
                     alert_key = f"delta:{sym}:{score:.2f}"
-                if alert_key not in _seen_alerts:
-                    _seen_alerts.add(alert_key)
-                    # Prune old entries to prevent memory leak
-                    if len(_seen_alerts) > 1000:
-                        _seen_alerts.clear()
-                    alert = alert_text
+                    if alert_key not in _seen_alerts:
+                        _seen_alerts.add(alert_key)
+                        # Prune old entries to prevent memory leak
+                        if len(_seen_alerts) > 1000:
+                            _seen_alerts.clear()
+                        alert = alert_text
 
         # Решаем, нужно ли записать сигнал
         should_record = False

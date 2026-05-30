@@ -176,19 +176,19 @@ def fetch_snapshot(symbol: str, api_key: str | None = None, timeout: float = 10.
     ticker_data = data.get("ticker") or {}
     day = ticker_data.get("day") or {}
     prev_day = ticker_data.get("prevDay") or {}
-    last_price = day.get("c") or prev_day.get("c")
+    last_price = day.get("c") if day.get("c") is not None else prev_day.get("c")
     prev_close = prev_day.get("c")
     volume = day.get("v")
     chg_pct = None
-    if last_price and prev_close and prev_close != 0:
+    if last_price is not None and prev_close is not None and prev_close != 0:
         chg_pct = (last_price / prev_close - 1.0) * 100.0
     detail = f"Polygon snapshot: last={last_price}, prev_close={prev_close}, vol={volume}"
     return PolygonQuote(
         symbol=sym,
-        last_price=float(last_price) if last_price else None,
-        prev_close=float(prev_close) if prev_close else None,
+        last_price=float(last_price) if last_price is not None else None,
+        prev_close=float(prev_close) if prev_close is not None else None,
         change_pct=chg_pct,
-        volume=int(volume) if volume else None,
+        volume=int(volume) if volume is not None else None,
         detail=detail,
     )
 

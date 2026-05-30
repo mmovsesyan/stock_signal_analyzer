@@ -122,7 +122,6 @@ def fetch_economic_calendar(
     _rate_wait()
     r = _finnhub_economic_get(d_from.isoformat(), d_to.isoformat(), key, timeout)
     data = r.json()
-    data = r.json()
     if not isinstance(data, dict):
         return []
     return list(data.get("economicCalendar") or [])

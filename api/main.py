@@ -540,6 +540,7 @@ async def webhook_tradingview(alert: TradingViewAlert):
     ssa_dir = report.trade_plan.direction if report.trade_plan else "none"
 
     # Store in signal log for walk-forward validation
+    signal_id = None
     try:
         from stock_signal_analyzer.signal_log import (
             append_signal_record,

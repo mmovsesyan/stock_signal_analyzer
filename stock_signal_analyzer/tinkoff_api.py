@@ -96,6 +96,12 @@ def fetch_tinkoff_price(ticker: str) -> dict[str, Any] | None:
                 if getattr(i, "instrument_type", "") == "share"
             ]
             if not shares:
+                # Fallback для индексов (например IMOEX.ME)
+                shares = [
+                    i for i in instruments.instruments
+                    if getattr(i, "instrument_type", "") == "index"
+                ]
+            if not shares:
                 return None
             instrument = next(
                 (i for i in shares if getattr(i, "class_code", "") == "TQBR"),
@@ -168,6 +174,12 @@ def fetch_tinkoff_candles(ticker: str, days: int = 30) -> list[dict[str, Any]] |
                 i for i in instruments.instruments
                 if getattr(i, "instrument_type", "") == "share"
             ]
+            if not shares:
+                # Fallback для индексов (например IMOEX.ME)
+                shares = [
+                    i for i in instruments.instruments
+                    if getattr(i, "instrument_type", "") == "index"
+                ]
             if not shares:
                 return None
             instrument = next(
