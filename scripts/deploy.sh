@@ -1031,30 +1031,16 @@ do_update() {
 
     info "Получаю обновления..."
 
-    # Защита runtime-файлов: бэкап → сброс skip-worktree → checkout HEAD → pull → восстановление
+    # Защита runtime-файлов: stash dirty files → pull → restore
     for f in data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db; do
-        if [ -f "$f" ]; then
-            cp "$f" "$f.deploy.bak"
-        fi
         git update-index --no-skip-worktree "$f" 2>/dev/null || true
     done
-    git checkout HEAD -- data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db 2>/dev/null || true
+    git stash push -m "deploy-runtime-guard" -- data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db 2>/dev/null || true
 
     git pull origin main 2>/dev/null || git pull 2>/dev/null || warn "git pull не удался"
 
-    # Восстановить runtime-данные из бэкапа
-    for f in data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db; do
-        if [ -f "$f.deploy.bak" ]; then
-            mv "$f.deploy.bak" "$f"
-        fi
-    done
-
-    # Скрыть runtime-файлы из git status (не мешают будущим pull)
-    for f in data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db; do
-        if [ -f "$f" ]; then
-            git update-index --skip-worktree "$f" 2>/dev/null || true
-        fi
-    done
+    # Восстановить runtime-данные (если stash существует)
+    git stash pop 2>/dev/null || true
 
     # Исправить старые сигналы (критично после изменений thresholds/trade_plan)
     do_fix_signals
