@@ -103,7 +103,7 @@ RU_BLUE_CHIPS = frozenset(
         "RUAL",   # Русал
         "MAGN",   # ММК
         "PIKK",   # ПИК
-        "POLY",   # Полиметалл
+        "X5",     # X5 Group (ранее FIVE, новый тикер с янв. 2025)
         "FEES",   # ФСК ЕЭС / Россети
     }
 )

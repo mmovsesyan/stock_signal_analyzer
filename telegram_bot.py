@@ -193,7 +193,7 @@ _US_BLUE_LIST = _normalize_menu_symbols(list(sorted(US_BLUE_CHIPS)))
 _DIVIDEND_LIST = _normalize_menu_symbols(list(sorted(DIVIDEND_UNIVERSE)))
 _SECTOR_MAP: dict[str, list[str]] = {
     "tech": _normalize_menu_symbols(
-        ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "ORCL", "CRM", "QCOM", "INTC", "YNDX.ME"]
+        ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "ORCL", "CRM", "QCOM", "INTC", "YDEX.ME"]
     ),
     "finance": _normalize_menu_symbols(
         ["JPM", "BAC", "WFC", "GS", "MS", "V", "MA", "AXP", "SBER.ME", "VTBR.ME", "MOEX.ME"]
@@ -254,7 +254,7 @@ _SYMBOL_TITLES: dict[str, str] = {
     "MTSS.ME": "МТС",
     "CHMF.ME": "Северсталь",
     "NLMK.ME": "НЛМК",
-    "YNDX.ME": "Яндекс",
+    "YDEX.ME": "Яндекс",
     "PLZL.ME": "Полюс",
     "VTBR.ME": "ВТБ",
 }
@@ -2503,7 +2503,7 @@ async def cmd_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 _DEFAULT_COLLECT_TICKERS: list[str] = [
     # РФ голубые
     "SBER.ME", "GAZP.ME", "LKOH.ME", "GMKN.ME", "ROSN.ME",
-    "NVTK.ME", "TATN.ME", "MOEX.ME", "MGNT.ME", "CHMF.ME",
+    "NVTK.ME", "TATN.ME", "MOEX.ME", "MGNT.ME", "YDEX.ME",
     # US голубые
     "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
     "META", "TSLA", "JPM", "JNJ", "V",

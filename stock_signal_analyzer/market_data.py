@@ -194,10 +194,10 @@ _RU_COMPANY_NAMES: dict[str, str] = {
     "VTBR": "ВТБ", "SNGS": "Сургутнефтегаз", "MTSS": "МТС",
     "AFLT": "Аэрофлот", "PHOR": "ФосАгро", "IRAO": "Интер РАО",
     "OZON": "Ozon", "TCSG": "Т-Банк", "RUAL": "Русал",
-    "MAGN": "ММК", "PIKK": "ПИК", "POLY": "Полиметалл",
+    "MAGN": "ММК", "PIKK": "ПИК",
     "FEES": "Россети", "CHMF": "Северсталь", "NLMK": "НЛМК",
     "RTKM": "Ростелеком", "HYDR": "РусГидро", "TRNFP": "Транснефть",
-    "FIVE": "X5 Group", "SGZH": "Сегежа", "VKCO": "VK",
+    "X5": "X5 Group", "SGZH": "Сегежа", "VKCO": "VK",
 }
 
 
