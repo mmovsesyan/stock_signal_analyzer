@@ -583,6 +583,8 @@ class OutcomeTracker:
             'momentum_score': signal.get('momentum_score'),
             'news_score': signal.get('news_score'),
             'volume_score': signal.get('volume_score'),
+            'kronos_score': signal.get('kronos_score'),
+            'kronos_detail': signal.get('kronos_detail'),
             'score': signal.get('score'),
             'outcome_pnl': outcome.pnl_pct,
         }
