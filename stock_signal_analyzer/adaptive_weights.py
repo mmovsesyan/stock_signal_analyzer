@@ -46,6 +46,7 @@ _SIGNAL_HALFLIFE = {
     "mtf_momentum": 20.0,
     "zscore": 7.0,
     "trend": 15.0,
+    "kronos": 5.0,
 }
 
 # Минимальное количество записей для адаптации.
@@ -223,6 +224,7 @@ def compute_adaptive_weights() -> AdaptiveWeightsResult:
         "momentum": "momentum_score",
         "news": "news_score",
         "volume": "volume_score",
+        "kronos": "kronos_score",
     }
 
     ic_scores: dict[str, float] = {}

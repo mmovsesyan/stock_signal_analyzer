@@ -35,6 +35,7 @@ def sample_outcomes_file():
             "confidence": 0.5 + (i % 5) * 0.05,
             "direction": "long" if i % 2 == 0 else "short",
             "signal_tier": "A" if i < 10 else ("B" if i < 25 else "C"),
+            "kronos_score": 0.1 if i % 4 == 0 else 0.0,
         }
         records.append(rec)
     with tempfile.TemporaryDirectory() as tmp:
@@ -71,7 +72,7 @@ class TestExtractFeatures:
         recs, _ = _load_training_data(sample_outcomes_file)
         X = _extract_features(recs)
         assert len(X) == len(recs)
-        assert all(len(v) == 9 for v in X)
+        assert all(len(v) == 10 for v in X)
         # direction encoding
         long_dir = X[0][6]  # first record is long
         short_dir = X[1][6]  # second record is short
@@ -132,6 +133,7 @@ class TestRankEnsemble:
             imp = re.feature_importances()
             assert imp is not None
             assert "technical" in imp
+            assert "kronos" in imp
             assert all(v >= 0 for v in imp.values())
 
     def test_last_fit_at_persisted(self, sample_outcomes_file):

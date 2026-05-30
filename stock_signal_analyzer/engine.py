@@ -16,6 +16,7 @@ _log = logging.getLogger(__name__)
 from .adaptive_weights import AdaptiveWeightsResult, compute_adaptive_weights
 from .finnhub_live import fetch_company_news, fetch_recommendation_trends, fetch_earnings_surprise
 from .intraday import IntradayBundle, build_intraday
+from .kronos_component import KronosComponent
 from .levels import KeyLevels, compute_key_levels
 from .macro_calendar import MacroContext, build_macro_context
 from .live_price import fetch_live_price
@@ -97,6 +98,11 @@ _ADX_LOW_TECH_SCALE: float = 1.06
 _ADX_HIGH_MOM_SCALE: float = 1.06
 _ADX_HIGH_TECH_SCALE: float = 1.02
 
+# Kronos foundation model blending (base weight; adaptive via IC scaling in _compute_score)
+_KRONOS_WEIGHT_BASE: float = float(os.environ.get("KRONOS_WEIGHT", "0.15"))
+_KRONOS_WEIGHT_MIN: float = 0.05
+_KRONOS_WEIGHT_MAX: float = 0.25
+
 # Смешивание confidence в финальном мультипликаторе
 _CONF_BASE: float = 0.42
 _CONF_SCALE: float = 0.58
@@ -158,6 +164,9 @@ class SignalReport:
     validation_confidence: float = 0.0  # 0-1, confidence based on historical performance
     # ML ensemble score
     ml_score: float | None = None
+    # Kronos foundation model
+    kronos_score: float = 0.0
+    kronos_detail: str = ""
 
 
 # ── Приватные датаклассы для промежуточных результатов ───────────────────────
@@ -206,6 +215,9 @@ class _RawInputs:
     live_price: float | None  # актуальная цена (T-Bank / MOEX ISS / Finnhub)
     # Market regime
     market_regime: MarketRegime | None
+    # Kronos foundation model
+    kronos_score: float = 0.0
+    kronos_detail: str = ""
 
 
 @dataclass
@@ -427,12 +439,25 @@ def _gather_inputs(
     ws_seconds: float,
     volume_tape_ws: bool,
     fast_mode: bool = False,
+    use_kronos: bool = False,
 ) -> _RawInputs:
     """Все сетевые запросы и первичная обработка данных."""
     snap, _info, profile = fetch_snapshot_with_meta(symbol)
     hist = snap.history
     close = hist["Close"]
     yahoo_last = float(close.iloc[-1])
+
+    # ── Kronos foundation model (zero-risk: lazy load + graceful fallback) ──
+    # Only runs for /signal (single ticker), never for /screen or bulk scan
+    kronos_score = 0.0
+    kronos_detail = ""
+    if use_kronos:
+        try:
+            _kronos = KronosComponent()
+            kronos_score, kronos_detail = _kronos.score(hist)
+        except Exception as exc:
+            _log.debug("Kronos scoring skipped for %s: %s", symbol, exc)
+
     tech = analyze_technical(hist)
     atr_pct = atr_percent_14(hist)
     mom = analyze_momentum(close, atr_pct=atr_pct, adx14=tech.adx14)
@@ -643,6 +668,8 @@ def _gather_inputs(
         adaptive_w=adaptive_w,
         live_price=live_price,
         market_regime=market_regime,
+        kronos_score=kronos_score,
+        kronos_detail=kronos_detail,
     )
 
 
@@ -687,6 +714,9 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
     aligned_components = [tech.score, mom.score, news_score, vol_res.score]
     if has_intra and intra is not None:
         aligned_components.append(intra.score)
+    # Include Kronos in alignment & confidence calculation only if it fired
+    if abs(inputs.kronos_score) > 0.01:
+        aligned_components.append(inputs.kronos_score)
     active_aligned = [c for c in aligned_components if abs(c) > 0.05]
     # Предварительная confidence из core-компонент (нужна для boost ДО финального расчёта)
     _core_conf = _component_confidence(active_aligned) if len(active_aligned) >= 2 else 0.0
@@ -699,6 +729,20 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
     raw_total = float(
         np.clip((1.0 - VOL_BLEND) * raw_total + VOL_BLEND * vol_res.score, -1.0, 1.0)
     )
+
+    # ── Kronos foundation model (adaptive weight via IC) ──
+    if abs(inputs.kronos_score) > 0.01:
+        kronos_w = _KRONOS_WEIGHT_BASE
+        # Scale weight by IC: positive IC increases weight up to MAX,
+        # negative IC decreases down to MIN (but never zero to keep signal alive)
+        if inputs.adaptive_w is not None and inputs.adaptive_w.adapted:
+            ic = inputs.adaptive_w.ic_scores.get("kronos")
+            if ic is not None:
+                kronos_w = float(
+                    np.clip(_KRONOS_WEIGHT_BASE + ic * 0.5, _KRONOS_WEIGHT_MIN, _KRONOS_WEIGHT_MAX)
+                )
+                _log.debug("Kronos adaptive weight: IC=%+.3f → weight=%.3f", ic, kronos_w)
+        raw_total = float(np.clip(raw_total + kronos_w * inputs.kronos_score, -1.0, 1.0))
 
     # ── Quant model blending ──
     # MTF momentum, z-score, trend strength вносят в итоговый score
@@ -724,11 +768,13 @@ def _compute_score(inputs: _RawInputs) -> _ScoreBundle:
 
     raw_total = float(np.clip(raw_total + quant_adj, -1.0, 1.0))
 
-    # ── Confidence (include quant components) ──
+    # ── Confidence (include quant components + Kronos) ──
     comps: list[float] = [tech.score, mom.score, news_score, vol_res.score]
     if has_intra:
         comps.append(intra.score)
     comps.extend(quant_parts)
+    if abs(inputs.kronos_score) > 0.01:
+        comps.append(inputs.kronos_score)
     confidence = _component_confidence(comps)
 
     # ── Volume alignment & liquidity — аддитивные корректировки ──
@@ -1004,6 +1050,7 @@ def build_report(
     fast_mode: bool = False,
     filter_type: str = 'balanced',
     user_id: int | None = None,
+    use_kronos: bool = False,
 ) -> SignalReport:
     """
     Построить полный отчёт по тикеру.
@@ -1019,7 +1066,7 @@ def build_report(
     """
     key = finnhub_api_key or os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
 
-    inputs = _gather_inputs(symbol, key, use_finnhub_ws, ws_seconds, volume_tape_ws, fast_mode)
+    inputs = _gather_inputs(symbol, key, use_finnhub_ws, ws_seconds, volume_tape_ws, fast_mode, use_kronos)
     bundle = _compute_score(inputs)
 
     # ── ML RankEnsemble blend ──
@@ -1036,6 +1083,7 @@ def build_report(
             confidence=bundle.confidence,
             direction="long" if bundle.total > 0 else ("short" if bundle.total < 0 else "neutral"),
             tier=bundle.signal_tier,
+            kronos_score=inputs.kronos_score,
         )
         blended_score = blend_ml_score(heuristic=bundle.total, ml=ml_score, ml_weight=0.30)
     except Exception as exc:
@@ -1110,6 +1158,8 @@ def build_report(
         position_size_detail=pos_size_res.detail,
         quant_score=quant_sc,
         ml_score=ml_score,
+        kronos_score=inputs.kronos_score,
+        kronos_detail=inputs.kronos_detail,
     )
 
     has_pat = bool(inputs.tech.pattern_summary and inputs.tech.pattern_summary.strip())

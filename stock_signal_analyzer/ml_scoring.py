@@ -27,6 +27,10 @@ _MIN_SAMPLES = 30          # минимум сделок для обучения
 _FIT_FREQ = 50             # переобучать каждые N новых записей
 _MODEL_PATH_ENV = "SSA_ML_MODEL_PATH"
 
+# Feature vector order: must match _extract_features and predict()
+_FEATURE_NAMES = ["technical", "momentum", "news", "volume", "score", "confidence",
+                  "direction", "tier", "prev_pnl", "kronos"]
+
 
 class _LazyModels:
     """Ленивая загрузка ML-библиотек (импорт тяжёлый)."""
@@ -127,7 +131,9 @@ def _extract_features(records: list[dict[str, Any]]) -> list[list[float]]:
         tier = tier_map.get(rec.get("signal_tier"), 1.0)
         # pnl of this signal as a feature (how it performed before, if available)
         prev_pnl = float(rec.get("pnl_pct") or 0.0)
-        X.append([ts, ms, ns, vs, sc, conf, direction, tier, prev_pnl])
+        # Kronos foundation model score
+        kronos = float(rec.get("kronos_score") or 0.0)
+        X.append([ts, ms, ns, vs, sc, conf, direction, tier, prev_pnl, kronos])
     return X
 
 
@@ -150,6 +156,14 @@ class RankEnsemble:
         try:
             with open(p, "rb") as f:
                 payload = pickle.load(f)
+            saved_features = payload.get("feature_names")
+            if saved_features is not None and saved_features != _FEATURE_NAMES:
+                _log.warning(
+                    "Persisted ML model feature mismatch (%s vs %s) — discarding old model",
+                    saved_features,
+                    _FEATURE_NAMES,
+                )
+                return
             self._models = payload.get("models", {})
             self._trained_count = payload.get("trained_count", 0)
             self._last_fit_count = self._trained_count
@@ -166,6 +180,7 @@ class RankEnsemble:
                     "models": self._models,
                     "trained_count": self._trained_count,
                     "last_fit_at": self._last_fit_at,
+                    "feature_names": _FEATURE_NAMES,
                 }, f)
         except Exception as exc:
             _log.warning("Failed to persist model: %s", exc)
@@ -249,7 +264,8 @@ class RankEnsemble:
 
     def predict(self, technical: float, momentum: float, news: float, volume: float,
                 score: float, confidence: float, direction: str = "long",
-                tier: str = "C", pnl: float | None = None) -> float | None:
+                tier: str = "C", pnl: float | None = None,
+                kronos_score: float = 0.0) -> float | None:
         """Предсказать ML-скор [-1, 1] для одного сигнала."""
         if not self._models:
             # попробовать подгрузить persisted
@@ -266,7 +282,7 @@ class RankEnsemble:
             tier_map = {"A": 3.0, "B": 2.0, "C": 1.0}
             tier_val = tier_map.get(tier, 1.0)
             prev_pnl = float(pnl or 0.0)
-            vec = np.array([[technical, momentum, news, volume, score, confidence, dir_val, tier_val, prev_pnl]])
+            vec = np.array([[technical, momentum, news, volume, score, confidence, dir_val, tier_val, prev_pnl, kronos_score]])
 
             probs: list[float] = []
             for name, model in self._models.items():
@@ -294,7 +310,7 @@ class RankEnsemble:
         """Средняя важность фич по всем моделям."""
         if not self._models:
             return None
-        names = ["technical", "momentum", "news", "volume", "score", "confidence", "direction", "tier", "prev_pnl"]
+        names = list(_FEATURE_NAMES)
         sums = [0.0] * len(names)
         counts = [0] * len(names)
         for model in self._models.values():

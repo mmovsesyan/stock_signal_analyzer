@@ -1,0 +1,5 @@
+# Kronos model dependencies (optional — only needed when KRONOS_ENABLED=1)
+# Install separately: pip install -r requirements-kronos.txt
+# These are IN ADDITION to requirements-ml.txt (torch, transformers already listed there)
+
+einops>=0.7.0

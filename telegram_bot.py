@@ -1775,6 +1775,7 @@ async def _cmd_signal_message_with_args(message, args: list[str], user_id: int |
                 use_finnhub_ws=ws,
                 ws_seconds=8.0,
                 user_id=uid,
+                use_kronos=True,
             ),
         )
     except ValueError as e:

@@ -222,4 +222,5 @@ def build_record_from_report(
         "weekly_regime": report.weekly_regime,
         "stop_hint_pct": report.stop_hint_pct,
         "verdict": report.verdict,
+        "kronos_score": report.kronos_score,
     }
