@@ -1031,16 +1031,30 @@ do_update() {
 
     info "Получаю обновления..."
 
-    # Защита runtime-файлов: stash dirty files → pull → restore
+    # Защита runtime-файлов: stash все dirty tracked файлы → pull → restore
     for f in data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db; do
         git update-index --no-skip-worktree "$f" 2>/dev/null || true
     done
-    git stash push -m "deploy-runtime-guard" -- data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db 2>/dev/null || true
+    local stash_out
+    stash_out=$(git stash push -m "deploy-runtime-guard" 2>&1) || true
+    if echo "$stash_out" | grep -qi "no local changes"; then
+        info "Нет изменений для stash"
+    else
+        ok "Состояние сохранено в stash"
+    fi
 
     git pull origin main 2>/dev/null || git pull 2>/dev/null || warn "git pull не удался"
 
     # Восстановить runtime-данные (если stash существует)
-    git stash pop 2>/dev/null || true
+    local pop_out
+    pop_out=$(git stash pop 2>&1) || true
+    if echo "$pop_out" | grep -qi "conflict"; then
+        warn "Конфликт при восстановлении stash — данные в stash, проверьте вручную"
+    elif echo "$pop_out" | grep -qi "no stash"; then
+        info "Stash не найден (возможно не создавался)"
+    else
+        ok "Runtime-данные восстановлены"
+    fi
 
     # Исправить старые сигналы (критично после изменений thresholds/trade_plan)
     do_fix_signals
