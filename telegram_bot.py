@@ -3284,6 +3284,8 @@ async def cmd_alerts_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"Неизвестный тип алерта: {alert_type}. Используйте score, tier или direction.")
         return
 
+    ensure_user_exists(uid)
+
     loop = asyncio.get_running_loop()
     try:
         from stock_signal_analyzer.db import get_session, UserAlert
