@@ -450,6 +450,16 @@ LLM_LEARNING=${llm_enabled}
 LLM_LEARNING_MIN=20
 LLM_CACHE_TTL=3600
 
+# ── Kronos Foundation Model (optional, disabled by default) ──
+KRONOS_ENABLED=0
+KRONOS_MODEL=NeoQuasar/Kronos-base
+KRONOS_TOKENIZER=NeoQuasar/Kronos-Tokenizer-base
+KRONOS_DEVICE=
+KRONOS_PRED_LEN=5
+KRONOS_MAX_CONTEXT=512
+KRONOS_WEIGHT=0.15
+KRONOS_MAX_PREDICT_SECS=12
+
 # ── Database ──────────────────────────────────
 POSTGRES_PASSWORD=${cur_pgpass}
 DATABASE_URL=postgresql://ssa:${cur_pgpass}@${DB_HOST}:5432/stock_signals
@@ -568,6 +578,20 @@ do_install() {
             fi
         done
 
+        # Проверка Kronos deps
+        if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
+            header "Проверка Kronos Foundation Model"
+            for svc in api worker bot; do
+                if docker compose exec -T "$svc" python -c "import torch, einops" 2>/dev/null; then
+                    ok "Kronos deps в $svc: OK"
+                else
+                    warn "Kronos deps в $svc: не найдены, устанавливаю..."
+                    docker compose exec -T "$svc" pip install -q -r /app/requirements-kronos.txt \
+                        && ok "Kronos deps в $svc: установлены" || warn "Kronos deps в $svc: не установились"
+                fi
+            done
+        fi
+
         # Инициализация
         header "Инициализация"
         sleep 5
@@ -637,6 +661,13 @@ do_install() {
             fi
         fi
 
+        if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
+            if ask_yes_no "Установить Kronos Foundation Model (PyTorch + einops)?" "y"; then
+                "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements-kronos.txt" -q \
+                    && ok "Kronos зависимости установлены" || warn "Kronos зависимости не установились"
+            fi
+        fi
+
         # Данные
         local data_dir="${STOCK_SIGNAL_DATA:-/var/lib/stock_signal_analyzer}"
         mkdir -p "$data_dir" 2>/dev/null || true
@@ -666,6 +697,12 @@ do_install() {
             python3 -m venv "$venv_dir"
             "$venv_dir/bin/pip" install --upgrade pip setuptools wheel -q
             "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
+            if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
+                if ask_yes_no "Установить Kronos Foundation Model (PyTorch + einops)?" "n"; then
+                    "$venv_dir/bin/pip" install -r "$PROJECT_DIR/requirements-kronos.txt" -q \
+                        && ok "Kronos зависимости установлены" || warn "Kronos зависимости не установились"
+                fi
+            fi
         fi
         ok "Зависимости готовы для тестового запуска"
         info "Запустите бота вручную: $venv_python telegram_bot.py"
@@ -1013,6 +1050,12 @@ do_update() {
             info "Обновляю зависимости..."
             "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements.txt" -q
             ok "Зависимости обновлены"
+
+            if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
+                info "Обновляю Kronos зависимости..."
+                "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements-kronos.txt" -q \
+                    && ok "Kronos зависимости обновлены" || warn "Kronos зависимости не обновились"
+            fi
         fi
         info "Перезапускаю бота..."
         do_restart
@@ -1048,7 +1091,7 @@ do_update_deps() {
             warn "pip не обновился: $pip_out"
         fi
 
-        for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-tbank.txt requirements-dev.txt; do
+        for reqfile in requirements.txt requirements-scale.txt requirements-api.txt requirements-tbank.txt requirements-kronos.txt requirements-dev.txt; do
             if [ -f "$PROJECT_DIR/$reqfile" ]; then
                 info "Обновляю $reqfile..."
                 local out
@@ -1095,6 +1138,13 @@ do_update_deps() {
             if ask_yes_no "Обновить T-Bank SDK?" "n"; then
                 "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements-tbank.txt" -q \
                     && ok "T-Bank SDK обновлён" || warn "T-Bank SDK не обновился"
+            fi
+        fi
+
+        if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
+            if ask_yes_no "Обновить Kronos Foundation Model deps?" "n"; then
+                "$venv_python" -m pip install --upgrade -r "$PROJECT_DIR/requirements-kronos.txt" -q \
+                    && ok "Kronos обновлён" || warn "Kronos не обновился"
             fi
         fi
 
