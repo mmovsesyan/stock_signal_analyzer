@@ -578,16 +578,15 @@ do_install() {
             fi
         done
 
-        # Проверка Kronos deps
+        # Kronos deps ставятся автоматически через entrypoint.sh при старте
         if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
-            header "Проверка Kronos Foundation Model"
+            info "Жду инициализации Kronos deps (entrypoint)..."
+            sleep 30
             for svc in api worker bot; do
                 if docker compose exec -T "$svc" python -c "import torch, einops" 2>/dev/null; then
                     ok "Kronos deps в $svc: OK"
                 else
-                    warn "Kronos deps в $svc: не найдены, устанавливаю..."
-                    docker compose exec -T "$svc" pip install --root-user-action=ignore -q -r /app/requirements-kronos.txt \
-                        && ok "Kronos deps в $svc: установлены" || warn "Kronos deps в $svc: не установились"
+                    warn "Kronos deps в $svc: ещё устанавливаются — проверьте логи позже"
                 fi
             done
         fi
@@ -1043,16 +1042,15 @@ do_update() {
         docker compose up -d
         sleep 3
 
-        # Проверка Kronos deps после обновления образов
+        # Kronos deps ставятся автоматически через entrypoint.sh при старте
         if [ -f "$PROJECT_DIR/requirements-kronos.txt" ]; then
-            info "Проверка Kronos Foundation Model..."
+            info "Жду инициализации Kronos deps (entrypoint)..."
+            sleep 30
             for svc in api worker bot; do
                 if docker compose exec -T "$svc" python -c "import torch, einops" 2>/dev/null; then
                     ok "Kronos deps в $svc: OK"
                 else
-                    warn "Kronos deps в $svc: не найдены, устанавливаю..."
-                    docker compose exec -T "$svc" pip install --root-user-action=ignore -q -r /app/requirements-kronos.txt \
-                        && ok "Kronos deps в $svc: установлены" || warn "Kronos deps в $svc: не установились"
+                    warn "Kronos deps в $svc: ещё устанавливаются — проверьте логи позже"
                 fi
             done
         fi
