@@ -38,13 +38,12 @@ if ! python -c "import tinkoff.invest" 2>/dev/null; then
   fi
 fi
 
-# Kronos Foundation Model deps (if enabled)
+# Kronos Foundation Model deps (if enabled) — background install, never blocks startup
 if [ "${KRONOS_ENABLED:-0}" = "1" ]; then
   if ! python -c "import torch, transformers, einops" 2>/dev/null; then
-    echo "Installing Kronos deps (torch + transformers + einops)..."
     if [ -f /app/requirements-kronos.txt ]; then
-      pip install --root-user-action=ignore -q -r /app/requirements-kronos.txt \
-        && echo "Kronos deps installed" || echo "WARNING: Kronos deps installation failed"
+      echo "Installing Kronos deps in background (torch + transformers + einops)..."
+      (pip install --root-user-action=ignore -q -r /app/requirements-kronos.txt && echo "Kronos deps installed" || echo "WARNING: Kronos deps installation failed") &
     fi
   fi
 fi
