@@ -516,6 +516,14 @@ do_install() {
     fi
 
     source "$ENV_FILE" 2>/dev/null || true
+
+    # Защита runtime-файлов от перезаписи git-ом
+    for f in data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db; do
+        if [ -f "$f" ]; then
+            git update-index --skip-worktree "$f" 2>/dev/null || true
+        fi
+    done
+
     local db_host=""
     if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
         db_host="docker"
@@ -1029,6 +1037,14 @@ do_update() {
     source "$ENV_FILE" 2>/dev/null || true
 
     info "Получаю обновления..."
+
+    # Защита runtime-файлов от перезаписи при git pull
+    for f in data/learning_state.json data/outcomes.jsonl data/signals.jsonl data/stock_signals.db; do
+        if [ -f "$f" ]; then
+            git update-index --skip-worktree "$f" 2>/dev/null || true
+        fi
+    done
+
     git pull origin main 2>/dev/null || git pull 2>/dev/null || warn "git pull не удался"
 
     # Исправить старые сигналы (критично после изменений thresholds/trade_plan)
