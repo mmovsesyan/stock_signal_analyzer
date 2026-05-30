@@ -545,7 +545,7 @@ do_install() {
 
         header "Сборка образов"
         info "Собираю Docker образы (первый раз ~2-3 мин)..."
-        docker compose build --quiet 2>/dev/null || docker compose build
+        docker compose build 2>/dev/null || docker compose build
         ok "Образы собраны"
 
         do_start_docker
@@ -1038,7 +1038,7 @@ do_update() {
     if echo "${DATABASE_URL:-}" | grep -q "postgres:"; then
         # Docker mode
         info "Пересобираю образы..."
-        docker compose build --quiet 2>/dev/null || docker compose build
+        docker compose build 2>/dev/null || docker compose build
         info "Перезапускаю с новым кодом..."
         docker compose up -d
         sleep 3
