@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+from .price_fetcher import fetch_history
 
 
 def _parse_earnings_date(cal: dict[str, Any]) -> date | None:
@@ -62,6 +64,26 @@ def _weekly_from_history(w: pd.DataFrame | None) -> tuple[str, str]:
     return "flat", f"неделя: у SMA20 (~{dev:+.1f}%)"
 
 
+def _fetch_weekly_history(symbol: str, days: int = 550) -> pd.DataFrame | None:
+    """Загрузить недельную историю через приоритетный источник (T-Bank/Polygon -> yfinance)."""
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    df = fetch_history(symbol, start, end)
+    if df is None or df.empty or len(df) < 22:
+        return None
+    # Агрегируем дневные свечи в недельные
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    w = df.resample("W").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }).dropna()
+    return w if len(w) >= 22 else None
+
+
 def build_timing_context(symbol: str) -> tuple[float, str, bool, str, str]:
     """
     Возвращает (earnings_mult, earnings_note, earn_bad, weekly_regime, weekly_note).
@@ -78,8 +100,13 @@ def build_timing_context(symbol: str) -> tuple[float, str, bool, str, str]:
 
     # --- weekly regime ---
     try:
-        w = t.history(period="18mo", interval="1wk", auto_adjust=True)
-        weekly_regime, weekly_note = _weekly_from_history(w)
+        w = _fetch_weekly_history(symbol, days=550)
+        if w is not None and not w.empty:
+            weekly_regime, weekly_note = _weekly_from_history(w)
+        else:
+            # Fallback на yfinance
+            w = t.history(period="18mo", interval="1wk", auto_adjust=True)
+            weekly_regime, weekly_note = _weekly_from_history(w)
     except Exception as e:
         weekly_regime, weekly_note = "unknown", f"неделя: ошибка ({e})"
 
@@ -104,6 +131,10 @@ def weekly_trend_regime(symbol: str) -> tuple[str, str]:
     up / down / flat / unknown
     """
     try:
+        w = _fetch_weekly_history(symbol, days=550)
+        if w is not None and not w.empty:
+            return _weekly_from_history(w)
+        # Fallback на yfinance
         w = yf.Ticker(symbol).history(period="18mo", interval="1wk", auto_adjust=True)
         return _weekly_from_history(w)
     except Exception as e:
@@ -132,9 +163,14 @@ def index_tailwind_mult(symbol: str, total: float) -> tuple[float, str, bool]:
         return 1.0, "", False
     idx = "IMOEX.ME" if symbol.upper().endswith(".ME") else "SPY"
     try:
-        h = yf.Ticker(idx).history(period="4mo", interval="1d", auto_adjust=True)
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=120)
+        h = fetch_history(idx, start, end)
         if h is None or h.empty or len(h) < 25:
-            return 1.0, f"{idx}: нет истории", False
+            # Fallback на yfinance
+            h = yf.Ticker(idx).history(period="4mo", interval="1d", auto_adjust=True)
+            if h is None or h.empty or len(h) < 25:
+                return 1.0, f"{idx}: нет истории", False
         c = h["Close"].astype(float)
         r20 = float(c.iloc[-1] / c.iloc[-21] - 1.0)
         label = f"{idx} ~20д: {r20*100:+.1f}%"
