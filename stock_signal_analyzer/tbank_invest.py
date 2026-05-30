@@ -219,6 +219,13 @@ def _find_instrument(client: Any, ticker: str) -> Any | None:
         and getattr(x, "api_trade_available_flag", False)
     ]
     if not matches:
+        # Fallback: индексы (IMOEX, RTSI и т.д.)
+        matches = [
+            x for x in found.instruments
+            if getattr(x, "ticker", "").upper() == ticker
+            and getattr(x, "instrument_type", "") == "index"
+        ]
+    if not matches:
         _INSTRUMENT_CACHE[cache_key] = (None, now)
         return None
     result = next(
