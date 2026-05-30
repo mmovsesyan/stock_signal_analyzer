@@ -23,6 +23,14 @@ services:
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - KRONOS_ENABLED=${KRONOS_ENABLED:-0}
+      - KRONOS_MODEL=${KRONOS_MODEL:-NeoQuasar/Kronos-base}
+      - KRONOS_TOKENIZER=${KRONOS_TOKENIZER:-NeoQuasar/Kronos-Tokenizer-base}
+      - KRONOS_DEVICE=${KRONOS_DEVICE:-}
+      - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
+      - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
+      - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-12}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -48,6 +56,14 @@ services:
       - POLYGON_API_KEY=${POLYGON_API_KEY}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - KRONOS_ENABLED=${KRONOS_ENABLED:-0}
+      - KRONOS_MODEL=${KRONOS_MODEL:-NeoQuasar/Kronos-base}
+      - KRONOS_TOKENIZER=${KRONOS_TOKENIZER:-NeoQuasar/Kronos-Tokenizer-base}
+      - KRONOS_DEVICE=${KRONOS_DEVICE:-}
+      - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
+      - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
+      - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-12}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -95,6 +111,14 @@ services:
       - LLM_LEARNING_MIN=${LLM_LEARNING_MIN:-20}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - KRONOS_ENABLED=${KRONOS_ENABLED:-0}
+      - KRONOS_MODEL=${KRONOS_MODEL:-NeoQuasar/Kronos-base}
+      - KRONOS_TOKENIZER=${KRONOS_TOKENIZER:-NeoQuasar/Kronos-Tokenizer-base}
+      - KRONOS_DEVICE=${KRONOS_DEVICE:-}
+      - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
+      - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
+      - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-12}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -131,6 +155,14 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - SCHEDULER_MODE=disabled
+      - KRONOS_ENABLED=${KRONOS_ENABLED:-0}
+      - KRONOS_MODEL=${KRONOS_MODEL:-NeoQuasar/Kronos-base}
+      - KRONOS_TOKENIZER=${KRONOS_TOKENIZER:-NeoQuasar/Kronos-Tokenizer-base}
+      - KRONOS_DEVICE=${KRONOS_DEVICE:-}
+      - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
+      - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
+      - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-12}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -203,6 +235,14 @@ services:
       - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - KRONOS_ENABLED=${KRONOS_ENABLED:-0}
+      - KRONOS_MODEL=${KRONOS_MODEL:-NeoQuasar/Kronos-base}
+      - KRONOS_TOKENIZER=${KRONOS_TOKENIZER:-NeoQuasar/Kronos-Tokenizer-base}
+      - KRONOS_DEVICE=${KRONOS_DEVICE:-}
+      - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
+      - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
+      - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-12}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
