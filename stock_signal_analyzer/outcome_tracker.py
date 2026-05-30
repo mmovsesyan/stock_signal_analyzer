@@ -287,9 +287,9 @@ class OutcomeTracker:
         if trailing_step is None:
             trailing_step = 0.0
 
-        # Проверить, не истёк ли срок
+        # Проверить, не истёк ли срок — календарные дни, не 24-часовые периоды
         now = datetime.now(timezone.utc)
-        days_since = (now - entry_date).days
+        days_since = (now.date() - entry_date.date()).days
 
         if days_since > max_hold_days:
             # Получить цену на момент истечения

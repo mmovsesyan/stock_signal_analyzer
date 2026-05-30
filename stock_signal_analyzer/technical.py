@@ -206,8 +206,10 @@ def analyze_technical(hist: pd.DataFrame) -> TechnicalScore:
     # Golden/Death cross boost (SMA20 пересекает SMA50)
     cross_boost = 0.0
     if len(close) >= 55:
-        sma20_prev = float(close.iloc[-2:].rolling(20).mean().iloc[0])
-        sma50_prev = float(close.iloc[-2:].rolling(50).mean().iloc[0])
+        sma20_series = close.rolling(20).mean()
+        sma50_series = close.rolling(50).mean()
+        sma20_prev = float(sma20_series.iloc[-2])
+        sma50_prev = float(sma50_series.iloc[-2])
         if sma20_prev <= sma50_prev and sma20 > sma50:
             cross_boost = 0.25  # Golden cross
         elif sma20_prev >= sma50_prev and sma20 < sma50:
