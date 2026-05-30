@@ -21,7 +21,6 @@ COPY requirements.txt .
 COPY requirements-api.txt .
 COPY requirements-scale.txt .
 COPY requirements-tbank.txt .
-COPY requirements-kronos.txt .
 COPY requirements-dev.txt .
 
 # Установить Python зависимости
@@ -29,7 +28,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir -r requirements-api.txt && \
     pip install --no-cache-dir -r requirements-scale.txt && \
-    pip install --no-cache-dir -r requirements-kronos.txt 2>/dev/null || echo "Kronos deps not available at build time - will install at startup" && \
     pip install --no-cache-dir -r requirements-dev.txt
 
 # T-Bank SDK (из приватного PyPI T-Bank; может быть недоступен при сборке)
