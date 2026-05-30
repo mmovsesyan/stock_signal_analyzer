@@ -3207,7 +3207,11 @@ async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         def _load_alerts():
             with get_session(read_only=True) as session:
-                return session.query(UserAlert).filter_by(user_id=uid, is_active=True).all()
+                from stock_signal_analyzer.db import User
+                user = session.query(User).filter_by(telegram_id=uid).first()
+                if not user:
+                    return []
+                return session.query(UserAlert).filter_by(user_id=user.id, is_active=True).all()
 
         rows = await loop.run_in_executor(None, _load_alerts)
         lines = ["🔔 <b>Активные алерты</b>"]
@@ -3292,8 +3296,12 @@ async def cmd_alerts_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         def _create():
             with get_session() as session:
+                from stock_signal_analyzer.db import User
+                user = session.query(User).filter_by(telegram_id=uid).first()
+                if not user:
+                    raise ValueError(f"User not found for telegram_id={uid}")
                 alert = UserAlert(
-                    user_id=uid,
+                    user_id=user.id,
                     alert_type=alert_type,
                     condition=condition,
                     threshold=threshold,
@@ -3338,7 +3346,11 @@ async def cmd_alerts_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         def _delete():
             with get_session() as session:
-                alert = session.query(UserAlert).filter_by(id=alert_id, user_id=uid).first()
+                from stock_signal_analyzer.db import User
+                user = session.query(User).filter_by(telegram_id=uid).first()
+                if not user:
+                    return False
+                alert = session.query(UserAlert).filter_by(id=alert_id, user_id=user.id).first()
                 if not alert:
                     return False
                 session.delete(alert)
