@@ -78,6 +78,7 @@ US_BLUE_CHIPS = frozenset(
 
 # Ликвидные бумаги Мосбиржи (без суффикса .ME).
 # Актуально: MOEXBC пересмотр декабрь 2025 — добавлены OZON, VTBR; убраны CHMF, NLMK.
+# Июнь 2026 — добавлены RAGR, LENT; убран PIKK (вышел из IMOEX).
 RU_BLUE_CHIPS = frozenset(
     {
         "SBER",
@@ -102,7 +103,8 @@ RU_BLUE_CHIPS = frozenset(
         "TCSG",   # Т-Банк (TCS Group)
         "RUAL",   # Русал
         "MAGN",   # ММК
-        "PIKK",   # ПИК
+        "RAGR",   # Русагро (в IMOEX с июня 2026)
+        "LENT",   # Лента (в IMOEX с марта 2026)
         "X5",     # X5 Group (ранее FIVE, новый тикер с янв. 2025)
         "FEES",   # ФСК ЕЭС / Россети
     }

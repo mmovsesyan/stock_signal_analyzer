@@ -257,6 +257,8 @@ _SYMBOL_TITLES: dict[str, str] = {
     "YDEX.ME": "Яндекс",
     "PLZL.ME": "Полюс",
     "VTBR.ME": "ВТБ",
+    "RAGR.ME": "Русагро",
+    "LENT.ME": "Лента",
 }
 
 
