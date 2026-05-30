@@ -159,8 +159,8 @@ class Signal(Base):
     adx14 = Column(Float)
     atr_pct = Column(Float, nullable=True)
     macro_dampening = Column(Float)
-    regime = Column(String(30))
-    weekly_regime = Column(String(30))
+    regime = Column(String(100))
+    weekly_regime = Column(String(100))
 
     # Relations
     user = relationship("User", back_populates="signals")

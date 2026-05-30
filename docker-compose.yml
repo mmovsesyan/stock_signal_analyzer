@@ -49,6 +49,7 @@ services:
     container_name: stock-signal-tracker
     restart: unless-stopped
     environment:
+      - DATABASE_URL=postgresql://ssa:${POSTGRES_PASSWORD}@postgres:5432/stock_signals
       - SSA_SIGNAL_LOG=/data/signals/signals.jsonl
       - STOCK_SIGNAL_DATA=/data
       - TINKOFF_INVEST_TOKEN=${TINKOFF_INVEST_TOKEN}
