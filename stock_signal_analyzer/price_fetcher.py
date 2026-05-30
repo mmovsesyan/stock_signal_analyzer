@@ -64,10 +64,12 @@ def _tk_history(symbol: str, start: datetime, end: datetime) -> pd.DataFrame | N
         df = fetch_daily_history(symbol, days=days)
         if df is None or df.empty:
             return None
-        # Фильтруем по диапазону дат
+        # Фильтруем по диапазону дат — приводим к полуночи, т.к. свечи дневные
         if hasattr(df.index, 'tz') and df.index.tz is None:
             df.index = df.index.tz_localize(timezone.utc)
-        mask = (df.index >= start) & (df.index <= end)
+        start_day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_day = end.replace(hour=0, minute=0, second=0, microsecond=0)
+        mask = (df.index >= start_day) & (df.index <= end_day)
         return df.loc[mask] if mask.any() else None
     except Exception as e:
         _log.debug("T-Bank history failed for %s: %s", symbol, e)
@@ -293,9 +295,10 @@ def fetch_price_for_outcome(symbol: str, date: datetime | None = None) -> float 
     if date is None:
         return fetch_current_price(symbol)
 
-    # Загружаем историю с запасом
+    # Загружаем историю с запасом — приводим date к полуночи, т.к. свечи дневные
     end = datetime.now(timezone.utc)
-    start = date - timedelta(days=5)
+    date_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = date_day - timedelta(days=5)
     hist = fetch_history(symbol, start, end)
     if hist is None or hist.empty:
         return None
@@ -303,7 +306,7 @@ def fetch_price_for_outcome(symbol: str, date: datetime | None = None) -> float 
     # Ищем ближайшую дату >= date
     if hasattr(hist.index, 'tz') and hist.index.tz is None:
         hist.index = hist.index.tz_localize(timezone.utc)
-    mask = hist.index >= date
+    mask = hist.index >= date_day
     if mask.any():
         return float(hist.loc[mask, "Close"].iloc[0])
 
