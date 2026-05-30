@@ -16,12 +16,12 @@ if ! python -c "import tinkoff.invest" 2>/dev/null; then
   else
     echo "Installing T-Bank SDK..."
     # Попытка 1: pip install tinkoff-investments (PyPI fallback)
-    if pip install -q tinkoff-investments 2>/dev/null; then
+    if pip install --root-user-action=ignore -q tinkoff-investments 2>/dev/null; then
       echo "T-Bank SDK installed from PyPI (tinkoff-investments)"
     else
       # Попытка 2: официальный репозиторий T-Bank (t-tech-investments)
       echo "PyPI fallback failed, trying T-Bank official repository..."
-      if pip install -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments; then
+      if pip install --root-user-action=ignore -q --index-url https://opensource.tbank.ru/api/v4/projects/238/packages/pypi/simple --extra-index-url https://pypi.org/simple t-tech-investments; then
         echo "T-Bank SDK installed from official repository (t-tech-investments)"
       else
         echo "WARNING: T-Bank SDK installation failed. Russian tickers (.ME) may not load."

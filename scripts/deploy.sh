@@ -586,7 +586,7 @@ do_install() {
                     ok "Kronos deps в $svc: OK"
                 else
                     warn "Kronos deps в $svc: не найдены, устанавливаю..."
-                    docker compose exec -T "$svc" pip install -q -r /app/requirements-kronos.txt \
+                    docker compose exec -T "$svc" pip install --root-user-action=ignore -q -r /app/requirements-kronos.txt \
                         && ok "Kronos deps в $svc: установлены" || warn "Kronos deps в $svc: не установились"
                 fi
             done
@@ -1051,7 +1051,7 @@ do_update() {
                     ok "Kronos deps в $svc: OK"
                 else
                     warn "Kronos deps в $svc: не найдены, устанавливаю..."
-                    docker compose exec -T "$svc" pip install -q -r /app/requirements-kronos.txt \
+                    docker compose exec -T "$svc" pip install --root-user-action=ignore -q -r /app/requirements-kronos.txt \
                         && ok "Kronos deps в $svc: установлены" || warn "Kronos deps в $svc: не установились"
                 fi
             done
@@ -1100,7 +1100,7 @@ do_update_deps() {
 
         info "Обновляю pip..."
         local pip_out
-        if pip_out=$(docker compose exec -T api pip install --upgrade pip 2>&1); then
+        if pip_out=$(docker compose exec -T api pip install --root-user-action=ignore --upgrade pip 2>&1); then
             ok "pip обновлён"
         else
             warn "pip не обновился: $pip_out"
@@ -1110,7 +1110,7 @@ do_update_deps() {
             if [ -f "$PROJECT_DIR/$reqfile" ]; then
                 info "Обновляю $reqfile..."
                 local out
-                if out=$(docker compose exec -T api pip install --upgrade -r "/app/$reqfile" 2>&1); then
+                if out=$(docker compose exec -T api pip install --root-user-action=ignore --upgrade -r "/app/$reqfile" 2>&1); then
                     ok "$reqfile обновлён"
                 else
                     warn "$reqfile: $out"

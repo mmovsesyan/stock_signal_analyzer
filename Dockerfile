@@ -51,6 +51,7 @@ ENV SSA_SIGNAL_LOG=/data/signals/signals.jsonl
 ENV STOCK_SIGNAL_DATA=/data
 ENV COLLECT_INTERVAL_SEC=14400
 ENV PYTHONUNBUFFERED=1
+ENV PIP_ROOT_USER_ACTION=ignore
 
 # Volumes для персистентных данных
 VOLUME ["/data", "/app/logs"]
