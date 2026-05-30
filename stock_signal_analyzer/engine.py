@@ -455,6 +455,10 @@ def _gather_inputs(
         try:
             _kronos = KronosComponent()
             kronos_score, kronos_detail = _kronos.score(hist)
+            if kronos_detail:
+                _log.info("Kronos score for %s: %.3f — %s", symbol, kronos_score, kronos_detail)
+            else:
+                _log.info("Kronos score for %s: %.3f (no detail)", symbol, kronos_score)
         except Exception as exc:
             _log.debug("Kronos scoring skipped for %s: %s", symbol, exc)
 

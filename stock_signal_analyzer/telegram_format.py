@@ -328,6 +328,14 @@ def format_signal_report(r: SignalReport) -> str:
         lines.append(f"💰 {_esc(r.position_size_detail)}")
     lines.append("")
 
+    # ── Kronos Foundation Model ──
+    kronos_detail = getattr(r, "kronos_detail", "") or ""
+    if kronos_detail:
+        ks = getattr(r, "kronos_score", 0.0) or 0.0
+        lines.append(f"🧠 <b>Kronos FM</b>: {ks:+.3f}")
+        lines.append(f"  {_esc(kronos_detail)}")
+        lines.append("")
+
     lines.append(f"Макро ×{r.macro_dampening:.2f}")
     lines.append(_esc(r.macro_summary))
     lines.append("")
