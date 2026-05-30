@@ -38,6 +38,17 @@ if ! python -c "import tinkoff.invest" 2>/dev/null; then
   fi
 fi
 
+# Kronos Foundation Model deps (if enabled)
+if [ "${KRONOS_ENABLED:-0}" = "1" ]; then
+  if ! python -c "import torch, transformers, einops" 2>/dev/null; then
+    echo "Installing Kronos deps (torch + transformers + einops)..."
+    if [ -f /app/requirements-kronos.txt ]; then
+      pip install --root-user-action=ignore -q -r /app/requirements-kronos.txt \
+        && echo "Kronos deps installed" || echo "WARNING: Kronos deps installation failed"
+    fi
+  fi
+fi
+
 # Run DB migrations
 python /app/scripts/migrate_add_last_notify.py || true
 
