@@ -3263,7 +3263,7 @@ async def cmd_alerts_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"Неизвестное условие: {raw_op}. Используйте &gt;, &lt;, =", parse_mode=ParseMode.HTML)
             return
         try:
-            threshold = float(raw_val)
+            threshold = float(raw_val.replace(",", "."))
         except ValueError:
             await update.message.reply_text(f"Некорректное число: {raw_val}")
             return
