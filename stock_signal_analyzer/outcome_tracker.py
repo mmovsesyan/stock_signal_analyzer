@@ -597,8 +597,12 @@ class OutcomeTracker:
         if key in self._seen_keys:
             pass
         else:
-            with open(self.outcomes_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(record, ensure_ascii=False) + '\n')
+            line = json.dumps(record, ensure_ascii=False) + '\n'
+            fd = os.open(str(self.outcomes_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                os.write(fd, line.encode("utf-8"))
+            finally:
+                os.close(fd)
             self._seen_keys.add(key)
 
         # Сохранить в БД (если сигнал из БД)

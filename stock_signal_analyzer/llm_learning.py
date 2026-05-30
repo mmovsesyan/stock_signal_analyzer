@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -199,8 +200,17 @@ def _load_outcomes() -> list[OutcomeRecord]:
 
 def _data_hash(records: list[OutcomeRecord]) -> str:
     """Хэш данных для определения нужно ли пересчитывать."""
-    content = f"{len(records)}_{records[-1].entry_date if records else ''}"
-    return hashlib.md5(content.encode()).hexdigest()[:12]
+    if not records:
+        return hashlib.sha256(b"").hexdigest()[:16]
+    parts = []
+    for r in records:
+        parts.append(
+            f"{r.symbol}|{r.tier}|{r.outcome}|{r.pnl_pct:.6f}|{r.score:.6f}|"
+            f"{r.confidence:.6f}|{r.technical_score:.6f}|{r.momentum_score:.6f}|"
+            f"{r.news_score:.6f}|{r.volume_score:.6f}|{r.direction}|{r.hold_days}|{r.entry_date}"
+        )
+    content = "\n".join(parts)
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
 # ── Числовой анализ (без LLM) ────────────────────────────────────────────────
@@ -463,7 +473,7 @@ def run_learning_cycle(force: bool = False) -> LearningState:
     # Проверяем, изменились ли данные
     current_hash = _data_hash(records)
     existing_state = load_learning_state()
-    if not force and existing_state and existing_state.data_hash == current_hash:
+    if not force and existing_state and existing_state.data_hash and existing_state.data_hash == current_hash:
         _log.info("Learning: данные не изменились, используем кэш")
         return existing_state
 
@@ -594,8 +604,17 @@ def _save_learning_state(state: LearningState) -> None:
         "llm_used": state.llm_used,
         "llm_provider": state.llm_provider,
     }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def get_weight_adjustments() -> dict[str, float]:
