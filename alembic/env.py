@@ -1,6 +1,7 @@
 from logging.config import fileConfig
 
 import os
+from pathlib import Path
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
@@ -28,7 +29,10 @@ target_metadata = Base.metadata
 # ... etc.
 
 def get_url():
-    return os.environ.get("DATABASE_URL", "sqlite:///data/stock_signals.db")
+    data_dir = os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer")
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
+    db_path = os.path.join(data_dir, "stock_signals.db")
+    return os.environ.get("DATABASE_URL", f"sqlite:///{db_path}")
 
 
 def run_migrations_offline() -> None:

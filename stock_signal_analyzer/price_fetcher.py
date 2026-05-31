@@ -2,8 +2,8 @@
 Unified price fetcher с приоритетом источников.
 
 Приоритет:
-- .ME (российские) → Т-Банк (приоритет), fallback yfinance
-- US → Polygon (если ключ) → Finnhub (если ключ) → yfinance
+- .ME (российские) → Т-Банк (primary), fallback yfinance
+- US → Polygon (primary) → Finnhub (если ключ) → yfinance
 
 История (OHLCV):
 - .ME → Т-Банк → yfinance
@@ -11,7 +11,7 @@ Unified price fetcher с приоритетом источников.
 
 Текущая цена:
 - .ME → Т-Банк → yfinance
-- US → Finnhub → Polygon → yfinance
+- US → Polygon → Finnhub → yfinance
 """
 
 from __future__ import annotations
@@ -248,7 +248,7 @@ def fetch_current_price(symbol: str) -> float | None:
     Получить текущую/последнюю цену.
     Приоритет:
       .ME → Т-Банк → yfinance
-      US  → Finnhub → Polygon → yfinance
+      US  → Polygon → Finnhub → yfinance
     """
     symbol = symbol.strip().upper()
     is_ru = _is_ru(symbol)
@@ -259,18 +259,18 @@ def fetch_current_price(symbol: str) -> float | None:
         _log.debug("Current price for %s: T-Bank = %.4f", symbol, price)
         return price
 
-    # 2. Finnhub для US
-    if not is_ru:
-        price = _fh_current(symbol)
-        if price is not None:
-            _log.debug("Current price for %s: Finnhub = %.4f", symbol, price)
-            return price
-
-    # 3. Polygon для US
+    # 2. Polygon для US (primary)
     if not is_ru:
         price = _pg_current(symbol)
         if price is not None:
             _log.debug("Current price for %s: Polygon = %.4f", symbol, price)
+            return price
+
+    # 3. Finnhub для US
+    if not is_ru:
+        price = _fh_current(symbol)
+        if price is not None:
+            _log.debug("Current price for %s: Finnhub = %.4f", symbol, price)
             return price
 
     # 4. yfinance fallback

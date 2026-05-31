@@ -10,9 +10,16 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+
+
+def _default_db_url() -> str:
+    data_dir = os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer")
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
+    db_path = os.path.join(data_dir, "stock_signals.db")
+    return f"sqlite:///{db_path}"
 
 
 @dataclass(frozen=True)
@@ -20,7 +27,7 @@ class Settings:
     """Все настройки проекта."""
 
     # Database
-    database_url: str = "sqlite:///data/stock_signals.db"
+    database_url: str = field(default_factory=_default_db_url)
 
     # API Keys
     finnhub_api_key: str | None = None
@@ -86,7 +93,7 @@ class Settings:
 def get_settings() -> Settings:
     """Загрузить настройки из переменных окружения (кэшируются)."""
     return Settings(
-        database_url=os.environ.get("DATABASE_URL", "sqlite:///data/stock_signals.db"),
+        database_url=os.environ.get("DATABASE_URL", _default_db_url()),
         finnhub_api_key=os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN"),
         tinkoff_invest_token=os.environ.get("TINKOFF_INVEST_TOKEN"),
         tinkoff_token=os.environ.get("TINKOFF_TOKEN"),

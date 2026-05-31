@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
 
 def migrate() -> None:
-    url = os.environ.get("DATABASE_URL", "sqlite:///data/stock_signals.db")
+    data_dir = os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer")
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
+    db_path = os.path.join(data_dir, "stock_signals.db")
+    url = os.environ.get("DATABASE_URL", f"sqlite:///{db_path}")
     engine = create_engine(url)
 
     with engine.connect() as conn:

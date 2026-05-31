@@ -268,9 +268,28 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
     ysym = _symbol_for_yahoo(sym)
     info: dict[str, Any] = {}
 
-    # Для РФ-тикеров при доступном SDK сразу идём в T-Bank: это быстрее и без шума Yahoo.
-    # Минимум 30 свечей нужно для RSI/MACD/ADX. Если T-Bank отдаёт мало — fallback на MOEX ISS.
+    # Минимум 30 свечей нужно для RSI/MACD/ADX.
     _MIN_CANDLES = 30
+
+    # Polygon primary для US-тикеров (до yfinance)
+    if not sym.endswith(".ME"):
+        if _polygon_available():
+            pg_hist, pg_name, pg_currency = _try_polygon_history(sym, days=400)
+            if pg_hist is not None and len(pg_hist) >= _MIN_CANDLES:
+                profile = classify_instrument(sym, {})
+                last = float(pg_hist["Close"].iloc[-1])
+                snap = TickerSnapshot(
+                    symbol=sym,
+                    last_close=last,
+                    currency=pg_currency or "USD",
+                    company_name=pg_name or sym,
+                    history=pg_hist,
+                )
+                result = (snap, info, profile)
+                _cache_set(sym, result)
+                return result
+
+    # Для РФ-тикеров при доступном SDK сразу идём в T-Bank: это быстрее и без шума Yahoo.
     if _tbank_available():
         tb_hist, tb_name, tb_currency = _try_tbank_history(sym)
         if tb_hist is not None and len(tb_hist) >= _MIN_CANDLES:
@@ -375,24 +394,6 @@ def fetch_snapshot_with_meta(symbol: str, force_refresh: bool = False) -> tuple[
         except Exception as e:
             _log.warning("Yahoo Finance plain fallback failed for %s: %s", sym, e)
 
-    # Fallback на Polygon.io для US-тикеров
-    if (hist is None or hist.empty or len(hist) < _MIN_CANDLES) and not sym.endswith(".ME"):
-        if _polygon_available():
-            _log.info("Yahoo Finance не отдал данные по %s, пробуем Polygon.io…", sym)
-            pg_hist, pg_name, pg_currency = _try_polygon_history(sym)
-            if pg_hist is not None and len(pg_hist) >= _MIN_CANDLES:
-                last = float(pg_hist["Close"].iloc[-1])
-                snap = TickerSnapshot(
-                    symbol=sym,
-                    last_close=last,
-                    currency=pg_currency or "USD",
-                    company_name=pg_name or sym,
-                    history=pg_hist,
-                )
-                result = (snap, info, profile)
-                _cache_set(sym, result)
-                return result
-
     if hist is None or hist.empty:
         hint = _tbank_hint(sym)
         raise ValueError(
@@ -430,6 +431,20 @@ def fetch_history(symbol: str, period: str = "6mo", interval: str = "1d") -> Tic
                 company_name=tb_name or sym,
                 history=tb_hist,
             )
+
+    # Polygon primary для US-тикеров (до yfinance)
+    if not sym.endswith(".ME"):
+        if _polygon_available():
+            pg_hist, pg_name, pg_currency = _try_polygon_history(sym, days=400)
+            if pg_hist is not None and not pg_hist.empty:
+                last = float(pg_hist["Close"].iloc[-1])
+                return TickerSnapshot(
+                    symbol=sym,
+                    last_close=last,
+                    currency=pg_currency or "USD",
+                    company_name=pg_name or sym,
+                    history=pg_hist,
+                )
 
     info: dict[str, Any] = {}
     hist = pd.DataFrame()

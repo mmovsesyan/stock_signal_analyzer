@@ -8,7 +8,7 @@ Database layer — PostgreSQL через SQLAlchemy.
   DATABASE_URL — строка подключения (по умолчанию sqlite для dev)
     Примеры:
       postgresql://user:pass@localhost:5432/stock_signals
-      sqlite:///data/stock_signals.db
+      sqlite:////var/lib/stock_signal_analyzer/stock_signals.db
 
 Использование:
   from stock_signal_analyzer.db import get_session, User, Signal, Outcome
@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Generator
 
 from sqlalchemy import (
@@ -44,7 +45,11 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///data/stock_signals.db")
+_DEFAULT_DATA_DIR = os.environ.get("STOCK_SIGNAL_DATA", "/var/lib/stock_signal_analyzer")
+Path(_DEFAULT_DATA_DIR).mkdir(parents=True, exist_ok=True)
+
+_DEFAULT_SQLITE_PATH = os.path.join(_DEFAULT_DATA_DIR, "stock_signals.db")
+_DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{_DEFAULT_SQLITE_PATH}")
 
 _engine_kwargs = {
     "pool_pre_ping": True,
