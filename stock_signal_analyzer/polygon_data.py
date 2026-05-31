@@ -32,8 +32,10 @@ POLYGON_BASE_V3 = "https://api.polygon.io/v3"
 _MASSIVE_BASE_V2 = "https://api.massive.com/v2"
 _MASSIVE_BASE_V3 = "https://api.massive.com/v3"
 
-# Free tier: 5 req/min. Оставляем запас.
-_polygon_limiter = RateLimiter(max_calls=1, period=25.0)
+# Free tier: 5 req/min across all workers.
+# RateLimiter is per-process, so with 4 workers we need each to stay
+# under ~1 req/60s to keep total ~4 req/min (under 5/min limit).
+_polygon_limiter = RateLimiter(max_calls=1, period=60.0)
 
 
 def _api_key() -> str | None:

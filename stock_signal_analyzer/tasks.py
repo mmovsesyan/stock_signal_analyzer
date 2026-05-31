@@ -44,8 +44,8 @@ app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    task_soft_time_limit=120,  # 2 мин soft limit
-    task_time_limit=180,       # 3 мин hard limit
+    task_soft_time_limit=300,  # 5 мин soft limit (Polygon retries + LLM)
+    task_time_limit=600,       # 10 мин hard limit
     worker_max_tasks_per_child=100,  # перезапуск worker после 100 задач (memory leak prevention)
     task_acks_late=True,       # подтверждение после выполнения (retry при crash)
     worker_prefetch_multiplier=1,  # по одной задаче за раз (fair scheduling)
