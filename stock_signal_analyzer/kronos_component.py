@@ -218,3 +218,12 @@ class KronosComponent:
         except Exception as exc:
             _log.warning("Kronos prediction failed (graceful): %s", exc)
             return 0.0, f"Kronos error: {exc}"
+
+# Module-level singleton: one model load per process (Celery fork-safe)
+_KRONOS_INSTANCE: KronosComponent | None = None
+
+def get_kronos() -> KronosComponent:
+    global _KRONOS_INSTANCE
+    if _KRONOS_INSTANCE is None:
+        _KRONOS_INSTANCE = KronosComponent()
+    return _KRONOS_INSTANCE

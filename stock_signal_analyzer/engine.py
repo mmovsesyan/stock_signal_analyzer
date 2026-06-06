@@ -16,7 +16,7 @@ _log = logging.getLogger(__name__)
 from .adaptive_weights import AdaptiveWeightsResult, compute_adaptive_weights
 from .finnhub_live import fetch_company_news, fetch_recommendation_trends, fetch_earnings_surprise
 from .intraday import IntradayBundle, build_intraday
-from .kronos_component import KronosComponent
+from .kronos_component import KronosComponent, get_kronos
 from .levels import KeyLevels, compute_key_levels
 from .macro_calendar import MacroContext, build_macro_context
 from .live_price import fetch_live_price
@@ -453,7 +453,7 @@ def _gather_inputs(
     kronos_detail = ""
     if use_kronos:
         try:
-            _kronos = KronosComponent()
+            _kronos = get_kronos()
             kronos_score, kronos_detail = _kronos.score(hist)
             if kronos_detail:
                 _log.info("Kronos score for %s: %.3f — %s", symbol, kronos_score, kronos_detail)

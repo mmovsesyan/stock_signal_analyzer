@@ -97,7 +97,7 @@ def analyze_ticker(self, symbol: str, user_id: int | None = None, fast_mode: boo
             except Exception:
                 pass
 
-        report = build_report(symbol, fast_mode=fast_mode, filter_type=filter_type, user_id=user_id)
+        report = build_report(symbol, fast_mode=fast_mode, filter_type=filter_type, user_id=user_id, use_kronos=True)
 
         # Сохранить в БД (если доступна)
         try:
