@@ -2,7 +2,7 @@
 # Install separately: pip install -r requirements-ml.txt
 
 # CPU-only PyTorch (no GPU on server)
---index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.0.0
 transformers>=4.35.0
 
