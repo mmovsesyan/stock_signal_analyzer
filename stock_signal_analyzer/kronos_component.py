@@ -86,35 +86,34 @@ class KronosComponent:
             _log.warning("Kronos failed to load (graceful fallback): %s", exc)
             return False
 
-
-@staticmethod
-def _materialize_meta(module, repo_id: str):
-    """Ensure module is not on meta device; materialize to CPU and reload weights from cache."""
-    if not any(p.device.type == "meta" for p in module.parameters()):
+    @staticmethod
+    def _materialize_meta(module, repo_id: str):
+        """Ensure module is not on meta device; materialize to CPU and reload weights from cache."""
+        if not any(p.device.type == "meta" for p in module.parameters()):
+            return module
+        _log.warning(
+            "Meta tensors detected in %s; materializing to CPU and reloading weights", repo_id
+        )
+        import torch
+        module = module.to_empty(device="cpu")
+        try:
+            from huggingface_hub import hf_hub_download, constants as hf_constants
+            import safetensors.torch
+            model_file = hf_hub_download(
+                repo_id, hf_constants.SAFETENSORS_SINGLE_FILE, local_files_only=True
+            )
+            safetensors.torch.load_model(module, model_file, strict=True, device="cpu")
+        except Exception:
+            _log.warning("Safetensors reload failed for %s, trying pickle fallback", repo_id)
+            from huggingface_hub import hf_hub_download, constants as hf_constants
+            model_file = hf_hub_download(
+                repo_id, hf_constants.PYTORCH_WEIGHTS_NAME, local_files_only=True
+            )
+            state_dict = torch.load(
+                model_file, map_location=torch.device("cpu"), weights_only=True
+            )
+            module.load_state_dict(state_dict, strict=True)
         return module
-    _log.warning(
-        "Meta tensors detected in %s; materializing to CPU and reloading weights", repo_id
-    )
-    import torch
-    module = module.to_empty(device="cpu")
-    try:
-        from huggingface_hub import hf_hub_download, constants as hf_constants
-        import safetensors.torch
-        model_file = hf_hub_download(
-            repo_id, hf_constants.SAFETENSORS_SINGLE_FILE, local_files_only=True
-        )
-        safetensors.torch.load_model(module, model_file, strict=True, device="cpu")
-    except Exception:
-        _log.warning("Safetensors reload failed for %s, trying pickle fallback", repo_id)
-        from huggingface_hub import hf_hub_download, constants as hf_constants
-        model_file = hf_hub_download(
-            repo_id, hf_constants.PYTORCH_WEIGHTS_NAME, local_files_only=True
-        )
-        state_dict = torch.load(
-            model_file, map_location=torch.device("cpu"), weights_only=True
-        )
-        module.load_state_dict(state_dict, strict=True)
-    return module
 
     @staticmethod
     def _prepare_dataframe(hist: pd.DataFrame) -> pd.DataFrame:
