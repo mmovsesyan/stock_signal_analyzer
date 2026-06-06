@@ -656,12 +656,15 @@ def format_mlscore_telegram(ensemble) -> str:
     if ensemble is None:
         return "🧠 ML Score: модель недоступна."
     fi = ensemble.feature_importances()
+    total = sum(fi.values())
+    if total > 0:
+        fi = {k: v / total for k, v in fi.items()}
     if not fi:
         return "🧠 ML Score: ещё не обучено."
     lines = ["🧠 <b>ML RankEnsemble</b>"]
     lines.append("<b>Важность фич</b>")
     for name, val in sorted(fi.items(), key=lambda x: x[1], reverse=True):
-        bar = "█" * int(val * 40)
+        bar = "█" * min(int(val * 40), 40)
         lines.append(f"  {name}: <b>{val:.3f}</b> {bar}")
     last = getattr(ensemble, "_last_fit_at", None)
     if last:
