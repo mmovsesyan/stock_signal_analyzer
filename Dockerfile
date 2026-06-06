@@ -22,13 +22,15 @@ COPY requirements-api.txt .
 COPY requirements-scale.txt .
 COPY requirements-tbank.txt .
 COPY requirements-dev.txt .
+COPY requirements-ml.txt .
 
 # Установить Python зависимости
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir -r requirements-api.txt && \
     pip install --no-cache-dir -r requirements-scale.txt && \
-    pip install --no-cache-dir -r requirements-dev.txt
+    pip install --no-cache-dir -r requirements-dev.txt && \
+    pip install --no-cache-dir -r requirements-ml.txt
 
 # T-Bank SDK (из приватного PyPI T-Bank; может быть недоступен при сборке)
 RUN pip install --no-cache-dir -r requirements-tbank.txt 2>/dev/null || \

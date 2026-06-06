@@ -155,15 +155,33 @@ def run_outcome_tracker(self) -> dict:
 
 @app.task(bind=True, max_retries=1, soft_time_limit=300, time_limit=600)
 def run_learning(self) -> dict:
-    """Запустить цикл обучения (IC + LLM)."""
+    """Запустить цикл обучения (IC + LLM + ML)."""
     try:
         from .llm_learning import run_learning_cycle, format_learning_report
         state = run_learning_cycle()
+
+        # ML RankEnsemble — тренируем на тех же outcomes (изолированно, не ломает LLM learning)
+        ml_fit_ok = False
+        ml_samples = 0
+        try:
+            from .ml_scoring import RankEnsemble
+            ensemble = RankEnsemble()
+            ml_fit_ok = ensemble.fit()
+            ml_samples = getattr(ensemble, "_trained_count", 0)
+            if ml_fit_ok:
+                _log.info("ML RankEnsemble fitted on %d samples", ml_samples)
+            else:
+                _log.debug("ML RankEnsemble fit skipped (too few samples or libraries unavailable)")
+        except Exception as ml_exc:
+            _log.warning("ML RankEnsemble fit skipped: %s", ml_exc)
+
         return {
             "status": "ok",
             "outcomes_analyzed": state.total_outcomes_analyzed,
             "win_rate": state.win_rate,
             "adjustments": state.weight_adjustments,
+            "ml_fit": ml_fit_ok,
+            "ml_samples": ml_samples,
         }
     except Exception as exc:
         _log.exception("learning failed")
