@@ -3161,6 +3161,8 @@ async def cmd_mlscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         ensemble = RankEnsemble()
         await loop.run_in_executor(None, ensemble.fit)
         body = format_mlscore_telegram(ensemble)
+        if len(body) > 4000:
+            body = body[:4000] + '\n... (truncated)'
         await update.message.reply_text(body, parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {_esc(str(e))}", parse_mode=ParseMode.HTML)
