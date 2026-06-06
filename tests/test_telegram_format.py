@@ -130,7 +130,8 @@ def test_format_mlscore_telegram():
 
     text = format_mlscore_telegram(FakeEnsemble())
     assert "ML RankEnsemble" in text
-    assert "technical" in text
+    assert "Техника" in text
+    assert "Импульс" in text
     assert "42" in text
 
 
