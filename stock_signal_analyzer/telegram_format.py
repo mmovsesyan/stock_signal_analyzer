@@ -651,6 +651,20 @@ def format_clusters_telegram(result) -> str:
     return "\n".join(lines)
 
 
+_ML_PRETTY_NAMES = {
+    "technical": "Техника",
+    "momentum": "Импульс",
+    "news": "Новости",
+    "volume": "Объём",
+    "score": "Итоговый score",
+    "confidence": "Уверенность",
+    "direction": "Направление",
+    "tier": "Класс сигнала",
+    "prev_pnl": "Прошлый PnL",
+    "kronos": "Kronos AI",
+}
+
+
 def format_mlscore_telegram(ensemble) -> str:
     """Форматировать ML scoring info для Telegram (premium)."""
     if ensemble is None:
@@ -665,7 +679,8 @@ def format_mlscore_telegram(ensemble) -> str:
     lines.append("<b>Важность фич</b>")
     for name, val in sorted(fi.items(), key=lambda x: x[1], reverse=True):
         bar = "█" * min(int(val * 40), 40)
-        lines.append(f"  {name}: <b>{val:.3f}</b> {bar}")
+        pretty = _ML_PRETTY_NAMES.get(name, name)
+        lines.append(f"  {pretty}: <b>{val:.3f}</b> {bar}")
     last = getattr(ensemble, "_last_fit_at", None)
     if last:
         lines.append(f"Последнее обучение: {last}")
