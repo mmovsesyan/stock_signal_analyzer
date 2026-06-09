@@ -454,7 +454,12 @@ def _gather_inputs(
     if use_kronos:
         try:
             _kronos = get_kronos()
-            kronos_score, kronos_detail = _kronos.score(hist)
+            _kronos_result = _kronos.score(hist)
+            if _kronos_result[0] is None:
+                kronos_score = 0.0
+                kronos_detail = _kronos_result[1]
+            else:
+                kronos_score, kronos_detail = _kronos_result
             if kronos_detail:
                 _log.info("Kronos score for %s: %.3f — %s", symbol, kronos_score, kronos_detail)
             else:

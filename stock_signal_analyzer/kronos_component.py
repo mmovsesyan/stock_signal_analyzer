@@ -47,7 +47,7 @@ class KronosComponent:
         self._device = os.environ.get("KRONOS_DEVICE", "").strip() or None
         self._pred_len = int(os.environ.get("KRONOS_PRED_LEN", "5"))
         self._max_context = int(os.environ.get("KRONOS_MAX_CONTEXT", "512"))
-        self._max_predict_secs = float(os.environ.get("KRONOS_MAX_PREDICT_SECS", "12.0"))
+        self._max_predict_secs = float(os.environ.get("KRONOS_MAX_PREDICT_SECS", "18.0"))
         self._predictor: Any | None = None
         self._load_error: str | None = None
         self._loaded = False
@@ -178,29 +178,38 @@ class KronosComponent:
             )
             y_timestamp = pd.Series(future_dates)
 
-            # Enforce hard timeout to prevent blocking Telegram bot on slow CPU
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self._predictor.predict,
-                    df=df,
-                    x_timestamp=x_timestamp,
-                    y_timestamp=y_timestamp,
-                    pred_len=self._pred_len,
-                    T=1.0,
-                    top_k=0,
-                    top_p=0.9,
-                    sample_count=1,
-                    verbose=False,
-                )
-                try:
-                    pred_df = future.result(timeout=self._max_predict_secs)
-                except concurrent.futures.TimeoutError:
-                    _log.warning(
-                        "Kronos prediction timed out after %.1fs for model %s",
-                        self._max_predict_secs,
-                        self._model_name,
+            # Enforce hard timeout to prevent blocking Telegram bot on slow CPU.
+            # Retry once: first executor may have a warm-up penalty; second
+            # attempt often succeeds on loaded model.
+            pred_df = None
+            for attempt in range(2):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        self._predictor.predict,
+                        df=df,
+                        x_timestamp=x_timestamp,
+                        y_timestamp=y_timestamp,
+                        pred_len=self._pred_len,
+                        T=1.0,
+                        top_k=0,
+                        top_p=0.9,
+                        sample_count=1,
+                        verbose=False,
                     )
-                    return 0.0, f"Kronos: predict timeout ({self._max_predict_secs:.0f}s)"
+                    try:
+                        pred_df = future.result(timeout=self._max_predict_secs)
+                        break
+                    except concurrent.futures.TimeoutError:
+                        _log.warning(
+                            "Kronos prediction timed out (attempt %d/2) after %.1fs for model %s",
+                            attempt + 1,
+                            self._max_predict_secs,
+                            self._model_name,
+                        )
+                        if attempt == 0:
+                            continue
+            if pred_df is None:
+                return None, f"Kronos: predict timeout ({self._max_predict_secs:.0f}s)"
 
             current_close = float(df["close"].iloc[-1])
             predicted_final_close = float(pred_df["close"].iloc[-1])
