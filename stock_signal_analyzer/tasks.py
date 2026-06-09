@@ -44,8 +44,8 @@ app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    task_soft_time_limit=300,  # 5 мин soft limit (Polygon retries + LLM)
-    task_time_limit=600,       # 10 мин hard limit
+    task_soft_time_limit=900,  # 15 мин soft limit (Kronos + Polygon retries + LLM)
+    task_time_limit=1800,      # 30 мин hard limit
     worker_max_tasks_per_child=100,  # перезапуск worker после 100 задач (memory leak prevention)
     task_acks_late=True,       # подтверждение после выполнения (retry при crash)
     worker_prefetch_multiplier=1,  # по одной задаче за раз (fair scheduling)
@@ -279,7 +279,7 @@ def _save_signal_to_db(record: dict, user_id: int | None) -> None:
         _log.debug("DB save failed: %s", e)
 
 
-@app.task(bind=True, max_retries=1, default_retry_delay=60, soft_time_limit=900, time_limit=1200)
+@app.task(bind=True, max_retries=1, default_retry_delay=60, soft_time_limit=3600, time_limit=7200)
 def scan_all_signals(self):
     """Асинхронное сканирование всех RU и US тикеров с сохранением в кэш."""
     from stock_signal_analyzer.outside_signals import scan_all_regions
