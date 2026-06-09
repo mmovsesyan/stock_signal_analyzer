@@ -47,7 +47,7 @@ class KronosComponent:
         self._device = os.environ.get("KRONOS_DEVICE", "").strip() or None
         self._pred_len = int(os.environ.get("KRONOS_PRED_LEN", "5"))
         self._max_context = int(os.environ.get("KRONOS_MAX_CONTEXT", "512"))
-        self._max_predict_secs = float(os.environ.get("KRONOS_MAX_PREDICT_SECS", "18.0"))
+        self._max_predict_secs = float(os.environ.get("KRONOS_MAX_PREDICT_SECS", "25.0"))
         self._predictor: Any | None = None
         self._load_error: str | None = None
         self._loaded = False
@@ -182,7 +182,7 @@ class KronosComponent:
             # Retry once: first executor may have a warm-up penalty; second
             # attempt often succeeds on loaded model.
             pred_df = None
-            for attempt in range(2):
+            for attempt in range(3):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(
                         self._predictor.predict,
@@ -201,7 +201,7 @@ class KronosComponent:
                         break
                     except concurrent.futures.TimeoutError:
                         _log.warning(
-                            "Kronos prediction timed out (attempt %d/2) after %.1fs for model %s",
+                            "Kronos prediction timed out (attempt %d/3) after %.1fs for model %s",
                             attempt + 1,
                             self._max_predict_secs,
                             self._model_name,

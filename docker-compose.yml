@@ -30,7 +30,7 @@ services:
       - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
       - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
       - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
-      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-18}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-25}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -64,7 +64,7 @@ services:
       - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
       - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
       - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
-      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-18}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-25}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -119,7 +119,7 @@ services:
       - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
       - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
       - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
-      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-18}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-25}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -163,7 +163,7 @@ services:
       - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
       - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
       - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
-      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-18}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-25}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
@@ -243,7 +243,7 @@ services:
       - KRONOS_PRED_LEN=${KRONOS_PRED_LEN:-5}
       - KRONOS_MAX_CONTEXT=${KRONOS_MAX_CONTEXT:-512}
       - KRONOS_WEIGHT=${KRONOS_WEIGHT:-0.15}
-      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-18}
+      - KRONOS_MAX_PREDICT_SECS=${KRONOS_MAX_PREDICT_SECS:-25}
     volumes:
       - ./data:/data
       - ./logs:/app/logs
