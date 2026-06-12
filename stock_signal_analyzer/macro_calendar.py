@@ -62,7 +62,10 @@ def _parse_time(s: str | None) -> datetime | None:
         return None
     for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S"):
         try:
-            raw = str(s)[:19] if len(str(s)) >= 10 else str(s)
+            if "%z" in fmt or fmt.endswith("Z"):
+                raw = str(s)
+            else:
+                raw = str(s)[:19] if len(str(s)) >= 10 else str(s)
             dt = datetime.strptime(raw, fmt)
             return dt.replace(tzinfo=timezone.utc)
         except ValueError:
