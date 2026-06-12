@@ -1,4 +1,4 @@
-"""Макро: экономический календарь (Finnhub) — ставки, инфляция, заседания ЦБ."""
+"""Макро: экономический календарь (Investing.com) — ставки, инфляция, заседания ЦБ."""
 
 from __future__ import annotations
 
@@ -14,21 +14,10 @@ import requests
 
 from .retry_utils import retry_with_backoff
 
-FINNHUB_BASE = "https://finnhub.io/api/v1"
-
-
-@retry_with_backoff(max_retries=2, initial_delay=0.5, backoff_factor=2.0,
-                    retry_on=(requests.RequestException,))
-def _finnhub_economic_get(d_from: str, d_to: str, token: str, timeout: float) -> requests.Response:
-    """HTTP GET к Finnhub economic calendar с retry."""
-    r = requests.get(
-        f"{FINNHUB_BASE}/calendar/economic",
-        params={"from": d_from, "to": d_to, "token": token},
-        timeout=timeout,
-    )
-    r.raise_for_status()
-    return r
-
+# Investing.com internal endpoint used by their SPA
+_INVESTING_CALENDAR_URL = (
+    "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
+)
 
 CRITICAL_KEYWORDS = (
     "fomc",
@@ -67,10 +56,6 @@ def _ev_time(dt: datetime | None) -> str:
     return dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _token() -> str | None:
-    return os.environ.get("FINNHUB_API_KEY") or os.environ.get("FINNHUB_TOKEN")
-
-
 @dataclass
 class MacroContext:
     summary: str
@@ -81,7 +66,7 @@ class MacroContext:
 def _parse_time(s: str | None) -> datetime | None:
     if not s:
         return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S"):
         try:
             raw = str(s)[:19] if len(str(s)) >= 10 else str(s)
             dt = datetime.strptime(raw, fmt)
@@ -106,25 +91,90 @@ def _strong_macro_name(name: str) -> bool:
     )
 
 
+def _parse_investing_events(html: str) -> list[dict[str, Any]]:
+    """Парсим HTML таблицу Investing.com → список событий."""
+    events: list[dict[str, Any]] = []
+    # Строки событий
+    rows = re.findall(
+        r'<tr[^>]*class="js-event-item[^"]*"[^>]*event_attr_ID="(\d+)"[^>]*data-event-datetime="([^"]+)"',
+        html,
+    )
+    for ev_id, dt_str in rows:
+        idx = html.find(f'event_attr_ID="{ev_id}"')
+        snippet = html[idx : idx + 1200]
+
+        # Страна
+        country_match = re.search(r'data-img_key="([^"]+)"', snippet)
+        country = country_match.group(1) if country_match else ""
+
+        # Название события
+        name_match = re.search(
+            r'<td[^>]*class="left event"[^>]*>(.*?)</td>', snippet, re.DOTALL
+        )
+        if name_match:
+            name_html = name_match.group(1)
+            name = re.sub(r"<[^>]+>", "", name_html).strip()
+        else:
+            name = ""
+
+        # Impact (bull/bear icons; если не найден — low по умолчанию)
+        impact_match = re.search(r'sentiment="([^"]+)"', snippet)
+        impact = impact_match.group(1).lower() if impact_match else "low"
+        if not impact:
+            impact = "low"
+
+        if name:
+            events.append(
+                {
+                    "event": name,
+                    "country": country,
+                    "time": dt_str,
+                    "impact": impact,
+                }
+            )
+    return events
+
+
+@retry_with_backoff(
+    max_retries=2,
+    initial_delay=0.5,
+    backoff_factor=2.0,
+    retry_on=(requests.RequestException,),
+)
+def _investing_calendar_get(timeout: float) -> requests.Response:
+    """POST к Investing.com economic calendar с retry."""
+    r = requests.post(
+        _INVESTING_CALENDAR_URL,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": "https://www.investing.com/economic-calendar/",
+        },
+        data="country[]=5&country[]=4&country[]=72&timeZone=18&timeFilter=timeRemain&currentTab=today&limit_from=0",
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    return r
+
+
 def fetch_economic_calendar(
     api_key: str | None = None,
     days_back: int = 1,
     days_forward: int = 14,
     timeout: float = 15.0,
 ) -> list[dict[str, Any]]:
-    key = api_key or _token()
-    if not key:
-        return []
-    from .finnhub_live import _rate_wait
-    today = date.today()
-    d_from = today - timedelta(days=days_back)
-    d_to = today + timedelta(days=days_forward)
-    _rate_wait()
-    r = _finnhub_economic_get(d_from.isoformat(), d_to.isoformat(), key, timeout)
+    """Загружает экономический календарь с Investing.com.
+
+    Параметры days_back/days_forward сохранены для совместимости,
+    но Investing.com возвращает события текущего дня.
+    """
+    r = _investing_calendar_get(timeout)
     data = r.json()
     if not isinstance(data, dict):
         return []
-    return list(data.get("economicCalendar") or [])
+    html = data.get("data", "")
+    return _parse_investing_events(html)
 
 
 _macro_cache_lock = threading.Lock()
@@ -209,19 +259,11 @@ def build_macro_context(
         if _macro_cache is not None and (_time.monotonic() - _macro_cache_ts) < _MACRO_CACHE_TTL:
             return _macro_cache
 
-    key = api_key or _token()
-    if not key:
-        return MacroContext(
-            summary="Макро: укажите FINNHUB_API_KEY — тогда подтянется экономический календарь (ставки, CPI, NFP, ЦБ).",
-            dampening=1.0,
-            headlines=[],
-        )
-
     try:
-        events = fetch_economic_calendar(api_key=key)
+        events = fetch_economic_calendar()
     except Exception as e:
         return MacroContext(
-            summary=f"Макро: не удалось загрузить календарь Finnhub ({e}).",
+            summary=f"Макро: не удалось загрузить календарь Investing.com ({e}).",
             dampening=1.0,
             headlines=[],
         )
@@ -259,13 +301,13 @@ def build_macro_context(
 
     if not headlines:
         return MacroContext(
-            summary="Макро (Finnhub): в выбранном окне нет отобранных событий (ставки/CPI/NFP и т.п.).",
+            summary="Макро (Investing.com): в выбранном окне нет отобранных событий (ставки/CPI/NFP и т.п.).",
             dampening=1.0,
             headlines=[],
         )
 
     damp = best_damp if critical_near else 1.0
-    summ = "Макро (Finnhub), ключевые события:\n  " + "\n  ".join(headlines[:8])
+    summ = "Макро (Investing.com), ключевые события:\n  " + "\n  ".join(headlines[:8])
     if critical_near:
         summ += f"\n  → Повышенная неопределённость: итоговый балл × {damp:.2f}."
     else:
